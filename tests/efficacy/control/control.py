@@ -7,9 +7,10 @@ unaltered, and copies deliberately damaged or improved in one respect. Every
 tree of one application passes that application's test suite, so what the
 judge sees between them is what was changed and nothing else.
 
-Reading the result is in README.md. What matters here is that a run whose
-damaged tree scores no worse, or whose improved tree scores no better, has
-found something about the rubric rather than about the arms.
+Reading the result is in docs/guides/rubric-control.md. What matters here
+is that a run whose damaged tree scores no worse, or whose improved tree
+scores no better, has found something about the rubric rather than about
+the arms.
 
     py tests/efficacy/control/control.py --root C:/efficacy/control-2026-09-20
     py tests/efficacy/judge.py --root C:/efficacy/control-2026-09-20

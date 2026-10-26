@@ -1,8 +1,8 @@
 # Efficacy benchmark
 
 Does a generated context file improve the result? The design, its rules and
-how a result is read live in `docs/design/efficacy-benchmark.md`. This
-directory holds the parts that run.
+how a result is read live in `docs/design/efficacy-benchmark.md`. The
+parts that run live in `tests/efficacy/`; the paths below are relative to it.
 
 | Path | What it is |
 |---|---|
@@ -401,7 +401,7 @@ every argument arrive whole, and has the stand-in refuse.
 **The control fixture checks the judge itself.** Trees built from two
 pinned applications, some damaged, some improved, each passing its
 application's tests. A primary row counts only if it falls on the damaged
-trees and rises on the improved ones. See `control/README.md`.
+trees and rises on the improved ones. See `docs/guides/rubric-control.md`.
 
 The rounds' judge is `claude-opus-5-5` through the `claude` CLI, the
 default. The other vendor's judge, `gpt-6-astra`, runs with `--cli codex`
