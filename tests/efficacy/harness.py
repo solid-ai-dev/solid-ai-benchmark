@@ -74,10 +74,15 @@ K_CEILING = 5
 # before the v3.0 split moves any template.
 RELEASE = "v2.90.0"
 
-# What the hybrid arm's workspace carries besides its file: this repository's
-# `templates/` directory at the release, where a submodule would put it. The
-# rest of the repository stays out, because the release's tree holds the
-# benchmark's own design and the arm would be reading its brief.
+# The templates every arm is generated from and the hybrid arm vendors: a
+# git clone of upstream or of a fork, named by this variable or by
+# `--templates`. The benchmark carries no templates of its own, so one ruler
+# measures any source.
+TEMPLATES_ENV = "BENCHMARK_TEMPLATES"
+
+# What the hybrid arm's workspace carries besides its file: the templates
+# source's `templates/` directory at the release, where a submodule would
+# put it. The rest of that repository stays out.
 VENDORED = {"ref": RELEASE, "path": "templates",
             "into": "docs/solid-ai-templates"}
 
@@ -214,6 +219,9 @@ def reach_denials(root, workspace):
     names |= {"change-" + name for name in names}
     targets = [repository_root(), scoring_area(root),
                os.path.join(root, "home"), os.path.join(root, "void")]
+    source = templates_root(required=False)
+    if source:
+        targets.append(source)
     targets += [os.path.join(root, name) for name in sorted(names)
                 if name != own]
     patterns = ["%s/**" % rule_path(target) for target in targets]
@@ -289,24 +297,55 @@ def agent_executable():
 
 
 def repository_root():
-    """This repository's absolute root."""
+    """The benchmark repository's absolute root."""
     return os.path.abspath(lib.ROOT)
 
 
-def assert_outside_repository(root):
-    """Refuse a workspace root inside this repository.
+def templates_root(required=True):
+    """The templates source's absolute root, a git clone, or None when it is
+    unset and not required."""
+    path = os.environ.get(TEMPLATES_ENV)
+    if not path:
+        if not required:
+            return None
+        raise TrialError("no templates source: set %s to a clone of the "
+                         "templates repository, or pass --templates"
+                         % TEMPLATES_ENV)
+    path = os.path.abspath(path)
+    if not os.path.exists(os.path.join(path, ".git")):
+        raise TrialError("the templates source %s is not a git clone" % path)
+    return path
 
-    A workspace under the templates repository lets the agent walk up and
-    read the very templates arm A is defined not to have. The design lists
-    that as a confound and controls it by not mounting the repository, so
-    the mount is refused here rather than trusted to the caller.
+
+def source_record(ref):
+    """Which templates a run used: the source's remote, the ref, and the
+    commit the ref named, so a report can say what it measured."""
+    root = templates_root()
+    commit = subprocess.run(["git", "-C", root, "rev-parse",
+                             "%s^{commit}" % ref], capture_output=True,
+                            text=True, encoding="utf-8").stdout.strip()
+    remote = subprocess.run(["git", "-C", root, "remote", "get-url",
+                             "origin"], capture_output=True, text=True,
+                            encoding="utf-8").stdout.strip()
+    return {"remote": remote or None, "ref": ref, "commit": commit or None}
+
+
+def assert_outside_repository(root):
+    """Refuse a workspace root inside the benchmark or the templates source.
+
+    A workspace under the templates lets the agent walk up and read the very
+    templates arm `none` is defined not to have, and one under the benchmark
+    lets it read the hidden specification. The design lists both as
+    confounds and controls them by not mounting either repository, so the
+    mount is refused here rather than trusted to the caller.
     """
     root = os.path.abspath(root)
-    repo = repository_root()
-    if root == repo or root.startswith(repo + os.sep):
-        raise TrialError(
-            "workspace root %s is inside the templates repository at %s; "
-            "an arm there can read the templates" % (root, repo))
+    for label, repo in (("benchmark", repository_root()),
+                        ("templates source", templates_root(required=False))):
+        if repo and (root == repo or root.startswith(repo + os.sep)):
+            raise TrialError(
+                "workspace root %s is inside the %s at %s; an arm there can "
+                "read it" % (root, label, repo))
 
 
 # A trial's workspace is created inside the run root, so whatever scoring wrote
@@ -366,8 +405,9 @@ def git(workspace, *args):
 
 
 def vendor_templates(workspace, vendor):
-    """Put this repository's templates at the release into the workspace,
-    where a submodule would, and return the record of what was vendored.
+    """Put the templates source's templates at the release into the
+    workspace, where a submodule would, and return the record of what was
+    vendored.
 
     The copy is kept out of the workspace's index through `.git/info/exclude`
     rather than a `.gitignore`: it is the arm's reading matter, not its
@@ -376,7 +416,8 @@ def vendor_templates(workspace, vendor):
     """
     target = os.path.join(workspace, *vendor["into"].split("/"))
     os.makedirs(target, exist_ok=True)
-    proc = subprocess.run(["git", "-C", repository_root(), "archive",
+    source = templates_root()
+    proc = subprocess.run(["git", "-C", source, "archive",
                            "--format=tar", vendor["ref"], vendor["path"]],
                           capture_output=True)
     if proc.returncode != 0:
@@ -385,7 +426,7 @@ def vendor_templates(workspace, vendor):
                             proc.stderr.decode("utf-8", "replace").strip()))
     with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as archive:
         archive.extractall(target, filter="data")
-    tree = subprocess.run(["git", "-C", repository_root(), "rev-parse",
+    tree = subprocess.run(["git", "-C", source, "rev-parse",
                            "%s:%s" % (vendor["ref"], vendor["path"])],
                           capture_output=True, text=True,
                           encoding="utf-8").stdout.strip()
@@ -393,7 +434,7 @@ def vendor_templates(workspace, vendor):
     os.makedirs(os.path.dirname(exclude), exist_ok=True)
     with io.open(exclude, "a", encoding="utf-8", newline="\n") as handle:
         handle.write("/%s/\n" % vendor["into"])
-    return dict(vendor, tree=tree)
+    return dict(vendor, tree=tree, source=source_record(vendor["ref"]))
 
 
 def prepare_workspace(arm, trial, root, spec=SPEC):
@@ -2459,6 +2500,9 @@ def credential_link_checks():
 def vendor_checks():
     """The hybrid arm's workspace carries the templates at the release, out
     of its index, and the reach scan reads that tree as the arm's own."""
+    if templates_root(required=False) is None:
+        return [("a templates source is set in %s, so the vendoring can be "
+                 "proved" % TEMPLATES_ENV, False)]
     scratch = os.path.join(os.environ.get("TEMP", "."),
                            "efficacy-vendor-self-test")
     remove_tree(scratch)
@@ -2467,10 +2511,14 @@ def vendor_checks():
     git(workspace, "init", "-q")
     vendored = vendor_templates(workspace, VENDORED)
     git(workspace, "add", "-A")
-    expected = git(repository_root(), "rev-parse",
+    expected = git(templates_root(), "rev-parse",
                    "%s:%s" % (VENDORED["ref"], VENDORED["path"]))
-    planted = os.path.join(workspace, "docs", "solid-ai-templates",
-                           "templates", "base", "core", "git.md")
+    # The release's layout varies by source, so the check reads the first
+    # template the vendored tree holds rather than a fixed path.
+    vendored_root = os.path.join(workspace, "docs", "solid-ai-templates")
+    planted = next((os.path.join(folder, name)
+                    for folder, _, names in sorted(os.walk(vendored_root))
+                    for name in sorted(names) if name.endswith(".md")), "")
     checks = [
         ("the templates at the release are in the workspace",
          os.path.isfile(planted) and len(expected) == 40
@@ -2524,6 +2572,9 @@ def denial_checks():
          windows if os.name == "nt" else rule_path("/runs") == "//runs"),
         ("this repository and the scoring area are denied",
          denied(repository_root()) and denied(scoring_area(root))),
+        ("the templates source is denied whenever one is set",
+         templates_root(required=False) is None
+         or denied(templates_root(required=False))),
         ("other trials, their change tasks, home and void are denied",
          all(denied(os.path.join(root, entry))
              for entry in ("full-1", "none-2", "change-none-1",
@@ -2703,6 +2754,10 @@ def parse_args(argv):
     parser.add_argument("--self-test", action="store_true",
                         help="prove the environment, outcome and resume "
                              "rules; run no trial")
+    parser.add_argument("--templates",
+                        help="a git clone of the templates repository, "
+                             "upstream or a fork; overrides %s"
+                             % TEMPLATES_ENV)
     parser.add_argument("--task", choices=("build", "change"),
                         default="build",
                         help="run the build trials, or the change task on "
@@ -2747,6 +2802,8 @@ def parse_args(argv):
 
 def main(argv):
     options = parse_args(argv)
+    if options.templates:
+        os.environ[TEMPLATES_ENV] = options.templates
     if options.self_test:
         return self_test()
     if not options.root:
@@ -2754,8 +2811,10 @@ def main(argv):
         return 2
 
     # A refused root is a finding about the run, so it is reported and
-    # exits, rather than reaching the caller as a traceback.
+    # exits, rather than reaching the caller as a traceback. A run with no
+    # templates source cannot deny the agent the templates, so it refuses.
     try:
+        templates_root()
         assert_outside_repository(options.root)
     except TrialError as error:
         print("refused: %s" % error)

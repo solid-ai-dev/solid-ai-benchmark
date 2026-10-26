@@ -25,12 +25,8 @@ import sys
 import tempfile
 import time
 
-# This module sits a level below the other runners, so the shared library
-# is reached by path rather than as a sibling.
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import lib  # noqa: E402
-from harness import (RELEASE, VENDORED, TrialError,  # noqa: E402
+from harness import (RELEASE, TEMPLATES_ENV, VENDORED,  # noqa: E402
+                     TrialError, source_record, templates_root,
                      agent_environment, agent_executable,
                      assert_authenticated, assert_outside_repository,
                      prepare_home, read_input)
@@ -231,7 +227,8 @@ def worktree_at(ref):
     """
     path = tempfile.mkdtemp(prefix="efficacy-%s-" % ref.replace(".", "_"))
     shutil.rmtree(path)
-    proc = subprocess.run(["git", "-C", lib.ROOT, "worktree", "add", "-q",
+    proc = subprocess.run(["git", "-C", templates_root(), "worktree", "add",
+                           "-q",
                            "--detach", path, ref],
                           capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
@@ -241,7 +238,8 @@ def worktree_at(ref):
 
 
 def remove_worktree(path):
-    subprocess.run(["git", "-C", lib.ROOT, "worktree", "remove", "--force",
+    subprocess.run(["git", "-C", templates_root(), "worktree", "remove",
+                    "--force",
                     path], capture_output=True, text=True, encoding="utf-8")
 
 
@@ -338,6 +336,10 @@ def parse_args(argv):
     parser.add_argument("--ref", default=RELEASE,
                         help="the release to resolve the chain at "
                              "(default %s)" % RELEASE)
+    parser.add_argument("--templates",
+                        help="a git clone of the templates repository, "
+                             "upstream or a fork; overrides %s"
+                             % TEMPLATES_ENV)
     parser.add_argument("--model", default="claude-sonnet-5")
     parser.add_argument("--effort", default="high")
     parser.add_argument("--budget", type=float, default=None)
@@ -401,6 +403,8 @@ def self_test():
 
 def main(argv):
     options = parse_args(argv)
+    if options.templates:
+        os.environ[TEMPLATES_ENV] = options.templates
     if options.self_test:
         return self_test()
     if not options.root or not options.arm:
@@ -408,6 +412,7 @@ def main(argv):
         return 2
 
     try:
+        templates_root()
         assert_outside_repository(options.root)
     except TrialError as error:
         print("refused: %s" % error)
@@ -437,6 +442,7 @@ def main(argv):
         "budget": GENERATED[options.arm]["budget"],
         "ref": options.ref,
         "commit": head,
+        "source": source_record(options.ref),
         "roots": ROOTS,
         "resolved_files": files,
         "prompt_chars": len(prompt),
