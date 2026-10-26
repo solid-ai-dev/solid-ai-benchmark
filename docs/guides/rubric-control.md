@@ -1,5 +1,7 @@
 # The rubric control
 
+The control lives in `tests/efficacy/control/`; files named below are there.
+
 The benchmark's primary dimensions are a model's opinion. An opinion that does
 not change when the code changes measures nothing, and nothing in a normal run
 would show that: an arm that moves no row looks like an arm that changed

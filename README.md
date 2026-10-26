@@ -8,7 +8,9 @@ ruler for every templates source: upstream `solid-ai-templates` or a fork.
 |---|---|
 | `docs/design/efficacy-benchmark.md` | The design: arms, metrics, verdict rules |
 | `docs/design/efficacy-assessment.md` | The assessment of the benchmark itself |
-| `tests/efficacy/` | The harness, scorer, judge and report; its README lists each part |
+| `docs/guides/efficacy-harness.md` | How to run the harness, scorer, judge and report; lists each part |
+| `docs/guides/rubric-control.md` | The rubric control that checks the judge |
+| `tests/efficacy/` | The harness, scorer, judge and report |
 | `tests/lib.py` | Shared helpers the harness imports |
 
 ## The templates source
