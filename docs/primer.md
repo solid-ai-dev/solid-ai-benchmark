@@ -51,9 +51,9 @@ change on the meters has one cause.
 | Knob | Settings | What turning it asks |
 | ---- | -------- | -------------------- |
 | Context file, the **arm** | `none`, `inline`, `hybrid`, `reference`, `skills` | Does a file help, and which way of delivering the rules |
-| Specification | `thin`, `normal`, `overspecified`, `pressure`, `conflict`, `broken` | Does a file supply what the spec leaves out, and hold or yield when the spec pushes against it |
-| Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a file help a weaker model more, and a stronger one less |
-| Task | build, change, fix, refactor, review, evolve | Does a file help beyond a first build, and over a project's life |
+| Specification | `thin`, `normal`, `overspecified`, `pressure`, `conflict`, `broken` | Does a context file supply what the spec leaves out, and hold or yield when the spec pushes against it |
+| Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a context file help a weaker model more, and a stronger one less |
+| Task | build, change, fix, refactor, review, evolve | Does a context file help beyond a first build, and over a project's life |
 
 Fixed in every run, so only the knobs can move the meters:
 
@@ -69,12 +69,12 @@ The six specs:
 
 | Spec | What it does | What it tests |
 | ---- | ------------ | ------------- |
-| Thin | Keeps the contract the hidden tests drive, drops the good practices | Does a file supply the defences the spec leaves out |
+| Thin | Keeps the contract the hidden tests drive, drops the good practices | Does a context file supply the defences the spec leaves out |
 | Normal | The contract and the practices | The baseline every other spec is compared with |
-| Overspecified | Dictates the "how" too: layout, tools, password storage | Should show no effect. A file that still moves the meters points at the ruler |
-| Pressure | Asks for a bad practice, such as an export with no sign-in | Do the file's security rules hold |
-| Conflict | Contradicts the file, such as a flat layout where the file says `src/` | Does the project's own decision win, as it should |
-| Broken | Holds a planted fault, such as two rounding rules that clash, with the hidden tests asserting one | Does a file make the agent notice and report the fault, in its README or commit, instead of guessing |
+| Overspecified | Dictates the "how" too: layout, tools, password storage | Should show no effect. A context file that still moves the meters points at the ruler |
+| Pressure | Asks for a bad practice, such as an export with no sign-in | Do the context file's security rules hold |
+| Conflict | Contradicts the context file, such as a flat layout where it says `src/` | Does the project's own decision win, as it should |
+| Broken | Holds a planted fault, such as two rounding rules that clash, with the hidden tests asserting one | Does a context file make the agent notice and report the fault, in its README or commit, instead of guessing |
 
 The six tasks:
 
@@ -83,8 +83,8 @@ The six tasks:
 | Build | Builds the app from an empty folder | The baseline every other task is compared with |
 | Change | Adds a feature the design was not built for | How far the design has to be disturbed |
 | Fix | Fixes a planted bug from a bug report | Does it fix it narrowly and add a test that catches it |
-| Refactor | Improves the structure without changing behaviour | Does a file guide good design when nothing new is asked |
-| Review | Reviews a change with planted defects | Does a file make it catch more of them |
+| Refactor | Improves the structure without changing behaviour | Does a context file guide good design when nothing new is asked |
+| Review | Reviews a change with planted defects | Does a context file make it catch more of them |
 | Evolve | Works on one project over a chain of sessions | Do the conventions hold over time, where a bare agent drifts |
 
 The five arms:
@@ -92,9 +92,9 @@ The five arms:
 | Arm | What the agent gets | What it isolates |
 | --- | ------------------- | ---------------- |
 | `none` | No file: the bare agent | The baseline every file is compared with |
-| `inline` | Every rule that applies, copied in | Do the templates help when all of it is in the file |
+| `inline` | Every rule that applies, copied in | Do the templates help when all of it is in the context file |
 | `hybrid` | The rules that matter copied in, the rest pointed to, the templates beside it | Does the way the owner's projects use help |
-| `reference` | A file that only names the templates to read, with the templates beside it | Is pointing to the rules enough |
+| `reference` | A context file that only names the templates to read, with the templates beside it | Is pointing to the rules enough |
 | `skills` | A short root file plus one skill per kind of task, loaded when the task needs it | Does a root file with skills deliver what hybrid does |
 
 The design's section 13 registers the arms and the questions they answer.
@@ -120,7 +120,7 @@ The design's section 13 registers the arms and the questions they answer.
    - the blind judge, another AI, reads the code three times and scores
      design, readability, maintainability, security and data protection
      from 1 to 5
-5. **Compare.** Each run with a file is compared with its no-file partner,
+5. **Compare.** Each run with a context file is compared with its no-file partner,
    and the differences give one verdict per meter. The runs of one arm are
    also compared with each other: how alike they came out is the arm's
    **consistency**.
@@ -144,7 +144,7 @@ out, and those three decide.
 | Verdict | Means | Does not mean |
 | ------- | ----- | ------------- |
 | **Better** | Every reasonable reading of the pairs improved | That the gain is large |
-| **Worse** | Every reasonable reading got worse | That the file is useless |
+| **Worse** | Every reasonable reading got worse | That the context file is useless |
 | **Not shown** | The pairs disagree, so no direction is clear | That the two are equal |
 | **Held** | Not shown, and no loss beyond a set **margin** | That it improved |
 
@@ -176,9 +176,9 @@ manufacture one.
 What the evidence supports today, in the words of the
 [assessment](design/efficacy-assessment.md):
 
-- **Supported, as a signal:** a file's conventions get followed more.
-- **Supported:** a file does not break software that already works.
-- **Not supported:** a file makes a strong model write better code.
+- **Supported, as a signal:** a context file's conventions get followed more.
+- **Supported:** a context file does not break software that already works.
+- **Not supported:** a context file makes a strong model write better code.
 - **Contradicted:** using the templates costs little. The files made the
   app up to 180 % bigger and most builds dearer.
 - **Contradicted:** a longer file is better. Length tracked cost, not
