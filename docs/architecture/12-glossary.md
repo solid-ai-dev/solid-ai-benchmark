@@ -31,6 +31,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Inline model | A context file that copies every adopted rule in |
 | Judge | The model that scores a blind bundle 1 to 5 per rubric row, with a quoted line as evidence. From round 5 it is `gpt-6-astra` through `codex exec` at effort `high`. Rounds 3 and 4 used `claude-opus-5-5` |
 | K | The number of blocks, so the trials per arm: 3, at most 5 |
+| Likely range | The primer's plain name for the bootstrap interval: where the average difference would land if the runs were redone |
 | Lost probe | A probe the trial kept from running, such as one that needs a sign-in the app refuses. It fails, never drops out of the rate |
 | Lost trial | A trial the provider ended rather than the agent, recorded as blocked. Re-run once in its place. A second loss stops the run |
 | Margin | The largest loss a metric may show and still read held, such as 2 points of hidden-test pass rate |
