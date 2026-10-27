@@ -86,7 +86,15 @@ The design's section 13 registers the arms and the questions they answer.
 | Conflict | Contradicts the context file, such as a flat layout where it says `src/` | Does the project's own decision win, as it should |
 | Broken | Holds a planted fault, such as two rounding rules that clash, with the hidden tests asserting one | Does a context file make the agent notice and report the fault, in its README or commit, instead of guessing |
 
-### 3.4 Tasks
+### 3.4 Builder models
+
+| Model | What it is | What it tests |
+| ----- | ---------- | ------------- |
+| Haiku 4.5 | The smallest and cheapest | Does a context file make up for what a weaker model does not know |
+| Sonnet 5 | The main builder, what a typical adopter runs | The baseline every other model is compared with |
+| Opus 5.5 | The strongest | Does a context file still help a model that knows most of it already |
+
+### 3.5 Tasks
 
 | Task | What the agent does | What it tests |
 | ---- | ------------------- | ------------- |
@@ -97,7 +105,7 @@ The design's section 13 registers the arms and the questions they answer.
 | Review | Reviews a change with planted defects | Does a context file make it catch more of them |
 | Evolve | Works on one project over a chain of sessions | Do the conventions hold over time, where a bare agent drifts |
 
-### 3.5 What stays fixed
+### 3.6 What stays fixed
 
 Fixed in every run, so only the knobs can move the meters:
 
