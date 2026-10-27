@@ -15,6 +15,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Chain | The templates a project resolves to, in resolution order. A generated arm is built from one chain at one release |
 | Change task | A second session that adds a spend-threshold discount and a capped tax rate to a copy of a frozen build |
 | Churn | The files touched and lines changed by the change task, counted from the commit of the copy |
+| Consistency | How alike an arm's runs come out: the spread of each meter across them, and conventions agreement, the share of checklist items on which every run gives the same verdict |
 | Context file | A `CLAUDE.md` the agent reads at the start of a session: project facts and house rules |
 | Contrast | Two arms compared within each block, such as `full − none`. K paired differences, one interval, one verdict per metric |
 | Control fixture | Trees built from two pinned applications, each damaged or improved on one judge row and each passing the same tests. A primary row counts only if it falls on the damaged trees and rises on the improved |
