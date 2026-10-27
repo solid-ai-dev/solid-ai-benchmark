@@ -27,7 +27,7 @@ round running overnight. A trial that was blocked is handled in
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | The harness guide says to leave this checkout's HEAD alone because each trial records it as the templates revision. Since the templates moved out, the harness records the templates source's remote, ref and commit instead, so the advice predates the split | Open |
+| 1 | The harness guide says to leave this checkout's HEAD alone because each trial records it as the templates revision. Since the templates moved out, the harness records the templates source's remote, ref and commit instead, so the advice predates the split | Open, #15 |
 | 2 | A stray process-stop command in a trial once stopped the harness itself. Such commands are now denied, and a trial whose harness died is voided by the next run | Settled in design §10, 2026-10-16 |
 | 3 | A full disk ends a trial with `No space left on device`, and that trial is not a result | Settled in the harness guide |
 | 4 | A trial that prints its result but does not exit is ended two minutes later | Settled in chapter 6.1 |
