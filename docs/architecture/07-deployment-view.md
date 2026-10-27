@@ -13,8 +13,8 @@ with its protocol.
 | Node or store | What it is | Needed for |
 | ------------- | ---------- | ---------- |
 | Python 3.12 | The interpreter the scripts run under, as `py -3.12` | Every scored trial's environment |
-| Claude Code CLI | `claude` on `PATH`, logged in | Every trial, every generation, the rounds' judge |
-| Codex CLI | `codex` on `PATH`, logged in | The cross-check judge, on a sample |
+| Claude Code CLI | `claude` on `PATH`, logged in | Every trial and every generation |
+| Codex CLI | `codex` on `PATH`, logged in | The rounds' judge, from round 5 |
 | `gh` | Logged in with access to the hidden suite | Scoring clones the suite |
 | Java and a Playwright browser | A Java runtime on `PATH`, and the browser scoring installs | HTML validity, the browser flows and the accessibility probe |
 | Run root | A directory outside this repository, such as `C:/efficacy/2026-10-27-round-5` | Every trial |

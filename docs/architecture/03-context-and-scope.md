@@ -6,14 +6,14 @@ side, what crosses it, and over which channel.
 
 ## 3.1 Business context
 
-![The benchmark as one box with its neighbours. The owner gives it settings, and report readers get reports from it. It exchanges builds and judgings with Claude Code, sends a sample to the Codex CLI for a cross-check judgement, and exchanges packages with the Python package index. Templates come in from the templates source and reports go back to it. The hidden suite gives it acceptance tests, and it sends archived rounds to the runs archive](../diagrams/context.png)
+![The benchmark as one box with its neighbours. The owner gives it settings, and report readers get reports from it. It exchanges builds with Claude Code and judgings with the Codex CLI, and exchanges packages with the Python package index. Templates come in from the templates source and reports go back to it. The hidden suite gives it acceptance tests, and it sends archived rounds to the runs archive](../diagrams/context.png)
 
 | Neighbour | Gives the benchmark | Gets from the benchmark |
 | --------- | ------------------- | ----------------------- |
 | Owner | A registered hypothesis, a round's settings, the go to run | Refusals before cost, records after |
 | Report reader | Nothing | The dated report and its caveats |
-| Claude Code | Builds, generated files, judgings | Workspaces, prompts, bundles to judge |
-| Codex CLI | Cross-check judgings on a sample | The same blind bundles |
+| Claude Code | Builds and generated files | Workspaces and prompts |
+| Codex CLI | Judgings, from round 5 | Blind bundles to judge |
 | Python package index | The packages every app and every tool installs | Nothing |
 | Templates source | The templates, the chain and the release an arm is built from | Reports under its `docs/audits/` |
 | Hidden suite | Acceptance tests and the change suite, at scoring only | Nothing |

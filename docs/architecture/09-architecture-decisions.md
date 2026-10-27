@@ -19,6 +19,7 @@ architecture, so a reader can see why the parts are built as they are.
 | The brief and the change prompt live in files of their own | `brief.txt`, `change-prompt.txt` | 2026-09-24 |
 | A probe the trial keeps from running is lost, not missing | `security.py` | 2026-09-25 |
 | The rounds' judge is `claude-opus-5-5`, with `gpt-6-astra` as a sampled cross-check | `judge.py --cli`, the cross-check root | 2026-09-25 |
+| From round 5 the judge is `gpt-6-astra` at effort `high`, with no cross-check | `judge.py`'s default CLI, owed with round 5's harness work | 2026-10-27 |
 | A round is archived and verified before it is reported | `archive.py`, the `archived.json` stamp, `report.py`'s refusal | 2026-10-15 |
 | A trial is both fenced and excluded | The deny rules and the transcript scan | 2026-10-15 |
 | A trial may not stop processes by name | The deny rules, and voiding a trial whose harness died | 2026-10-16 |
