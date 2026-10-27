@@ -167,8 +167,8 @@ REFERENCE = """\
 # tariff
 
 Before starting work, read each template below and apply every rule it
-holds that fits this project. They are vendored at `{into}/`, at the
-revision the project adopted.
+holds that fits this project. They are vendored at `{into}/`,
+at the revision the project adopted.
 
 {files}
 """

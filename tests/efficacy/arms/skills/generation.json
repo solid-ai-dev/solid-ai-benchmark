@@ -1,0 +1,55 @@
+{
+  "arm": "skills",
+  "kind": "emit",
+  "output_model": null,
+  "ref": "9086e0ff",
+  "source": {
+    "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
+    "ref": "9086e0ff",
+    "commit": "9086e0ffc454fbff1d234601822257ce5e40a004"
+  },
+  "roots": [
+    "backend-api",
+    "backend-auth",
+    "backend-database",
+    "frontend-ux",
+    "base-security",
+    "base-data-governance"
+  ],
+  "started_at": "2026-10-27T07:32:50",
+  "commit": "9086e0ffc454fbff1d234601822257ce5e40a004",
+  "resolved_files": [
+    "templates/core/quality.md",
+    "templates/core/git.md",
+    "templates/core/docs.md",
+    "templates/core/testing.md",
+    "templates/core/review.md",
+    "templates/backend/http.md",
+    "templates/backend/api.md",
+    "templates/security/security.md",
+    "templates/backend/auth.md",
+    "templates/backend/database.md",
+    "templates/frontend/ux.md",
+    "templates/data/data-modeling.md",
+    "templates/data/data-governance.md"
+  ],
+  "output_leak": null,
+  "skills": {
+    "add-check": 256,
+    "add-dependency": 38,
+    "change-api": 532,
+    "deprecate": 188,
+    "generate-context": 222,
+    "migrate-data": 79,
+    "regenerate": 520,
+    "review": 146,
+    "start-issue": 187,
+    "verify-finding": 272,
+    "write-docs": 174,
+    "write-tests": 186
+  },
+  "outcome": "generated",
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\skills\\CLAUDE.md",
+  "output_lines": 1404,
+  "output_words": 9728
+}
