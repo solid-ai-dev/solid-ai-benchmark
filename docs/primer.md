@@ -46,7 +46,7 @@ one sitting and strict enough that a wrong cent shows.
 A round turns one knob at a time and holds everything else still. Then any
 change on the meters has one cause.
 
-![Four knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected) and the task (build, change, fix, refactor, review, evolve, with build selected). Below them, the meters: hidden tests, attack probes, the judge's scores, conventions, size, cost, and consistency, how alike an arm's runs are. Below that, what is fixed in every run: the app, the bounds of $100 or two hours, the prompt, the ruler, the judge and the runs per arm, 3 or 5 once when a result is close.](diagrams/knobs.png)
+![Four knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected) and the task (build, change, fix, refactor, review, evolve, with build selected). Below them, the meters: hidden tests, attack probes, the judge's scores, conventions, size, cost, and consistency, how alike an arm's runs are.](diagrams/knobs.png)
 
 | Knob | Settings | What turning it asks |
 | ---- | -------- | -------------------- |
@@ -54,6 +54,16 @@ change on the meters has one cause.
 | Specification | `thin`, `normal`, `overspecified`, `pressure`, `conflict`, `broken` | Does a file supply what the spec leaves out, and hold or yield when the spec pushes against it |
 | Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a file help a weaker model more, and a stronger one less |
 | Task | build, change, fix, refactor, review, evolve | Does a file help beyond a first build, and over a project's life |
+
+Fixed in every run, so only the knobs can move the meters:
+
+- **The app:** `tariff`, a small invoicing web app
+- **The bounds:** at most $100 or two hours per run
+- **The prompt:** one fixed sentence, the same for every arm
+- **The ruler:** the same tool versions and settings for every run
+- **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
+  each app three times
+- **Runs per arm:** 3, or 5 once when a result is close
 
 The six specs:
 
