@@ -7,6 +7,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | ---- | ---------- |
 | Adherence checklist | Thirteen conventions scored on every trial, the bare one included: lint-clean, type-clean, formatted, 80 % coverage, bounded complexity, a `src/` layout, one error hierarchy, no `print` in the library, a library logger with a null handler, packaging metadata, a usable README, discoverable tests and no ticket citations in code. A quality checklist, not a template checklist |
 | Arm | One setting of the context-file knob, such as `none` or `hybrid`. Every arm runs once per block |
+| Blind judge | The judge as the primer names it: it reads each app without knowing which arm built it. See Judge |
 | Block | One pass over every arm, back to back. Trials in one block are paired. Round 5 also uses lettered blocks A, B and C for its three settings of spec and model |
 | Blocked | A trial the provider cut off: a usage limit, a rate limit, a crash or no result. Moved to `void/` and re-run once in its place |
 | Bootstrap interval | The range of mean differences a resampling of the K differences produces: 10,000 resamples, 95 %, bias-corrected and accelerated, at a recorded seed |
@@ -27,6 +28,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Generator | The non-interactive invocation that turns the brief and a chain into an arm's file. Nobody answers its questions |
 | Held | No improvement shown, and the whole interval inside the metric's margin: nothing got worse. A non-inferiority reading |
 | Hidden suite | The acceptance tests in the private `braboj/tariff-hidden-suite`, cloned only at scoring |
+| Hidden tests | The primer's name for the hidden suite. See Hidden suite |
 | Hybrid model | A context file that copies in the rules whose breaking is silent and no tool enforces, and names the rest, with the templates vendored beside it |
 | Inline model | A context file that copies every adopted rule in |
 | Judge | The model that scores a blind bundle 1 to 5 per rubric row, with a quoted line as evidence. From round 5 it is `gpt-6-astra` through `codex exec` at effort `high`. Rounds 3 and 4 used `claude-opus-5-5` |

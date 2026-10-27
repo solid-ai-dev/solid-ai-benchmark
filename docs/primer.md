@@ -126,7 +126,7 @@ Fixed in every run, so only the knobs can move the meters:
   every run. An agent cannot score cleaner by loosening its own lint rules
 - **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
   each app three times
-- **Runs per arm:** 3, or 5 once when a result is close
+- **Runs per arm:** fixed by each round before it starts, 3 today
 
 ## 4. One round, start to finish
 
@@ -163,7 +163,8 @@ own, in any order.
 ### 4.4 Reading the result
 
 1. **Compare with the bare run.** Each run with a context file is compared
-   with the run of the same block that had none: `inline-1` minus `none-1`.
+   with the run of the same block, see 5.1, that had none: `inline-1` minus
+   `none-1`.
 2. **Luck check.** The differences are checked for whether they would hold
    if the runs were redone.
 3. **Verdict.** Each meter gets one: better, worse or undecided.
@@ -191,7 +192,7 @@ extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
 give 20. Each extra block adds one more run per arm, and the luck check
 gets sharper with every delta, as section 5.3 shows.
 
-### 5.2 The four verdicts
+### 5.2 Reading the bar
 
 ![Four example ranges of the hidden-test delta, each answering two questions against a margin of 2 points: which way did it move, and has a big loss been ruled out. Plus 1 to plus 4: better, and yes. Minus 1 to plus 3: undecided, because the bar covers zero, but yes, because it stays right of the margin. Minus 5 to plus 3: undecided, and no, because it reaches past the margin. Minus 4 to minus 1: worse, and no](diagrams/verdict.png)
 
