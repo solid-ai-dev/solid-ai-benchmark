@@ -201,8 +201,9 @@ restoring it, then the report.
   one would arrive cut short.
 - A CLI the model refused leaves its final message empty. A failed judging
   records the tail of the CLI's output beside it.
-- Today `judge.py` defaults to `claude-opus-5-5`. Round 5 is registered to
-  use `gpt-6-astra` through `--cli codex`, and the default changes with #47.
+- `judge.py` defaults to `gpt-6-astra` through Codex at effort `high`, the
+  rounds' judge from round 5. `--cli claude` re-reads an earlier round with
+  `claude-opus-5-5`.
 
 ### 6.4.2 What an archive holds
 
