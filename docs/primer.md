@@ -46,30 +46,31 @@ one sitting and strict enough that a wrong cent shows.
 A round turns one knob at a time and holds everything else still. Then any
 change on the meters has one cause.
 
-![Five knobs the benchmark turns, each with its settings: the context file (none, hand, short, full, hybrid, with none selected), the specification (thin or normal), the builder model (Haiku 4.5 or Sonnet 5), the task (build or change) and the runs per arm (3 or 5). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler and the judge. Below that, the meters read on every run: hidden tests, attack probes, the judge's scores, conventions, size and cost](diagrams/knobs.png)
+![Five knobs the benchmark turns, each with its settings: the context file (none, reference, inline, hybrid, skills, with none selected), the specification (thin or normal), the builder model (Haiku 4.5 or Sonnet 5), the task (build or change) and the runs per arm (3 or 5). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler and the judge. Below that, the meters read on every run: hidden tests, attack probes, the judge's scores, conventions, size and cost](diagrams/knobs.png)
 
 | Knob | Settings | What turning it asks | Turned in |
 | ---- | -------- | -------------------- | --------- |
-| Context file, the **arm** | `none`, `hand`, `short`, `full`, `hybrid` | Does a file help, and which kind | Every round |
+| Context file, the **arm** | `none`, `reference`, `inline`, `hybrid`, `skills` | Does a file help, and which way of delivering the rules | Every round |
 | Specification | normal, thin | Does a file supply what a sparse spec leaves out | Round 4 |
 | Builder model | Sonnet 5, Haiku 4.5 | Does a file help a weaker model more | Round 4 |
 | Task | build, change | Does the design take a change it was not built for | Most rounds. Round 4's thin run only built |
 | Runs per arm, K | 3, at most 5 | How steady a result is | 5 only once, when owed |
 
-The five arms of rounds 1 to 4:
+The five arms of round 5, which asks how the rules should reach the agent:
 
 | Arm | What the agent gets | What it isolates |
 | --- | ------------------- | ---------------- |
 | `none` | No file: the bare agent | The baseline every file is compared with |
-| `full` | The file the templates generate, every rule copied in | Do the templates help as shipped |
-| `short` | The same, cut to 40 lines | Does a short file help |
-| `hybrid` | Key rules copied in, the rest pointed to, the templates beside it | Does the owner's own way help |
-| `hand` | 39 lines written by a person | Is it the templates, or just having a file |
+| `reference` | A file that only names the templates to read, with the templates beside it | Is pointing to the rules enough |
+| `inline` | Every rule that applies, copied in | Do the templates help when all of it is in the file |
+| `hybrid` | The rules that matter copied in, the rest pointed to, the templates beside it | Does the way the owner's projects use help |
+| `skills` | A short root file plus one skill per kind of task, loaded when the task needs it | Does a root file with skills deliver what hybrid does |
 
-Round 5 asks how the rules reach the agent, so it swaps in three new arms:
-`reference`, a file that only names the templates to read, `inline`,
-every rule copied in, and `skills`, a short root file with one task skill
-per kind of work. The design's section 13 registers it.
+Rounds 1 to 4 ran `full`, the `inline` idea made through the templates'
+interview, and two arms now retired: `short`, the generated file cut to
+40 lines, and `hand`, 39 lines written by a person. `hand` asked whether
+the effect is the templates or merely having a file. Their findings are
+in section 8. The design's section 13 registers round 5.
 
 ## 4. One round, start to finish
 
@@ -97,14 +98,14 @@ per kind of work. The design's section 13 registers it.
 
 ## 5. Why runs are paired
 
-![Fifteen runs in three blocks, five arms per block, run one after another: none-1, full-1, short-1, hybrid-1 and hand-1, then block 2, then block 3. A contrast such as full minus none is three differences, full-1 minus none-1, full-2 minus none-2 and full-3 minus none-3, with one interval over the three](diagrams/run-order.png)
+![Fifteen runs in three blocks, five arms per block, run one after another: none-1, reference-1, inline-1, hybrid-1 and skills-1, then block 2, then block 3. A contrast such as inline minus none is three differences, inline-1 minus none-1, inline-2 minus none-2 and inline-3 minus none-3, with one interval over the three](diagrams/run-order.png)
 
 A model's behaviour drifts from day to day. So the arms take turns: block 1
 runs every arm once, back to back, then block 2, then block 3. Runs in one
 block meet the same model on the same day.
 
-The benchmark then compares partners, not averages. `full-1` is compared
-with `none-1`, `full-2` with `none-2`, and so on. Three differences come
+The benchmark then compares partners, not averages. `inline-1` is
+compared with `none-1`, `inline-2` with `none-2`, and so on. Three differences come
 out, and those three decide.
 
 ## 6. How a verdict is read
