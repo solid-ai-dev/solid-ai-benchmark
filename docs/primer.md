@@ -189,8 +189,7 @@ out, and those three decide.
 Three blocks are the smallest useful set, not a limit. The same pattern
 extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
 give 20. Each extra block adds one more run per arm, and the luck check
-gets sharper with every delta, as section 5.3 explains. The rules cap K at
-5 today, so going further takes a registered decision first.
+gets sharper with every delta, as section 5.3 explains.
 
 ### 5.2 The four verdicts
 
