@@ -89,8 +89,8 @@ restoring it, then the report.
 | 1 | The context file, the vendored templates and every condition marker are removed. A bundle that still names its arm is not judged | §5.6 |
 | 2-3 | The rubric is a JSON Schema, so a score is read by machine. Each primary row has anchors at 1, 3 and 5 in this domain's terms | §5.6 |
 | 4 | Every quoted line is looked up in its bundle. A judge that never opened the code still returns plausible numbers | §5.7 |
-| 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | §10 |
-| 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, escalation, reach scan and lost trials are computed from both. Any difference fails | §10 |
+| 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | Ch. 9 |
+| 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, escalation, reach scan and lost trials are computed from both. Any difference fails | Ch. 9 |
 | 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and whether the one escalation to K = 5 is owed | §1 |
-| 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | §10 |
+| 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | Ch. 9 |
 | 10 | The finding table first, then the record behind every cell | §6.3 |

@@ -23,5 +23,5 @@ estimated.
 | # | Finding | Status |
 | - | ------- | ------ |
 | 1 | The report refuses a cross-check root that holds no judging of the round's trials, since an empty one would print as agreement | Settled in the harness guide |
-| 2 | Round 4 ran without the cross-check to keep the other vendor's plan free | Settled in design §10, 2026-10-15 |
-| 3 | Round 3's raw data was lost, so it cannot be re-read | Settled in design §10, 2026-10-15 |
+| 2 | Round 4 ran without the cross-check to keep the other vendor's plan free | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-15 |
+| 3 | Round 3's raw data was lost, so it cannot be re-read | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-15 |
