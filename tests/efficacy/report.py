@@ -1192,9 +1192,10 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.append("## Primary dimensions")
     lines.append("")
     lines.append("The report leads with these, declared by the owner "
-                 "before the run: %s judge rows and %s probe pass rates. Task success and cost "
-                 "follow." % (counted(len(PRIMARY) - len(PROBE_RATES)),
-                              counted(len(PROBE_RATES))))
+                 "before the run: %s judge rows and %s probe pass rates. "
+                 "Task success and cost follow."
+                 % (counted(len(PRIMARY) - len(PROBE_RATES)),
+                    counted(len(PROBE_RATES))))
     lines.append("")
     lines.extend(contrast_table(table, results, PRIMARY, active=active))
     lines.append("")
