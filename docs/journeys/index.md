@@ -1,10 +1,10 @@
 # User journeys
 
-A journey walks one person through one task, step by step, with the
-minutes and cost each takes, and ends with findings: what the walk showed
-missing, unclear or at odds. Journeys are not normative. The rules are in
-the [architecture](../architecture/08-crosscutting-concepts.md), the commands in the
-[harness guide](../guides/efficacy-harness.md).
+A journey walks one person through one task, step by step, with the minutes and cost
+each takes, and ends with findings: what the walk showed missing, unclear or at odds.
+Journeys are not normative. The rules are in the
+[architecture](../architecture/08-crosscutting-concepts.md), the commands in each
+journey.
 
 They are grouped by the stage of a round's life. A round is prepared, run,
 checked and read. Each figure is marked measured, with the round it came
@@ -46,7 +46,6 @@ from, or estimated.
 | Finding | Journey | Issue |
 | ------- | ------- | ----- |
 | Nothing checks that a hypothesis was committed before its round's first trial | [Register a hypothesis](prepare/register-a-hypothesis.md) | #14 |
-| The harness guide's advice on the checkout's HEAD predates the templates moving out | [Run a round](run/run-a-round.md) | #15 |
-| No CI runs the self tests, though the control guide says it does | [Check the judge](check/check-the-judge.md) | #16 |
+| No CI runs the self tests | [Check the judge](check/check-the-judge.md) | #6 |
 | No index of reports in this repository | [Read a report](read/read-a-report.md) | #17 |
 | A candidate compared with an earlier round's baseline gets no verdict | [Measure a template change](read/measure-a-template-change.md) | #18 |

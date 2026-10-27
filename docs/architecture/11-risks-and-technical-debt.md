@@ -21,8 +21,8 @@ Each risk names what holds it today.
 
 | # | Debt | Cost | Next step |
 | - | ---- | ---- | --------- |
-| 1 | No CI runs the self tests in this repository | A regression in a guard shows only when a round runs. The control guide says its self test runs in CI, which no longer holds since the split | Add a workflow that runs every `--self-test` |
-| 2 | Windows-specific handling: `.CMD` shims, `cmd.exe` expansion, process trees | A run on another platform is untested | State the platform in the harness guide, or test one |
+| 1 | No CI runs the self tests in this repository | A regression in a guard shows only when a round runs | Add a workflow that runs every `--self-test`, #6 |
+| 2 | Windows-specific handling: `.CMD` shims, `cmd.exe` expansion, process trees | A run on another platform is untested | State the platform in [ch. 2](02-constraints.md), or test one |
 | 3 | `harness.py` and `report.py` each run past 3,000 lines | A change is hard to review in isolation | Split by stage when next touched |
 | 4 | Round 1's trials keep their letter names on disk (`A1`, `B2`, `C3`) | Every reader maps them | None while round 1 is read |
 | 5 | The reports land in the templates source, not here | A reader of this repository finds no results | A results index here, linking each report |
@@ -48,5 +48,5 @@ result cannot say which produced it. A control is what rules it out.
 | A grader measures something else | Withdrawn measurements ([ch. 8.7.5](08-crosscutting-concepts.md)) |
 | A trial is lost to the provider | One re-run in place ([ch. 8.1.4](08-crosscutting-concepts.md)) |
 | The spec changes between rounds | No trial is reused across spec versions |
-| The bar moves after seeing results | The rules in [ch. 1.4](01-introduction-and-goals.md) and this document are committed before the first trial |
+| The bar moves after seeing results | The rules in [ch. 8.1](08-crosscutting-concepts.md) and each round's registration are committed before the first trial |
 | One task measures one task | A stated limitation; `ledger`, a second app, stays sealed for the final claim |

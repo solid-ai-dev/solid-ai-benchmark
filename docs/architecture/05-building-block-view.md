@@ -15,7 +15,7 @@ dependency with its keyword.
 
 | Block | Responsibility | Reads | Writes |
 | ----- | -------------- | ----- | ------ |
-| `generate_arm.py` | Makes a generated arm's file in one non-interactive call, scans prompt and output for leaks, checks the budget | `brief.txt`, the templates source | `arms/<arm>/CLAUDE.md`, `generation.json` |
+| `generate_arm.py` | Makes one arm's file once: fixed text, one non-interactive generation from `agents.md`, or the emitter. Scans prompt and output for leaks | `brief.txt`, the templates source | `arms/<arm>/CLAUDE.md`, `generation.json` |
 | `harness.py` | Prepares each workspace, runs the agent in isolation, catches reach, freezes the result, keeps the run record current | The specs, the arm files, the change prompt | The run root |
 | `reuse.py` | Copies an earlier round's trials and readings into a new root, with their tool lock | An earlier root | The run root, the scoring area |
 | `score.py` | Installs each frozen trial cleanly, runs the hidden suite, the static tools and the adherence checklist, counts scope and cost | The run root, the hidden suite, `scoring-requirements.txt`, `toolconfig/` | `scores/`, `scores-change/` |
@@ -34,7 +34,7 @@ dependency with its keyword.
 | `SPEC-thin.md` | The same contract without the practices, for `--spec thin` | harness |
 | `brief.txt` | What an adopter would type: domain, stack, personal data, boundaries | `generate_arm.py` |
 | `change-prompt.txt` | The change task's prompt, naming everything its grader drives | harness |
-| `arms/<arm>/CLAUDE.md` | Each arm's context file | harness |
+| `arms/<arm>/CLAUDE.md` | Each arm's context file. `arms/skills/skills/` holds the skills arm's skills | harness |
 | `arms/<arm>/generation.json` | How each generated file was made | `report.py` |
 | `scoring-requirements.txt` | The scoring tools, resolved once into the tool lock | `score.py` |
 | `toolconfig/` | `ruff.toml` and `mypy.ini`, the one configuration every arm is measured under | `score.py` |
