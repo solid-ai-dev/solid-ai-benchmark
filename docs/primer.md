@@ -46,14 +46,13 @@ one sitting and strict enough that a wrong cent shows.
 A round turns one knob at a time and holds everything else still. Then any
 change on the meters has one cause.
 
-![Six knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected), the effort (medium or high, with high selected), the task (build or change) and the runs per arm (3 or 5). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler and the judge. Below that, the meters read on every run: hidden tests, attack probes, the judge's scores, conventions, size and cost](diagrams/knobs.png)
+![Five knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, with normal selected), the builder model (Haiku 4.5, Sonnet 5 and Opus 5.5, each at medium or high, with Sonnet 5 high selected), the task (build or change) and the runs per arm (3 or 5). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler and the judge. Below that, the meters read on every run: hidden tests, attack probes, the judge's scores, conventions, size and cost](diagrams/knobs.png)
 
 | Knob | Settings | What turning it asks | Turned in |
 | ---- | -------- | -------------------- | --------- |
 | Context file, the **arm** | `none`, `inline`, `hybrid`, `reference`, `skills` | Does a file help, and which way of delivering the rules | Every round |
 | Specification | normal, thin, overspecified, pressure, conflict | Does a file supply what a sparse spec leaves out, and hold or yield when the spec pushes against it | Thin in round 4. The rest planned, #23 |
-| Builder model | Sonnet 5, Haiku 4.5, Opus 5.5 | Does a file help a weaker model more, and a stronger one less | Haiku in round 4. Opus planned, #23 |
-| Effort | high, medium | Does a file make up for a model thinking less | High so far. Medium planned, #23 |
+| Builder model | Haiku 4.5, Sonnet 5, Opus 5.5, each at medium or high | Does a file help a weaker model more, and a stronger one less | Haiku and Sonnet at high so far. The rest planned, #23 |
 | Task | build, change | Does the design take a change it was not built for | Most rounds. Round 4's thin run only built |
 | Runs per arm, K | 3, at most 5 | How steady a result is | 5 only once, when owed |
 
