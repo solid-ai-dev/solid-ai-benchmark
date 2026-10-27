@@ -186,6 +186,12 @@ The benchmark then compares partners, not averages. `inline-1` is compared
 with `none-1`, `inline-2` with `none-2`, and so on. Three differences come
 out, and those three decide.
 
+Three blocks are the smallest useful set, not a limit. The same pattern
+extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
+give 20. Each extra block adds one more run per arm, and the luck check
+gets sharper with every delta, as section 5.3 explains. The rules cap K at
+5 today, so going further takes a registered decision first.
+
 ### 5.2 The four verdicts
 
 ![Five example rows, each with three dots for three pairs and a bar for the interval they allow. Two rows read Better: the bar lies wholly right of zero, once with the pairs nearly equal and once spread out. Not shown: the pairs disagree and the bar covers zero. Held: the same pairs, whose bar stays clear of the shaded loss past the margin. Worse: every pair got worse, and the bar lies wholly left of zero](diagrams/verdict.png)
