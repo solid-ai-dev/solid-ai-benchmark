@@ -103,7 +103,11 @@ EXCLUDED_DIRS = (".git", ".cursor", ".github", "venv", ".venv", "__pycache__",
                  # The hybrid arm's vendored templates, which name the arm on
                  # every page: stripped with the context file, under the
                  # repository's own name.
-                 "solid-ai-templates")
+                 "solid-ai-templates",
+
+                 # The skills arm's skills, where Claude Code loads them and
+                 # where the emitter writes them: each names its arm.
+                 ".claude", ".agents")
 
 # What scoring leaves in the tree it measured: tool caches, reports and the
 # install's metadata. None of it is the trial's code, and the caches hold
@@ -128,7 +132,8 @@ USER_CACHE_DIRS = (("pip", "cache"), ("Microsoft", "Windows"))
 MARKERS = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "solid-ai-templates",
            "Claude Code", "claude.ai", "CLAUDE", "context file",
            "arm A", "arm B", "arm C", "arm none", "arm full", "arm short",
-           "arm hybrid", "arm hand")
+           "arm hybrid", "arm hand", "arm reference", "arm inline",
+           "arm skills", "SKILL.md")
 
 MASK = "[redacted]"
 
@@ -925,6 +930,11 @@ def bundle_checks(scratch):
     # The trial's name outside a path, where an implementation may use it,
     # is not a leak.
     plant(tree, {code: 'CELL = "full-2"\n', "CLAUDE.md": "# rules\n"})
+
+    # The skills arm's skills, in both folders they can sit in, name the arm.
+    skills = [os.path.join(".claude", "skills", "review", "SKILL.md"),
+              os.path.join(".agents", "skills", "review", "SKILL.md")]
+    plant(tree, {path: "---\nname: review\n---\n" for path in skills})
     output = {
         ".coverage": "SQLite format 3 %s" % scored,
         "complexipy.json": json.dumps([{"path": scored}]),
@@ -953,6 +963,8 @@ def bundle_checks(scratch):
         ("the trial's code reaches the bundle", code in copied),
         ("scoring's output and the environment's stay out of the bundle",
          not any(relative in copied for relative in output)),
+        ("the skills arm's skills stay out of the bundle",
+         not any(relative in copied for relative in skills)),
         ("a bundle holding neither has no leak", stripped["leaks"] == []),
     ]
 

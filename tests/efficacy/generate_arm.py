@@ -1,13 +1,16 @@
-"""Generate one arm's context file, once, without anybody answering anything.
+"""Generate one round-5 arm's context file, once, with nobody answering.
 
-The design's section 3.3 fixes what the interview is told, requires the
-generation to be one non-interactive invocation, and sets the 40-line
-budget arm `short` is generated under and the hybrid model arm `hybrid`
-asks for. This module is that invocation. It resolves the chain at
-the recorded release, builds the prompt from `INTERVIEW.md`, that chain,
-the pinned brief and the arm's model and budget, calls the generator,
-writes `arms/<arm>/CLAUDE.md`, and refuses to keep a result the
-specification leaked into or one over the arm's budget.
+The design's section 13.2 fixes how each arm is made from one chain of the
+templates at one commit. This module makes them:
+
+- `reference` is fixed text naming each template of the chain
+- `inline` and `hybrid` are one non-interactive generation each, following
+  `templates/core/agents.md` with no interview
+- `skills` is what `resolve_chain.py --emit` builds, the facts filled from
+  the brief
+
+It writes `arms/<arm>/CLAUDE.md` (and, for `skills`, the skills beside it),
+and refuses to keep a result the specification leaked into.
 
 Run it once per arm. Re-running it produces a different file and therefore
 a different arm, so it refuses to overwrite an existing one without
@@ -19,15 +22,16 @@ import datetime
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 
-from harness import (RELEASE, TEMPLATES_ENV, VENDORED,  # noqa: E402
-                     TrialError, source_record, templates_root,
-                     agent_environment, agent_executable,
+from harness import (ROUND5_REF, ROUND5_ROOTS,  # noqa: E402
+                     TEMPLATES_ENV, VENDORED, TrialError, source_record,
+                     templates_root, agent_environment, agent_executable,
                      assert_authenticated, assert_outside_repository,
                      prepare_home, read_input)
 
@@ -37,21 +41,27 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # the design links to, for the reason `harness.CHANGE_PROMPT` gives.
 BRIEF = os.path.join(HERE, "brief.txt")
 
-# The arms the interview generates, each with the directory under `arms/`
-# its file and record live in, the interview's output model it is asked for,
-# and its budget as (lines, width) where the design's section 3.3 sets one.
-# Each directory is named after its arm. A record written before the rename
-# still gives the path the file was generated to, as a record should.
+# The arms this module makes, each with the directory under `arms/` its file
+# and record live in, and how it is made: fixed text, a model generation in
+# one of `agents.md`'s models, or the emitter. Round 3's arms (`full`,
+# `short`, `hand`) keep their committed files and records; they were made
+# through an interview that no longer ships upstream.
 GENERATED = {
-    "full": {"dir": "full", "model": "inline", "budget": None},
-    "short": {"dir": "short", "model": "inline", "budget": (40, 88)},
-    "hybrid": {"dir": "hybrid", "model": "hybrid", "budget": None},
+    "reference": {"dir": "reference", "kind": "fixed"},
+    "inline": {"dir": "inline", "kind": "model", "model": "inline"},
+    "hybrid": {"dir": "hybrid", "kind": "model", "model": "hybrid"},
+    "skills": {"dir": "skills", "kind": "emit"},
 }
 
 
 def output_path(arm):
     """Where an arm's generated file is committed."""
     return os.path.join(HERE, "arms", GENERATED[arm]["dir"], "CLAUDE.md")
+
+
+def skills_path(arm):
+    """Where an arm's generated skills are committed, one folder a kind."""
+    return os.path.join(HERE, "arms", GENERATED[arm]["dir"], "skills")
 
 
 def record_path(arm):
@@ -61,11 +71,6 @@ def record_path(arm):
     return os.path.join(HERE, "arms", GENERATED[arm]["dir"],
                         "generation.json")
 
-
-# The roots the design's brief resolves to. Each resolves as its own root
-# per ADR-035, and their chains overlap heavily, so the union is
-# deduplicated before it reaches the prompt.
-ROOTS = ["stack-flask", "stack-htmx", "frontend-ux", "frontend-quality"]
 
 # Two lists, because the prompt and the output are different questions.
 #
@@ -115,17 +120,15 @@ NON_INVENTABLE = [
 # way and stay out of the output list for the same reason.
 
 INSTRUCTION = """\
-You are running the interview in `INTERVIEW.md` for one project, without a
+You generate one project's `CLAUDE.md` from the solid-ai-templates, with no
 person to answer questions.
 
-The project brief below is the whole of what the client has told you. Treat
-it as their answers to the interview's exploring and clarifying phases, and
-carry out the generating phase: produce the project's `CLAUDE.md`.
-
-Do not ask questions; there is nobody to answer them. Where the brief does
-not settle something the interview would have asked, take the default the
-interview itself states, and where it states none, choose what the rules
-below already imply and move on.
+Follow `templates/core/agents.md`, given in full below, for what the file
+holds and how it is written. The project brief below is the whole of what
+the project has said about itself. Adopt every rule of the chain below that
+applies to the project the brief describes, and leave out every rule that
+does not. Where the brief does not settle something, choose what the rules
+already imply and move on; do not ask.
 
 Output the finished `CLAUDE.md` and nothing else: no preamble, no
 explanation, no code fence around the whole document.
@@ -135,7 +138,7 @@ explanation, no code fence around the whole document.
 
 %s
 
-## The interview
+## templates/core/agents.md
 
 %s
 
@@ -144,63 +147,56 @@ explanation, no code fence around the whole document.
 %s
 """
 
-# What each output model's clause tells the generation, in place of the
-# interview's own question about the model. The hybrid clause names where
-# the templates sit in the workspace, because the harness vendors them
-# there rather than adding a submodule, and a file telling its reader to
-# add one would be wrong from its first line.
+# What each output model's clause tells the generation. The hybrid clause
+# names where the templates sit in the workspace, because the harness
+# vendors them there rather than adding a submodule, and a file telling its
+# reader to add one would be wrong from its first line.
 MODELS = {
-    "inline": "Use the interview's inline model.",
-    "hybrid": ("Use the interview's hybrid model. The templates are present "
-               "in the project at `%s/%s/`, the repository's `%s/` directory "
-               "at the same revision as the rules below, as a vendored copy "
-               "rather than a submodule: point there, list the template "
-               "files to read by their paths under it, and do not tell "
-               "anyone to add a submodule."
+    "inline": "Use the inline model of `agents.md`.",
+    "hybrid": ("Use the hybrid model of `agents.md`. The templates are "
+               "present in the project at `%s/%s/`, the repository's `%s/` "
+               "directory at the same revision as the rules below, as a "
+               "vendored copy rather than a submodule: point there, list the "
+               "template files to read by their paths under it, and do not "
+               "tell anyone to add a submodule."
                % (VENDORED["into"], VENDORED["path"], VENDORED["path"])),
 }
 
-# The budget clause, stated in the instruction as the design's section 3.3
-# requires. The width keeps a line from carrying a paragraph. The closing
-# check adds no content; it asks the model to hold a bound it is already
-# given, since a file over it is refused whole.
-BUDGET = """\
-The finished `CLAUDE.md` MUST be at most {lines} lines, blank lines counted,
-and no line may be longer than {width} characters. Keep the rules that matter
-most for this project and leave the rest out; a rule that does not fit is left
-out, not squeezed onto another rule's line.
+# The `reference` arm's whole file: the chain named, nothing copied in.
+REFERENCE = """\
+# tariff
 
-Before you answer, measure every line against {width} characters and shorten
-or split each one over it, then count the lines again. A file over either
-bound is refused whole, never trimmed."""
+Before starting work, read each template below and apply every rule it
+holds that fits this project. They are vendored at `{into}/`, at the
+revision the project adopted.
+
+{files}
+"""
+
+# The facts the emitted root file leaves as slots, each filled from the
+# brief and nothing else. A slot the brief does not settle says so rather
+# than inventing an answer.
+FACTS = {
+    "{{project-name}}": "tariff",
+    "{{one-sentence description}}":
+        "A pricing and invoicing web application: a product catalog, "
+        "discount rules, tax jurisdictions, customers and invoices.",
+    "{{owner}}": "Imbra Ltd",
+    "{{repository}}": "this repository",
+    "{{the commands to build, test and run the project}}":
+        "Python 3.12, Flask 3, Jinja, HTMX and SQLite, managed with uv; "
+        "check with ruff, mypy strict and pytest. It runs locally; there is "
+        "no deployment target.",
+    "{{approver}}": "not stated in the brief",
+    "{{tracker}}": "not stated in the brief",
+    "{{release}}": "not stated in the brief; the application runs locally",
+}
+SLOT = re.compile(r"\{\{[^}]+\}\}")
 
 
 def arm_clause(arm):
-    """The model and budget paragraph for one arm's instruction."""
-    entry = GENERATED[arm]
-    lines = ["## The output model", "", MODELS[entry["model"]]]
-    if entry["budget"]:
-        count, width = entry["budget"]
-        lines.extend(["", "## The budget", "",
-                      BUDGET.format(lines=count, width=width)])
-    return "\n".join(lines) + "\n"
-
-
-def over_budget(document, budget):
-    """Every way a generated file exceeds its (lines, width) budget, as
-    sentences; empty where it fits or has no budget."""
-    if not budget:
-        return []
-    lines, width = budget
-    text = document.rstrip("\n").split("\n")
-    findings = []
-    if len(text) > lines:
-        findings.append("%d lines, over the budget of %d" % (len(text), lines))
-    widest = max((len(line) for line in text), default=0)
-    if widest > width:
-        findings.append("a line of %d characters, over the width of %d"
-                        % (widest, width))
-    return findings
+    """The model paragraph for one model arm's instruction."""
+    return "## The output model\n\n%s\n" % MODELS[GENERATED[arm]["model"]]
 
 
 def read_brief(path=BRIEF):
@@ -218,7 +214,7 @@ def read_brief(path=BRIEF):
 
 
 def worktree_at(ref):
-    """A throwaway worktree pinned to `ref`, so the chain is that release's.
+    """A throwaway worktree of the templates pinned to `ref`.
 
     Resolution reads a tree. Running the resolver against the checkout would
     read whatever is checked out now, which is the defect this avoids: a
@@ -228,8 +224,7 @@ def worktree_at(ref):
     path = tempfile.mkdtemp(prefix="efficacy-%s-" % ref.replace(".", "_"))
     shutil.rmtree(path)
     proc = subprocess.run(["git", "-C", templates_root(), "worktree", "add",
-                           "-q",
-                           "--detach", path, ref],
+                           "-q", "--detach", path, ref],
                           capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         raise TrialError("could not create a worktree at %s: %s"
@@ -239,20 +234,20 @@ def worktree_at(ref):
 
 def remove_worktree(path):
     subprocess.run(["git", "-C", templates_root(), "worktree", "remove",
-                    "--force",
-                    path], capture_output=True, text=True, encoding="utf-8")
+                    "--force", path],
+                   capture_output=True, text=True, encoding="utf-8")
 
 
 def resolve_union(tree, roots):
     """The deduplicated file list for every root, in resolution order."""
     union = []
     for root in roots:
-        proc = subprocess.run([sys.executable, "tools/resolve.py", root],
+        proc = subprocess.run([sys.executable, "tools/resolve_chain.py", root],
                               cwd=tree, capture_output=True, text=True,
                               encoding="utf-8")
         if proc.returncode != 0:
             raise TrialError("resolving %s failed: %s"
-                             % (root, proc.stderr.strip()))
+                             % (root, (proc.stdout + proc.stderr).strip()))
         files = [line.strip() for line in proc.stdout.splitlines()
                  if line.strip().endswith(".md")]
         if not files:
@@ -267,9 +262,7 @@ def read_chain(tree, files):
     """Concatenate the resolved templates, each under its own path."""
     parts = []
     for name in files:
-        path = name if os.path.isabs(name) else os.path.join(tree, name)
-        if not os.path.exists(path):
-            path = os.path.join(tree, "templates", name)
+        path = os.path.join(tree, name)
         if not os.path.exists(path):
             raise TrialError("resolved file %s is not in the tree" % name)
         with io.open(path, encoding="utf-8") as handle:
@@ -285,14 +278,55 @@ def scan(text, label, tokens):
     return {"where": label, "hits": hits}
 
 
-def build_prompt(tree, arm):
-    interview_path = os.path.join(tree, "templates", "INTERVIEW.md")
-    with io.open(interview_path, encoding="utf-8") as handle:
-        interview = handle.read()
-    files = resolve_union(tree, ROOTS)
-    chain = read_chain(tree, files)
-    prompt = INSTRUCTION % (arm_clause(arm), read_brief(), interview, chain)
-    return prompt, files
+def build_prompt(tree, arm, files):
+    """The model arm's prompt: its model, the brief, agents.md, the chain."""
+    with io.open(os.path.join(tree, "templates", "core", "agents.md"),
+                 encoding="utf-8") as handle:
+        agents = handle.read()
+    return INSTRUCTION % (arm_clause(arm), read_brief(), agents,
+                          read_chain(tree, files))
+
+
+def reference_text(files):
+    """The `reference` arm's file for a chain, the same for the same chain."""
+    listed = "\n".join("- `%s/%s`" % (VENDORED["into"], name)
+                       for name in files)
+    return REFERENCE.format(into=VENDORED["into"], files=listed)
+
+
+def fill_facts(text):
+    """The emitted root file with every fact slot filled from the brief."""
+    for slot, value in FACTS.items():
+        text = text.replace(slot, value)
+    left = SLOT.findall(text)
+    if left:
+        raise TrialError("the emitted root file has slots the brief does not "
+                         "fill: %s" % ", ".join(sorted(set(left))))
+    return text
+
+
+def emit_arm(tree, roots):
+    """The `skills` arm, built by the templates' emitter: the root file with
+    its facts filled, and {kind: SKILL.md text}."""
+    out = tempfile.mkdtemp(prefix="efficacy-emit-")
+    try:
+        proc = subprocess.run(
+            [sys.executable, "tools/resolve_chain.py", "--emit", out] + roots,
+            cwd=tree, capture_output=True, text=True, encoding="utf-8")
+        if proc.returncode != 0:
+            raise TrialError("the emitter failed: %s"
+                             % (proc.stdout + proc.stderr).strip())
+        with io.open(os.path.join(out, "AGENTS.md"), encoding="utf-8") as h:
+            root = fill_facts(h.read())
+        skills = {}
+        base = os.path.join(out, ".agents", "skills")
+        for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+            with io.open(os.path.join(base, kind, "SKILL.md"),
+                         encoding="utf-8") as h:
+                skills[kind] = h.read()
+        return root, skills
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
 
 
 def agent_command(home, model, effort, budget):
@@ -325,7 +359,7 @@ def extract_document(payload, raw):
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
-        description="Generate one arm's context file, non-interactively.")
+        description="Generate one round-5 arm's context file.")
     parser.add_argument("--arm", choices=sorted(GENERATED),
                         help="the arm to generate; required for everything "
                              "but --self-test")
@@ -333,9 +367,9 @@ def parse_args(argv):
                         help="scratch directory for the isolated home and the "
                              "record; MUST be outside this repository. "
                              "Required for everything but --self-test")
-    parser.add_argument("--ref", default=RELEASE,
-                        help="the release to resolve the chain at "
-                             "(default %s)" % RELEASE)
+    parser.add_argument("--ref", default=ROUND5_REF,
+                        help="the templates commit to resolve the chain at "
+                             "(default %s, the design's)" % ROUND5_REF)
     parser.add_argument("--templates",
                         help="a git clone of the templates repository, "
                              "upstream or a fork; overrides %s"
@@ -350,18 +384,19 @@ def parse_args(argv):
     parser.add_argument("--dry-run", action="store_true",
                         help="build and scan the prompt, call no model")
     parser.add_argument("--self-test", action="store_true",
-                        help="prove the leak scan and the budget can fail, "
-                             "then exit")
+                        help="prove the scans, the fixed text and the facts "
+                             "can fail, then exit")
     return parser.parse_args(argv)
 
 
 def self_test():
-    """A scan that cannot fail is not a control, and neither is a budget.
+    """A scan that cannot fail is not a control, and neither is a fill.
 
-    Plants one specification-only token in a clean text and requires the
-    scan to report it, then requires a clean text to scan clean. Plants a
-    file one line over the budget and one a character too wide, and
-    requires each refused and a file at both bounds kept.
+    Plants a specification-only token and requires the scan to report it,
+    and a clean text to scan clean. Requires the reference text to name
+    every file under the vendored path and to be the same twice. Requires a
+    fact slot the brief does not fill to be refused, and every known slot
+    filled.
     """
     clean = "A pricing and invoicing web application with discount rules."
     if scan(clean, "clean", PROMPT_TOKENS) is not None:
@@ -373,31 +408,28 @@ def self_test():
         print("FAIL: the scan missed a planted specification token")
         return 1
     print("the leak scan reports a planted token and passes clean text")
-    print("  planted hit: %r" % found["hits"])
 
-    budget = GENERATED["short"]["budget"]
-    lines, width = budget
-    at_bounds = "\n".join(["x" * width] * lines) + "\n"
-    if over_budget(at_bounds, budget):
-        print("FAIL: a file at both bounds was refused")
+    files = ["templates/core/quality.md", "templates/backend/api.md"]
+    text = reference_text(files)
+    if text != reference_text(files) or not all(
+            "`%s/%s`" % (VENDORED["into"], f) in text for f in files):
+        print("FAIL: the reference text is not the chain under the vendored "
+              "path, the same every time")
         return 1
-    long = "\n".join(["x"] * (lines + 1)) + "\n"
-    wide = "\n".join(["x" * (width + 1)] + ["x"] * (lines - 1)) + "\n"
-    if not over_budget(long, budget) or not over_budget(wide, budget):
-        print("FAIL: a file over the budget was kept")
+    print("the reference text names every file under %s/, the same twice"
+          % VENDORED["into"])
+
+    known = " ".join(FACTS)
+    if SLOT.search(fill_facts(known)):
+        print("FAIL: a known fact slot was left unfilled")
         return 1
-    if over_budget(long, None):
-        print("FAIL: an arm with no budget refused a file")
+    try:
+        fill_facts(known + " {{unknown}}")
+        print("FAIL: a slot the brief does not fill was kept")
         return 1
-    print("the budget keeps a file at %d lines of %d characters and refuses "
-          "one over either" % (lines, width))
-    if "MUST be at most %d lines" % lines not in arm_clause("short") \
-            or "measure every line against %d" % width \
-            not in arm_clause("short") \
-            or "budget" in arm_clause("full").lower():
-        print("FAIL: the budget clause is not in short's instruction alone")
-        return 1
-    print("the budget is stated in short's instruction and no other")
+    except TrialError:
+        pass
+    print("every known fact slot is filled, and an unknown one is refused")
     return 0
 
 
@@ -418,7 +450,8 @@ def main(argv):
         print("refused: %s" % error)
         return 1
 
-    output = output_path(options.arm)
+    arm, entry = options.arm, GENERATED[options.arm]
+    output = output_path(arm)
     if os.path.exists(output) and not options.replace:
         print("refused: %s already exists. An arm is generated once; "
               "regenerating changes the arm. Pass --replace if that is what "
@@ -427,124 +460,123 @@ def main(argv):
 
     os.makedirs(options.root, exist_ok=True)
     started_at = datetime.datetime.now()
+    record = {"arm": arm, "kind": entry["kind"],
+              "output_model": entry.get("model"), "ref": options.ref,
+              "source": source_record(options.ref), "roots": ROUND5_ROOTS,
+              "started_at": started_at.isoformat(timespec="seconds")}
     tree = worktree_at(options.ref)
     try:
-        prompt, files = build_prompt(tree, options.arm)
-        head = subprocess.run(["git", "-C", tree, "rev-parse", "HEAD"],
-                              capture_output=True, text=True,
-                              encoding="utf-8").stdout.strip()
+        files = resolve_union(tree, ROUND5_ROOTS)
+        record["commit"] = subprocess.run(
+            ["git", "-C", tree, "rev-parse", "HEAD"], capture_output=True,
+            text=True, encoding="utf-8").stdout.strip()
+        record["resolved_files"] = files
+        skills = {}
+        if entry["kind"] == "fixed":
+            document = reference_text(files)
+        elif entry["kind"] == "emit":
+            document, skills = emit_arm(tree, ROUND5_ROOTS)
+        else:
+            prompt = build_prompt(tree, arm, files)
     finally:
         remove_worktree(tree)
+    print("chain at %s (%s): %d unique files"
+          % (options.ref, record["commit"][:8], len(files)))
 
-    record = {
-        "arm": options.arm,
-        "output_model": GENERATED[options.arm]["model"],
-        "budget": GENERATED[options.arm]["budget"],
-        "ref": options.ref,
-        "commit": head,
-        "source": source_record(options.ref),
-        "roots": ROOTS,
-        "resolved_files": files,
-        "prompt_chars": len(prompt),
-        "model": options.model,
-        "effort": options.effort,
-        "started_at": started_at.isoformat(timespec="seconds"),
-    }
-    print("chain at %s (%s): %d unique files, %d prompt chars"
-          % (options.ref, head[:8], len(files), len(prompt)))
+    if entry["kind"] == "model":
+        document = generate(options, record, prompt, started_at)
+        if document is None:
+            write_record(options.root, record, started_at)
+            return 0 if record.get("outcome") == "dry-run" else 1
 
+    texts = [document] + list(skills.values())
+    leak = scan("\n".join(texts), "generated files", NON_INVENTABLE)
+    record["output_leak"] = leak
+    if leak is not None:
+        record["outcome"] = "refused: specification leaked"
+        print("refused: the generated files carry data only the "
+              "specification supplies: %r" % leak["hits"])
+        return write_record(options.root, record, started_at) or 1
+
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    with io.open(output, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(document.rstrip() + "\n")
+    if entry["kind"] == "emit":
+        shutil.rmtree(skills_path(arm), ignore_errors=True)
+        for kind, text in skills.items():
+            path = os.path.join(skills_path(arm), kind, "SKILL.md")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+        record["skills"] = {kind: len(text.split())
+                            for kind, text in skills.items()}
+    record["outcome"] = "generated"
+    record["output"] = output
+    record["output_lines"] = document.rstrip("\n").count("\n") + 1
+    record["output_words"] = len(document.split())
+    print("wrote %s: %d lines, %d words%s"
+          % (output, record["output_lines"], record["output_words"],
+             ", %d skills" % len(skills) if skills else ""))
+    keep_record(record, record_path(arm))
+    print("Record kept beside it: %s" % record_path(arm))
+    return write_record(options.root, record, started_at)
+
+
+def generate(options, record, prompt, started_at):
+    """Run the model generation; the document, or None with the record
+    saying why not."""
+    record["prompt_chars"] = len(prompt)
     leak = scan(prompt, "prompt", PROMPT_TOKENS)
     record["prompt_leak"] = leak
     if leak is not None:
+        record["outcome"] = "refused: prompt leak"
         print("refused: the prompt carries specification-only tokens, so the "
               "wiring is wrong: %r" % leak["hits"])
-        return 1
-    print("prompt carries no specification-only token")
-
+        return None
     prompt_path = os.path.join(options.root, "arm-%s-prompt.txt" % options.arm)
     with io.open(prompt_path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(prompt)
     record["prompt_file"] = prompt_path
-
     if options.dry_run:
         record["outcome"] = "dry-run"
         print("dry run: prompt written to %s, no model called" % prompt_path)
-        return write_record(options.root, record, started_at)
+        return None
 
     home = prepare_home(options.root)
     try:
-        ready = assert_authenticated(home, agent_environment,
-                                     agent_executable())
+        record["auth_probe"] = assert_authenticated(
+            home, agent_environment, agent_executable())
     except TrialError as error:
-        print("refused: %s" % error)
         record["outcome"] = "refused: not authenticated"
-        return write_record(options.root, record, started_at) or 1
-    record["auth_probe"] = ready
-    print("the isolated home reaches the model: %r" % ready)
-
+        print("refused: %s" % error)
+        return None
     argv_ = agent_command(home, options.model, options.effort, options.budget)
-    record["command"] = argv_
-    env = agent_environment(home)
-
+    record.update({"command": argv_, "model": options.model,
+                   "effort": options.effort})
     started = time.monotonic()
     try:
-        proc = subprocess.run(argv_, input=prompt, cwd=options.root, env=env,
+        proc = subprocess.run(argv_, input=prompt, cwd=options.root,
+                              env=agent_environment(home),
                               capture_output=True, text=True,
                               encoding="utf-8", timeout=options.timeout)
     except subprocess.TimeoutExpired:
         record["outcome"] = "timeout"
         print("the generator did not finish within %ds" % options.timeout)
-        return write_record(options.root, record, started_at) or 1
+        return None
     record["elapsed_s"] = round(time.monotonic() - started, 1)
     record["exit_status"] = proc.returncode
-
     try:
         payload = json.loads(proc.stdout)
     except ValueError:
         payload = None
     record["result"] = payload if isinstance(payload, dict) else None
     document = extract_document(payload, proc.stdout)
-
     if proc.returncode != 0 or not document:
         record["outcome"] = "failed"
         record["stderr"] = proc.stderr[-4000:]
         print("the generator failed (status %s)" % proc.returncode)
-        return write_record(options.root, record, started_at) or 1
-
-    leak = scan(document, "generated file", NON_INVENTABLE)
-    record["output_leak"] = leak
-    excess = over_budget(document, GENERATED[options.arm]["budget"])
-    record["over_budget"] = excess
-    if leak is not None or excess:
-        rejected = os.path.join(options.root, "arm-%s-REJECTED.md"
-                                % options.arm)
-        with io.open(rejected, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(document)
-        if leak is not None:
-            record["outcome"] = "refused: specification leaked"
-            print("refused: the generated file carries data only the "
-                  "specification supplies: %r" % leak["hits"])
-        else:
-            record["outcome"] = "refused: over the budget"
-            print("refused: the generated file is %s" % "; ".join(excess))
-        print("the rejected file is at %s" % rejected)
-        return write_record(options.root, record, started_at) or 1
-
-    os.makedirs(os.path.dirname(output), exist_ok=True)
-    with io.open(output, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(document.rstrip() + "\n")
-    record["outcome"] = "generated"
-    record["output"] = output
-    record["output_chars"] = len(document)
-    record["output_lines"] = document.rstrip("\n").count("\n") + 1
-    record["output_width"] = max(len(line) for line in document.splitlines())
-    print("wrote %s: %d lines, %d chars, widest line %d"
-          % (output, record["output_lines"], record["output_chars"],
-             record["output_width"]))
-    print("no specification-only token in the generated file")
-    keep_record(record, record_path(options.arm))
-    print("Record kept beside it: %s" % record_path(options.arm))
-    return write_record(options.root, record, started_at)
+        return None
+    return document
 
 
 def keep_record(record, path):
