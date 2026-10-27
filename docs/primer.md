@@ -176,7 +176,7 @@ Section 5 explains the comparison and the verdicts.
 
 ### 5.1 Pairs, not averages
 
-![Fifteen runs in three blocks, five arms per block, run one after another: none-1, inline-1, hybrid-1, reference-1 and skills-1, then block 2, then block 3. A contrast such as inline minus none is three differences, inline-1 minus none-1, inline-2 minus none-2 and inline-3 minus none-3, with one interval over the three](diagrams/run-order.png)
+![Fifteen runs in a grid, one row per block and one column per arm: none, inline, hybrid, reference and skills. Each block runs every arm once, then the next block starts. Below the grid, each context-file arm has three deltas against none, such as inline-1 minus none-1, inline-2 minus none-2 and inline-3 minus none-3, which go through one luck check and get one verdict per meter](diagrams/run-order.png)
 
 A model's behaviour drifts from day to day. So the arms take turns: block 1
 runs every arm once, back to back, then block 2, then block 3. Runs in one
@@ -186,22 +186,48 @@ The benchmark then compares partners, not averages. `inline-1` is compared
 with `none-1`, `inline-2` with `none-2`, and so on. Three differences come
 out, and those three decide.
 
+Three blocks are the smallest useful set, not a limit. The same pattern
+extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
+give 20. Each extra block adds one more run per arm, and the luck check
+gets sharper with every delta, as section 5.3 explains.
+
 ### 5.2 The four verdicts
 
 ![Five example rows, each with three dots for three pairs and a bar for the interval they allow. Two rows read Better: the bar lies wholly right of zero, once with the pairs nearly equal and once spread out. Not shown: the pairs disagree and the bar covers zero. Held: the same pairs, whose bar stays clear of the shaded loss past the margin. Worse: every pair got worse, and the bar lies wholly left of zero](diagrams/verdict.png)
 
-| Verdict | Means | Does not mean |
-| ------- | ----- | ------------- |
-| **Better** | Every reasonable reading of the pairs improved | That the gain is large |
-| **Worse** | Every reasonable reading got worse | That the context file is useless |
-| **Not shown** | The pairs disagree, so no direction is clear | That the two are equal |
-| **Held** | Not shown, and no loss beyond a set **margin** | That it improved |
-
 The bar is the luck check of the round-flow diagram. Its range is the
 **likely range**, which statisticians call a bootstrap interval: where the
-average difference would land if the runs were redone.
-The benchmark finds it by resampling the three differences thousands of
-times. A bar that covers zero cannot tell better from worse.
+average difference would land if the runs were redone. The benchmark finds
+it by resampling the differences thousands of times.
+
+The verdicts answer two different questions.
+
+**Did the context file change the result?**
+
+| Verdict | Means | Does not mean |
+| ------- | ----- | ------------- |
+| **Better** | The whole range is a gain | That the gain is large |
+| **Worse** | The whole range is a loss | That the context file is useless |
+| **Not shown** | The range covers zero: some reruns would gain, some would lose | That the two are equal. It is undecided |
+
+**Is it at least as good?**
+
+| Verdict | Means | Does not mean |
+| ------- | ----- | ------------- |
+| **Held** | Even the worst end of the range is a small loss, within a **margin** fixed in advance | That it improved |
+
+Not shown says there is no proof it is better. Held says there is proof it
+is not much worse. For hidden tests the margin is 2 points:
+
+| Likely range | Changed the result? | At least as good? |
+| ------------ | ------------------- | ----------------- |
+| +1 to +4 points | Better | Held |
+| −1 to +3 points | Not shown | Held: at worst 1 point lost, within the 2 tolerated |
+| −5 to +3 points | Not shown | Not held: up to 5 points could be lost |
+
+Held is what a trim of the templates, or round 5's question whether skills
+deliver what hybrid does, needs: a way to show two things are as good as
+each other, which not shown alone can never do.
 
 ### 5.3 Three runs are a signal
 
