@@ -1126,7 +1126,7 @@ away from block A, so a result that holds in all three does not hang on the
 specification or the model.
 
 | Block | Specification | Model | Trials |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | A, main | `SPEC.md` | `claude-sonnet-5`, effort `high` | 5 arms × K = 3 |
 | B, thin | `SPEC-thin.md` | `claude-sonnet-5`, effort `high` | 5 arms × K = 3 |
 | C, weaker | `SPEC.md` | `claude-haiku-4-5-20251001`, effort `high` | 5 arms × K = 3 |
@@ -1146,7 +1146,7 @@ resolution order. Every generated file is made once for the round, before
 block A, and committed with the record of how it was made.
 
 | Arm | What the agent gets | How it is made |
-|---|---|---|
+| --- | --- | --- |
 | `none` | Nothing | — |
 | `reference` | A file naming each template of the chain, to read before starting, with the templates vendored as `hybrid`'s are | Fixed text, written once |
 | `inline` | Every adopted rule, copied in | One non-interactive generation following `templates/core/agents.md`, inline model |
@@ -1175,7 +1175,7 @@ file's line and word count, and the report prints them.
 **H1, ADR-058.** A root file with task skills delivers what hybrid delivers.
 
 | | |
-|---|---|
+| --- | --- |
 | Contrast | `skills` minus `hybrid`, paired within the block |
 | Primary rows | adherence, the security and data-protection probe pass rates, and the judge's security and data-protection rows |
 | Supported | in block A, every primary row is held (section 1.2's margins) or better |
@@ -1186,7 +1186,7 @@ file's line and word count, and the report prints them.
 agree with each other more than a generated hybrid file does.
 
 | | |
-|---|---|
+| --- | --- |
 | Measure | conventions agreement, as section 12.1 defines it, per arm and block |
 | Supported | `skills` agrees at least as much as `hybrid` in every block run |
 | Refuted | `skills` agrees less than `hybrid` by 0.15 or more in any block |
@@ -1198,7 +1198,7 @@ is descriptive.
 hybrid.
 
 | | |
-|---|---|
+| --- | --- |
 | Contrast | `reference` minus `hybrid`, paired within the block |
 | Primary rows | as H1 |
 | Supported | in block A, any primary row is worse |

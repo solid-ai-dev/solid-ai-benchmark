@@ -79,7 +79,7 @@ py tests/efficacy/generate_arm.py --arm inline --root <outside this repository>
 templates at `harness.ROUND5_REF`, resolved for `harness.ROUND5_ROOTS`.
 
 | Arm | Made by |
-|---|---|
+| --- | --- |
 | `reference` | fixed text naming each file of the chain under the vendored path |
 | `inline`, `hybrid` | one non-interactive generation following `templates/core/agents.md`, no interview, from `brief.txt` |
 | `skills` | `resolve_chain.py --emit` with `harness.ROUND5_DECLINED`, the facts filled from the brief |
