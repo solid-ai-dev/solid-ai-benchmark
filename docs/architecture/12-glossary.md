@@ -53,6 +53,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Templates source | A git clone of `solid-ai-templates` or a fork, named by `--templates`. The arms are built from it and the reports land in it |
 | Tool lock | `tool-lock.txt`: the scoring tools' versions, frozen from the first trial scored and installed for every other |
 | Trial | One agent session on one arm in one block, named `<arm>-<block>`, such as `short-2` |
+| Undecided | The primer's word for no improvement shown: the likely range covers zero, so neither better nor worse can be claimed |
 | Verdict | Better, worse or no improvement shown, per metric per contrast, from where the interval lies |
 | Verdict vector | Every verdict of a round, printed at the end of the report |
 | Void | `void/` in the run root, where a blocked or reached trial's workspace is kept and never scored |

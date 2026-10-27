@@ -130,7 +130,7 @@ Fixed in every run, so only the knobs can move the meters:
 
 ## 4. One round, start to finish
 
-![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, checks whether the difference would hold if the runs were redone, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
+![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, checks whether the difference would hold if the runs were redone, and gives one verdict per meter: better, worse or undecided. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
 
 ### 4.1 Before the round
 
@@ -166,7 +166,7 @@ own, in any order.
    with the run of the same block that had none: `inline-1` minus `none-1`.
 2. **Luck check.** The differences are checked for whether they would hold
    if the runs were redone.
-3. **Verdict.** Each meter gets one: better, worse or not shown.
+3. **Verdict.** Each meter gets one: better, worse or undecided.
 4. **Consistency.** The runs of one arm are also compared with each other.
    How alike they came out is the arm's **consistency**, read in %.
 
@@ -193,7 +193,7 @@ gets sharper with every delta, as section 5.3 explains.
 
 ### 5.2 The four verdicts
 
-![Four example ranges of the hidden-test delta, each with two verdicts, against a margin of 2 points. Plus 1 to plus 4: better, and held. Minus 1 to plus 3: not shown, because the bar covers zero, but held, because it stays right of the margin. Minus 5 to plus 3: not shown, and not held, because it reaches past the margin. Minus 4 to minus 1: worse, and not held](diagrams/verdict.png)
+![Four example ranges of the hidden-test delta, each with two verdicts, against a margin of 2 points. Plus 1 to plus 4: better, and held. Minus 1 to plus 3: undecided, because the bar covers zero, but held, because it stays right of the margin. Minus 5 to plus 3: undecided, and not held, because it reaches past the margin. Minus 4 to minus 1: worse, and not held](diagrams/verdict.png)
 
 The bar is the luck check of the round-flow diagram. Its range is the
 **likely range**, which statisticians call a bootstrap interval: where the
@@ -208,7 +208,7 @@ The verdicts answer two different questions.
 | ------- | ----- | ------------- |
 | **Better** | The whole range is a gain | That the gain is large |
 | **Worse** | The whole range is a loss | That the context file is useless |
-| **Not shown** | The range covers zero: some reruns would gain, some would lose | That the two are equal. It is undecided |
+| **Undecided** | The range covers zero: some reruns would gain, some would lose | That the two are equal |
 
 **Is it at least as good?**
 
@@ -216,18 +216,18 @@ The verdicts answer two different questions.
 | ------- | ----- | ------------- |
 | **Held** | Even the worst end of the range is a small loss, within a **margin** fixed in advance | That it improved |
 
-Not shown says there is no proof it is better. Held says there is proof it
+Undecided says there is no proof it is better. Held says there is proof it
 is not much worse. For hidden tests the margin is 2 points:
 
 | Likely range | Changed the result? | At least as good? |
 | ------------ | ------------------- | ----------------- |
 | +1 to +4 points | Better | Held |
-| −1 to +3 points | Not shown | Held: at worst 1 point lost, within the 2 tolerated |
-| −5 to +3 points | Not shown | Not held: up to 5 points could be lost |
+| −1 to +3 points | Undecided | Held: at worst 1 point lost, within the 2 tolerated |
+| −5 to +3 points | Undecided | Not held: up to 5 points could be lost |
 
 Held is what a trim of the templates, or round 5's question whether skills
 deliver what hybrid does, needs: a way to show two things are as good as
-each other, which not shown alone can never do.
+each other, which an undecided verdict alone can never give.
 
 ### 5.3 Three runs are a signal
 
