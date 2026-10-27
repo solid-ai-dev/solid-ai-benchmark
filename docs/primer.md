@@ -189,7 +189,7 @@ out, and those three decide.
 Three blocks are the smallest useful set, not a limit. The same pattern
 extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
 give 20. Each extra block adds one more run per arm, and the luck check
-gets sharper with every delta, as section 5.3 explains.
+gets sharper with every delta, as section 5.3 shows.
 
 ### 5.2 The four verdicts
 
@@ -211,12 +211,19 @@ A yes, which the design calls **held**, is what a trim of the templates
 needs, or round 5's question whether skills deliver what hybrid does: proof
 that a change is not much worse.
 
-### 5.3 Three runs are a signal
+### 5.3 How many runs it takes
 
-Three runs describe a result. They do not prove it. Every report says so
-beside every number. When a result is close, the rules allow one step up
-to five runs, once, and never more. Running until a result appears would
-manufacture one.
+Each round fixes K, the runs per arm, before it starts. The more runs, the
+stronger the claim:
+
+| Runs per arm | What a result can claim |
+| ------------ | ----------------------- |
+| 3 | A signal. Every report says so beside every number |
+| 6 | The fewest where every pair pointing one way counts as proof |
+| about 10 | Enough to catch an effect as big as the run-to-run noise |
+
+A close result may get one step up in runs, once. Running until a result
+appears would manufacture one.
 
 ## 6. The rules that keep it honest
 
