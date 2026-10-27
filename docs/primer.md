@@ -240,36 +240,3 @@ until it lands heads.
 | A run the provider cut off is re-run once | The provider cut it, not the agent |
 | A meter that turns out to measure something else is withdrawn | A wrong number is worse than no number |
 | A tool that scanned nothing records "missing", never zero | Zero must mean "clean", not "not measured" |
-
-## 7. What the evidence says so far
-
-What the evidence supports today, in the words of the
-[assessment](design/efficacy-assessment.md):
-
-- **Supported, as a signal:** a context file's conventions get followed more.
-- **Supported:** a context file does not break software that already works.
-- **Not supported:** a context file makes a strong model write better code.
-- **Contradicted:** using the templates costs little. The files made the
-  app up to 180 % bigger and most builds dearer.
-- **Contradicted:** a longer file is better. Length tracked cost, not
-  quality.
-
-## 8. What it cannot tell you yet
-
-- **One app.** Everything so far is `tariff`. A second app, `ledger`, is
-  kept sealed for the final claim.
-- **Three runs.** Every result is a signal, not proof.
-- **One agent.** Every build is Claude Code. Another agent reading
-  `AGENTS.md` is untested.
-- **One sitting.** No run yet follows a project over months, which is
-  where the templates claim to matter most.
-
-## 9. Where to go next
-
-| To | Read |
-| -- | ---- |
-| See every rule and threshold | [The design](design/efficacy-benchmark.md) |
-| See what the evidence means for the templates | [The assessment](design/efficacy-assessment.md) |
-| Understand how the parts fit together | [The architecture](architecture/01-introduction-and-goals.md) |
-| Follow a person through a task | [User journeys](journeys/index.md) |
-| Run it | [The harness guide](guides/efficacy-harness.md) |
