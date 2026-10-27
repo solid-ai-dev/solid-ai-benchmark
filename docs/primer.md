@@ -41,10 +41,13 @@ prices a basket of products with discounts and tax, signs in one
 administrator and keeps customer records. It is small enough to build in
 one sitting and strict enough that a wrong cent shows.
 
-## 3. The knobs
+## 3. The test machine
 
-A round turns one knob at a time and holds everything else still. Then any
-change on the meters has one cause.
+The benchmark works like a test machine with knobs to turn and meters to
+read. A round turns one knob at a time and holds everything else still.
+Then any change on the meters has one cause.
+
+### 3.1 Knobs and meters
 
 ![Four knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected) and the task (build, change, fix, refactor, review, evolve, with build selected). Below them, the meters: hidden tests, attack probes, the judge's scores, conventions, size, cost, and consistency, how alike an arm's runs are.](diagrams/knobs.png)
 
@@ -55,39 +58,12 @@ change on the meters has one cause.
 | Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a context file help a weaker model more, and a stronger one less |
 | Task | build, change, fix, refactor, review, evolve | Does a context file help beyond a first build, and over a project's life |
 
-Fixed in every run, so only the knobs can move the meters:
+The meters are described in [section 4](#4-one-round-start-to-finish),
+where each run is scored.
 
-- **The app:** `tariff`, a small invoicing web app
-- **The bounds:** at most $100 or two hours per run
-- **The prompt:** one fixed sentence, the same for every arm
-- **The ruler:** the same tool versions and settings for every run
-- **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
-  each app three times
-- **Runs per arm:** 3, or 5 once when a result is close
+### 3.2 Context files
 
-The six specs:
-
-| Spec | What it does | What it tests |
-| ---- | ------------ | ------------- |
-| Thin | Keeps the contract the hidden tests drive, drops the good practices | Does a context file supply the defences the spec leaves out |
-| Normal | The contract and the practices | The baseline every other spec is compared with |
-| Overspecified | Dictates the "how" too: layout, tools, password storage | Should show no effect. A context file that still moves the meters points at the ruler |
-| Pressure | Asks for a bad practice, such as an export with no sign-in | Do the context file's security rules hold |
-| Conflict | Contradicts the context file, such as a flat layout where it says `src/` | Does the project's own decision win, as it should |
-| Broken | Holds a planted fault, such as two rounding rules that clash, with the hidden tests asserting one | Does a context file make the agent notice and report the fault, in its README or commit, instead of guessing |
-
-The six tasks:
-
-| Task | What the agent does | What it tests |
-| ---- | ------------------- | ------------- |
-| Build | Builds the app from an empty folder | The baseline every other task is compared with |
-| Change | Adds a feature the design was not built for | How far the design has to be disturbed |
-| Fix | Fixes a planted bug from a bug report | Does it fix it narrowly and add a test that catches it |
-| Refactor | Improves the structure without changing behaviour | Does a context file guide good design when nothing new is asked |
-| Review | Reviews a change with planted defects | Does a context file make it catch more of them |
-| Evolve | Works on one project over a chain of sessions | Do the conventions hold over time, where a bare agent drifts |
-
-The five arms:
+The five arms, the settings of the first knob:
 
 | Arm | What the agent gets | What it isolates |
 | --- | ------------------- | ---------------- |
@@ -98,6 +74,41 @@ The five arms:
 | `skills` | A short root file plus one skill per kind of task, loaded when the task needs it | Does a root file with skills deliver what hybrid does |
 
 The design's section 13 registers the arms and the questions they answer.
+
+### 3.3 Specs
+
+| Spec | What it does | What it tests |
+| ---- | ------------ | ------------- |
+| Thin | Keeps the contract the hidden tests drive, drops the good practices | Does a context file supply the defences the spec leaves out |
+| Normal | The contract and the practices | The baseline every other spec is compared with |
+| Overspecified | Dictates the "how" too: layout, tools, password storage | Should show no effect. A context file that still moves the meters points at the ruler |
+| Pressure | Asks for a bad practice, such as an export with no sign-in | Do the context file's security rules hold |
+| Conflict | Contradicts the context file, such as a flat layout where it says `src/` | Does the project's own decision win, as it should |
+| Broken | Holds a planted fault, such as two rounding rules that clash, with the hidden tests asserting one | Does a context file make the agent notice and report the fault, in its README or commit, instead of guessing |
+
+### 3.4 Tasks
+
+| Task | What the agent does | What it tests |
+| ---- | ------------------- | ------------- |
+| Build | Builds the app from an empty folder | The baseline every other task is compared with |
+| Change | Adds a feature the design was not built for | How far the design has to be disturbed |
+| Fix | Fixes a planted bug from a bug report | Does it fix it narrowly and add a test that catches it |
+| Refactor | Improves the structure without changing behaviour | Does a context file guide good design when nothing new is asked |
+| Review | Reviews a change with planted defects | Does a context file make it catch more of them |
+| Evolve | Works on one project over a chain of sessions | Do the conventions hold over time, where a bare agent drifts |
+
+### 3.5 What stays fixed
+
+Fixed in every run, so only the knobs can move the meters:
+
+- **The app:** `tariff`, a small invoicing web app
+- **The bounds:** at most $100 or two hours per run
+- **The prompt:** one fixed sentence, the same for every arm
+- **The ruler:** the measuring tools, at the same versions and settings for
+  every run. An agent cannot score cleaner by loosening its own lint rules
+- **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
+  each app three times
+- **Runs per arm:** 3, or 5 once when a result is close
 
 ## 4. One round, start to finish
 
@@ -120,12 +131,14 @@ The design's section 13 registers the arms and the questions they answer.
    - the blind judge, another AI, reads the code three times and scores
      design, readability, maintainability, security and data protection
      from 1 to 5
-5. **Compare.** Each run with a context file is compared with its no-file partner,
-   and the differences give one verdict per meter. The runs of one arm are
-   also compared with each other: how alike they came out is the arm's
-   **consistency**.
+5. **Compare.** Each run with a context file is compared with its no-file
+   partner, and the differences give one verdict per meter. The runs of one
+   arm are also compared with each other: how alike they came out is the
+   arm's **consistency**.
 
-## 5. Why runs are paired
+## 5. Reading a result
+
+### 5.1 Pairs, not averages
 
 ![Fifteen runs in three blocks, five arms per block, run one after another: none-1, inline-1, hybrid-1, reference-1 and skills-1, then block 2, then block 3. A contrast such as inline minus none is three differences, inline-1 minus none-1, inline-2 minus none-2 and inline-3 minus none-3, with one interval over the three](diagrams/run-order.png)
 
@@ -133,11 +146,11 @@ A model's behaviour drifts from day to day. So the arms take turns: block 1
 runs every arm once, back to back, then block 2, then block 3. Runs in one
 block meet the same model on the same day.
 
-The benchmark then compares partners, not averages. `inline-1` is
-compared with `none-1`, `inline-2` with `none-2`, and so on. Three differences come
+The benchmark then compares partners, not averages. `inline-1` is compared
+with `none-1`, `inline-2` with `none-2`, and so on. Three differences come
 out, and those three decide.
 
-## 6. How a verdict is read
+### 5.2 The four verdicts
 
 ![Five example rows, each with three dots for three pairs and a bar for the interval they allow. Two rows read Better: the bar lies wholly right of zero, once with the pairs nearly equal and once spread out. Not shown: the pairs disagree and the bar covers zero. Held: the same pairs, whose bar stays clear of the shaded loss past the margin. Worse: every pair got worse, and the bar lies wholly left of zero](diagrams/verdict.png)
 
@@ -152,12 +165,14 @@ The bar is a **bootstrap interval**: the spread of averages the three
 differences could produce if the runs were drawn again. A bar that covers
 zero cannot tell better from worse.
 
+### 5.3 Three runs are a signal
+
 Three runs describe a result. They do not prove it. Every report says so
 beside every number. When a result is close, the rules allow one step up
 to five runs, once, and never more. Running until a result appears would
 manufacture one.
 
-## 7. The rules that keep it honest
+## 6. The rules that keep it honest
 
 | Rule | Why |
 | ---- | --- |
@@ -171,7 +186,7 @@ manufacture one.
 | A meter that turns out to measure something else is withdrawn | A wrong number is worse than no number |
 | A tool that scanned nothing records "missing", never zero | Zero must mean "clean", not "not measured" |
 
-## 8. What the evidence says so far
+## 7. What the evidence says so far
 
 What the evidence supports today, in the words of the
 [assessment](design/efficacy-assessment.md):
@@ -184,7 +199,7 @@ What the evidence supports today, in the words of the
 - **Contradicted:** a longer file is better. Length tracked cost, not
   quality.
 
-## 9. What it cannot tell you yet
+## 8. What it cannot tell you yet
 
 - **One app.** Everything so far is `tariff`. A second app, `ledger`, is
   kept sealed for the final claim.
@@ -194,7 +209,7 @@ What the evidence supports today, in the words of the
 - **One sitting.** No run yet follows a project over months, which is
   where the templates claim to matter most.
 
-## 10. Where to go next
+## 9. Where to go next
 
 | To | Read |
 | -- | ---- |
