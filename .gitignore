@@ -1,0 +1,4 @@
+__pycache__/
+
+# Self-test reports that tests/lib.py writes on every run
+tests/reports/
