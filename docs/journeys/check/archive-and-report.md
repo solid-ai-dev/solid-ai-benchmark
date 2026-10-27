@@ -1,23 +1,32 @@
 # Archive and report
 
 Every trial of the round is scored. The operator judges them, archives the
-round and writes its report. Target: a verified archive in
-`braboj/tariff-runs`, then the dated report under `docs/audits/` in the
-templates source.
+round and writes its report.
 
-Assumptions: a clone of `braboj/tariff-runs` with room for the round, and
-a templates clone to write the report into. Minutes are estimated.
+Target:
 
-| # | Step | Minutes | Notes |
-| - | ---- | ------- | ----- |
-| 1 | `judge.py --root <root> --repeat 3` | 90 to 180 | 45 readings for 15 trials. A run cut short by a usage limit resumes when started again |
-| 2 | `archive.py --root <root> --into <a fresh directory>` | 15 | Copies, restores into a temporary root, recomputes the report's figures from both, and writes `archived.json` only when they match |
-| 3 | Commits and pushes the archive | 5 | Before the report's pull request |
-| 4 | `report.py --root <root>` | 2 | Refuses without the stamp, or once a reading changed since |
-| 5 | Opens the report's pull request in the templates source | 10 | The report and, for a registered hypothesis, its verdicts |
-| | Total | 2 to 3.5 hours | |
+- A verified archive in `braboj/tariff-runs`, then the dated report under
+  `docs/audits/` in the templates source
+  ([ch. 6.4](../../architecture/06-runtime-view.md))
 
-Commands:
+Assumptions:
+
+- A clone of `braboj/tariff-runs` with room for the round
+- A templates clone to write the report into
+- All times are estimates
+
+## Steps
+
+| # | Who | Step | Time | Notes |
+| - | --- | ---- | ---- | ----- |
+| 1 | Judge | Reads every trial three times | 1.5 to 3 hours | 45 readings for 15 trials. A run cut short by a usage limit resumes when started again |
+| 2 | Operator | Archives the round | 15 min | Copies, restores into a temporary root, recomputes the report's figures from both, and writes `archived.json` only when they match |
+| 3 | Operator | Commits and pushes the archive | 5 min | Before the report's pull request |
+| 4 | Operator | Writes the report | 2 min | Refuses without the stamp, or once a reading changed since |
+| 5 | Operator | Opens the report's pull request in the templates source | 10 min | The report and, for a registered hypothesis, its verdicts |
+| | | Total | 2 to 3.5 hours | |
+
+## Commands
 
 ```bash
 py tests/efficacy/judge.py --root <run root> --repeat 3

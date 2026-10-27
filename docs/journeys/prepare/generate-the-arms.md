@@ -1,24 +1,33 @@
 # Generate the arms
 
-The operator prepares a round whose generated arms must be made fresh.
-Target: each generated arm's `CLAUDE.md` made once, in one non-interactive
-call, with clean leak scans, within its budget, and its `generation.json`
-committed beside it.
+The operator prepares round 5, whose context files must each be made once,
+before block A, from one chain of the templates.
 
-Assumptions: a templates clone at the round's fixed release, named with
-`--templates`. Three generated arms, as in rounds 1 to 4. Minutes for the
-model calls are estimated.
+Target:
 
-| # | Step | Minutes | Notes |
-| - | ---- | ------- | ----- |
-| 1 | `generate_arm.py --self-test` | 1 | Proves the leak scan and the budget can fail |
-| 2 | `--dry-run` per arm: builds and scans the prompt without a model | 1 each | The cheap check after any change to the brief or the chain |
-| 3 | The real generation per arm, at a root outside this repository | 5 to 10 each | Estimate. A result over budget is refused and kept as rejected, never trimmed |
-| 4 | Reads each `generation.json`: release, chain, model, both scans, the budget check | 5 | The report reads it from there |
-| 5 | Commits the files and their records | 5 | An existing file is never overwritten without `--replace` |
-| | Total | about 40 minutes | |
+- Each arm's file made once, with clean leak scans and its
+  `generation.json` committed beside it
+  ([ch. 5.5.3](../../architecture/05-building-block-view.md))
 
-Commands:
+Assumptions:
+
+- A templates clone at the round's registered ref, named with `--templates`
+- Round 5's four context-file arms: `reference` as fixed text, `inline` and
+  `hybrid` as one generation each, `skills` from the emitter
+- All times are estimates
+
+## Steps
+
+| # | Who | Step | Time | Notes |
+| - | --- | ---- | ---- | ----- |
+| 1 | Operator | Runs the generator's self test | 1 min | Proves the leak scan, the reference text and the fact filling can fail |
+| 2 | Operator | Dry-runs each model arm: builds and scans the prompt without a model | 1 min each | The cheap check after any change to the brief or the chain |
+| 3 | Generator | Makes each arm, at a root outside this repository | 5 to 10 min each | Nobody answers questions, and nobody trims a result |
+| 4 | Operator | Reads each `generation.json`: ref, chain, commit, how the file was made, its size, both scans | 5 min | The report reads it from there |
+| 5 | Operator | Commits the files and their records | 5 min | An existing file is never overwritten without `--replace` |
+| | | Total | about 40 min | |
+
+## Commands
 
 ```bash
 py tests/efficacy/generate_arm.py --self-test

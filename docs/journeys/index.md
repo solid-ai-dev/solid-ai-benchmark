@@ -1,10 +1,10 @@
 # User journeys
 
-A journey walks one person through one task, step by step, with the minutes and cost
-each takes, and ends with findings: what the walk showed missing, unclear or at odds.
-Journeys are not normative. The rules are in the
-[architecture](../architecture/08-crosscutting-concepts.md), the commands in each
-journey.
+A journey walks one person through one task, step by step with the time
+each takes, and ends with findings that become issues. Journeys are not
+normative: the rules are in the
+[architecture](../architecture/08-crosscutting-concepts.md). Each journey
+carries the commands it runs.
 
 They are grouped by the stage of a round's life. A round is prepared, run,
 checked and read. Each figure is marked measured, with the round it came
@@ -49,3 +49,21 @@ from, or estimated.
 | No CI runs the self tests | [Check the judge](check/check-the-judge.md) | #6 |
 | No index of reports in this repository | [Read a report](read/read-a-report.md) | #17 |
 | A candidate compared with an earlier round's baseline gets no verdict | [Measure a template change](read/measure-a-template-change.md) | #18 |
+
+## Adding a journey
+
+1. Copy [TEMPLATE.md](TEMPLATE.md) to `docs/journeys/<stage>/<topic>.md`.
+   Open with a short paragraph naming one person with a role and a goal.
+   Then list, one bullet each, the targets the journey tests under
+   "Target:" and the assumptions under "Assumptions:".
+2. Walk the steps as that person, with the time and cost of each. Mark each
+   figure measured, with the round it came from, or estimated.
+3. Check each finding against the architecture and the round registrations
+   before calling it a gap. Name its kind:
+   - a gap
+   - missing coverage of what exists, in a command, a check or a chapter
+   - a change to what exists
+4. List the findings, each with the chapter, decision or issue that settles
+   it, or "Open".
+5. List the journey in this index and draw it in
+   `docs/diagrams/journeys.drawio`. Settle each open finding in an issue.

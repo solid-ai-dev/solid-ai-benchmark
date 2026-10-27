@@ -1,22 +1,32 @@
 # Resume a blocked run
 
 Part way through a round, the account hits its usage limit, and trial
-`short-2` ends with no result. Target: the round finished, `short-2` re-run
-once in its own place, and no trial counted twice.
+`reference-2` ends with no result. The operator wants the round finished
+without counting any trial twice.
 
-Assumptions: the limit lifts within a few hours. Minutes are estimated.
+Target:
 
-| # | Step | Minutes | Notes |
-| - | ---- | ------- | ----- |
-| 1 | The harness records `short-2` as blocked, moves its workspace and tarball under `void/`, and stops | 0 | The provider cut it, not the agent |
-| 2 | The operator reads the run record: every trial before `short-2` is kept | 5 | The record is rewritten after every trial |
-| 3 | Restarts with `--from short-2 --resume-after-block` | 1 | The same `--arms` and root |
-| 4 | The harness probes the generator every 30 minutes until it answers | wait | `--probe-every`. It gives up after 12 hours, `--give-up-after` |
-| 5 | `short-2` re-runs in its place, and the round carries on | per trial | A second block of the same trial stops the run |
-| 6 | Scoring reads every run record in the root, so the resumed run scores whole | | A trial offered by two records is refused, not picked |
-| | Total | about 10 minutes of attention | |
+- `reference-2` re-run once in its own place, the round finished, and no
+  trial counted twice ([ch. 6.1.2](../../architecture/06-runtime-view.md))
 
-Commands:
+Assumptions:
+
+- The limit lifts within a few hours
+- All times are estimates
+
+## Steps
+
+| # | Who | Step | Time | Notes |
+| - | --- | ---- | ---- | ----- |
+| 1 | Harness | Records `reference-2` as blocked, moves its workspace and tarball under `void/`, and stops | 0 | The provider cut it, not the agent |
+| 2 | Operator | Reads the run record: every trial before `reference-2` is kept | 5 min | The record is rewritten after every trial |
+| 3 | Operator | Restarts with `--from reference-2 --resume-after-block` | 1 min | The same `--arms` and root |
+| 4 | Harness | Probes the generator every 30 minutes until it answers | wait | `--probe-every`. It gives up after 12 hours, `--give-up-after` |
+| 5 | Harness | Re-runs `reference-2` in its place, and the round carries on | per trial | A second block of the same trial stops the run |
+| 6 | Operator | Scores: scoring reads every run record in the root, so the resumed run scores whole | | A trial offered by two records is refused, not picked |
+| | | Total | about 10 min of attention | |
+
+## Commands
 
 ```bash
 py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --from reference-2 --resume-after-block
