@@ -3,7 +3,7 @@
 A journey walks one person through one task, step by step, with the
 minutes and cost each takes, and ends with findings: what the walk showed
 missing, unclear or at odds. Journeys are not normative. The rules are in
-the [design](../design/efficacy-benchmark.md), the commands in the
+the [architecture](../architecture/08-crosscutting-concepts.md), the commands in the
 [harness guide](../guides/efficacy-harness.md).
 
 They are grouped by the stage of a round's life. A round is prepared, run,
@@ -16,7 +16,7 @@ from, or estimated.
 
 | Journey | Role | Target |
 | ------- | ---- | ------ |
-| [Register a hypothesis](prepare/register-a-hypothesis.md) | Owner | A testable question in the design before any trial runs |
+| [Register a hypothesis](prepare/register-a-hypothesis.md) | Owner | A testable question registered before any trial runs |
 | [Generate the arms](prepare/generate-the-arms.md) | Operator | Each generated arm's file made once, clean and within budget |
 
 ## Run

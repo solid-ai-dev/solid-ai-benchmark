@@ -42,3 +42,72 @@ The channel to each neighbour, and who opens it.
 | Templates | Every script and the templates source | A local git clone, named by `--templates` | The operator |
 | Archive | `archive.py` and `braboj/tariff-runs` | Files written into a local clone, pushed by the operator | The operator |
 | Report | `report.py` and the templates source | A Markdown file under `docs/audits/` | The report script |
+
+## 3.3 The app under test
+
+### 3.3.1 What it does
+
+"Tariff" here means a price list. `tariff` is a small invoicing engine: it
+takes a basket of products and computes the final bill, with discounts and
+tax. The tax is VAT or sales tax, not customs duty.
+
+| Piece | What it is | Example |
+|---|---|---|
+| Product | A SKU, a name, a unit price and a tax category | `COF-250G`, "Coffee", €10.00, category `food` |
+| Discount rules | Percentage, bulk ("buy 3, pay 2"), tiered (cheaper unit price from a quantity), coupon code | 10 % off coffee; coupon `WELCOME` takes €5 off |
+| Jurisdiction | A country or region with a tax rate per category and a default rate | DE: `food` 7 %, everything else 19 % |
+| Invoice | A currency, lines of product × quantity, and coupon codes | 3 × coffee, EUR, `WELCOME` |
+
+A SKU (Stock Keeping Unit) is the unique code a shop gives each product it
+sells. A 1 kg bag of the same coffee would be another SKU.
+
+`price()` works in a fixed order: line discounts first, then invoice-wide
+discounts, then those discounts spread back over the lines, then each line
+taxed at its category's rate. Every amount is exact to the cent.
+
+It suits the benchmark for three reasons:
+
+- Its domain is naturally modelled with objects and classes.
+- It has two independent extension axes, discount kinds and jurisdictions,
+  so a missed Strategy pattern shows.
+- Exact decimal arithmetic makes the hidden tests unforgiving.
+
+The app is offline and deterministic, about 1,500–2,000 lines of code.
+
+### 3.3.2 What the spec fixes
+
+`tests/efficacy/SPEC.md` names what other software depends on, so the
+hidden suite can drive it:
+
+- **Domain:** products, the four discount kinds with their precedence and
+  stacking, jurisdictions with rate tables, invoices.
+- **Money:** `Decimal` throughout, one currency per invoice, half-even
+  rounding at named points, totals reproducible to the cent.
+- **Python API:** `tariff.Catalog`, `tariff.Invoice`,
+  `tariff.price(invoice, rules, jurisdiction)`, the error base
+  `TariffError`. The package imports without the web app.
+- **Web UI:** Flask, Jinja and HTMX pages for products, rules and
+  jurisdictions, and an invoice builder that re-prices on every change.
+  Pages work with JavaScript disabled.
+- **HTTP:** named routes, a JSON export, form posts with server-side
+  validation and CSRF.
+- **Persistence:** one SQLite file, schema owned by the app, a seed fixture.
+- **Sign-in and customers:** one seeded administrator and every route
+  behind sign-in; customers with a name, email and address, billed on
+  invoices; erasure on request; a JSON export of one customer's data.
+- **Constraints:** no network, Python 3.12, valid HTML.
+
+### 3.3.3 What the spec leaves out
+
+**The spec says what the app does, never how it is engineered.** It does not
+name:
+
+- a layout, linter, type checker, logging policy or test convention
+- an error hierarchy's shape or a template organisation
+- an accessibility bar
+- how a password is stored, what a failed sign-in says, or where a redirect
+  may lead
+- whether an erased customer's data leaves the database file
+
+Why: the "how" is what a context file adds. If the spec said "hash the
+password", every arm would, and the benchmark would measure nothing.

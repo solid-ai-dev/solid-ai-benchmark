@@ -10,10 +10,10 @@ does and how to read its results, with no programming needed.
 | Path | What it is |
 |---|---|
 | `docs/primer.md` | The benchmark in plain words: the knobs, a round, a verdict |
-| `docs/architecture/` | How it is built, in arc42's twelve chapters |
+| `docs/architecture/` | The one source of truth: how it is built and every rule it follows, in arc42's twelve chapters |
 | `docs/journeys/` | A person walked through each task, with its findings |
 | `docs/diagrams/` | Every diagram, as draw.io source beside its PNG |
-| `docs/design/efficacy-benchmark.md` | The design: arms, metrics, verdict rules |
+| `docs/rounds/` | Each round's registration, fixed before its first trial |
 | [The assessment](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy-assessment.md) | What rounds 1 to 3 showed, beside the reports in `solid-ai-templates` |
 | `docs/guides/efficacy-harness.md` | How to run the harness, scorer, judge and report; lists each part |
 | `docs/guides/rubric-control.md` | The rubric control that checks the judge |
@@ -30,7 +30,7 @@ names a git clone of the templates repository, upstream or a fork, with
 py tests/efficacy/harness.py --self-test --templates ../solid-ai-templates
 ```
 
-The release the arms are built from is the design's fixed ref; each
+The release the arms are built from is the round's registered ref; each
 generation and vendoring record states the source's remote, ref and commit.
 A run with no source refuses, because it could not deny the agent the
 templates.

@@ -26,3 +26,44 @@ quality goal of chapter 1.
   lands in a separate section with no verdict.
 - **Pooling rounds.** A contrast that pairs trials from different rounds
   keeps its mean and interval and gets no verdict.
+
+## 4.2 Reuse as the template benchmark
+
+The same harness measures a template change. The **baseline** is the current
+templates; the **candidate** is the trimmed or rewritten version. Same
+paired design, same rules.
+
+Round 3 is that baseline for v3.0: v3.0's evidence phase re-runs this
+harness with the fork's chain and compares against it.
+
+**A trim is a free win only where every quality metric held ([ch.
+8.1.2](08-crosscutting-concepts.md)) and tokens fell.**
+
+- "No improvement shown" on each row is not enough. Three trials are too
+  few to detect a real regression.
+- Where K = 3 cannot support "held" for a metric, the trim is unproven, not
+  safe.
+- A trim that turns any primary dimension worse is rejected.
+
+Why: accepting on "no improvement shown" would pass a trim that broke
+something.
+
+Two limits:
+
+- Each iteration costs a full set of trials, so trims are batched per file,
+  not per rule.
+- Tuning against one app overfits to it. `tariff` is the development app;
+  `ledger` stays sealed for the final v3.0 claim.
+
+## 4.3 Everything is automated
+
+A run is one command. Generating the arms, the build trials, the change
+tasks, the hidden suites, the static and structural tools, the judge and the
+report are all scripted. Each records its inputs, exact invocation and
+outputs. No step waits for a person.
+
+Why:
+
+- A result can be re-run to check it.
+- A later template revision can be measured against the same run (section 4.2).
+- An operator's judgement cannot leak into the arm they touched.

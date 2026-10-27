@@ -1,7 +1,7 @@
 # 2. Constraints
 
 What the benchmark must work within. Each constraint is a fact about the
-setting, not a choice the design made. Chapter 9 records the choices.
+setting, not a choice the benchmark made. Chapter 9 records the choices.
 
 ## 2.1 Technical constraints
 
@@ -23,7 +23,7 @@ setting, not a choice the design made. Chapter 9 records the choices.
 | # | Constraint | Consequence |
 | - | ---------- | ----------- |
 | 1 | One owner runs and reads every round | No step may wait for a person, and no person may score. A person in the loop would leak judgement into an arm |
-| 2 | Rules are registered before the trials they govern | A new hypothesis is committed to the design before its first trial. A check chosen afterwards describes and never decides |
+| 2 | Rules are registered before the trials they govern | A new hypothesis is committed to its round's registration before its first trial. A check chosen afterwards describes and never decides |
 | 3 | K is at most 5, with one escalation from 3 | Sampling until an interval clears zero is not possible |
 | 4 | `ledger`, a second app, stays sealed | Every round so far measures `tariff`, the development app |
 | 5 | The templates live in another repository | Every run names a templates source with `--templates` or `BENCHMARK_TEMPLATES`, and reports land in that source's `docs/audits/` |
