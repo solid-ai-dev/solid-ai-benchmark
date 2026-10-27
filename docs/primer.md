@@ -132,33 +132,47 @@ Fixed in every run, so only the knobs can move the meters:
 
 ![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, checks whether the difference would hold if the runs were redone, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
 
-1. **Make the files.** A generator turns a short project brief into each
-   arm's context file, once, with nobody answering its questions. A person
-   answering would put their judgement into the file.
-2. **Build.** For each run, an empty folder gets the spec and the arm's
-   file. The agent gets one fixed sentence: build what the spec describes.
-   It works alone, with no web access, until it finishes or hits $100 or
-   two hours.
-3. **Freeze.** The folder is saved exactly as the agent left it, before
-   anything reads it.
-4. **Score.** Every frozen app is read on six meters:
-   - **hidden tests**, written before any run and kept where no agent can
-     see them, check the app does what the spec says
-   - **attack probes** try 11 security attacks and 3 personal-data checks
-   - the **judge's scores**: the blind judge, another AI, reads the code
-     three times and scores design, readability, maintainability, security
-     and data protection from 1 to 5
-   - **conventions**: code tools check a 13-item checklist, such as lint,
-     types and test coverage
-   - **size**: the lines and files the agent wrote
-   - **cost**: the dollars, turns and minutes the run took
-5. **Compare.** Each run with a context file is compared with the bare run,
-   the one with no file, from the same block: `inline-1` minus `none-1`.
-   The differences give one verdict per meter. The runs of one
-   arm are also compared with each other: how alike they came out is the
-   arm's **consistency**.
+### 4.1 Before the round
 
-## 5. Reading a result
+A generator turns a short project brief into each arm's context file,
+once, with nobody answering its questions. A person answering would put
+their judgement into the file.
+
+### 4.2 Each run
+
+1. **Build.** An empty folder gets the spec and the arm's context file. The
+   agent gets one fixed sentence: build what the spec describes. It works
+   alone, with no web access, until it finishes or hits $100 or two hours.
+2. **Freeze.** The folder is saved exactly as the agent left it, before
+   anything reads it.
+
+### 4.3 Scoring
+
+Every frozen app is read on six meters. Each reads the same app on its
+own, in any order.
+
+| Meter | What it reads | Reads in |
+| ----- | ------------- | -------- |
+| **Hidden tests** | Does the app do what the spec says? Written before any run, and kept where no agent can see them | % passed |
+| **Attack probes** | 11 security attacks and 3 personal-data checks | passed, of 14 |
+| **Judge's scores** | The blind judge reads the code three times and scores design, readability, maintainability, security and data protection | 1 to 5 |
+| **Conventions** | Code tools check a 13-item checklist, such as lint, types and test coverage | met, of 13 |
+| **Size** | The lines and files the agent wrote | lines |
+| **Cost** | The dollars, turns and minutes the run took | $ |
+
+### 4.4 Reading the result
+
+1. **Compare with the bare run.** Each run with a context file is compared
+   with the run of the same block that had none: `inline-1` minus `none-1`.
+2. **Luck check.** The differences are checked for whether they would hold
+   if the runs were redone.
+3. **Verdict.** Each meter gets one: better, worse or not shown.
+4. **Consistency.** The runs of one arm are also compared with each other.
+   How alike they came out is the arm's **consistency**, read in %.
+
+Section 5 explains the comparison and the verdicts.
+
+## 5. The verdicts, explained
 
 ### 5.1 Pairs, not averages
 
