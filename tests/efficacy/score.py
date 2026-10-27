@@ -972,23 +972,33 @@ def scope(workspace, roots):
                if any(token in os.path.basename(name).upper()
                       for token in UNASKED)]
     source = count_source(roots)
-
-    # Section 12.1's structure agreement compares trials by the Python files
-    # their own Git state would commit: tracked, plus untracked files their
-    # `.gitignore` does not exclude, without scoring's `.score` artefacts.
-    others = run(["git", "-C", workspace, "ls-files", "--others",
-                  "--exclude-standard"], timeout=120)
-    extra = ([] if others["failed"] or others["status"] != 0
-             else [line for line in others["stdout"].splitlines()
-                   if line.strip()])
-    python = sorted({name for name in files + extra
-                     if name.endswith(".py")
-                     and not name.split("/")[0].startswith(".score")})
     return measured({"tracked_files": len(files),
                      "source_files": source["files"],
                      "source_lines": source["lines"],
                      "unasked_artifacts": len(unasked)},
-                    unasked=unasked, python_files=python)
+                    unasked=unasked)
+
+
+def python_files(workspace):
+    """The Python files the trial's own Git state would commit: tracked,
+    plus untracked files its `.gitignore` does not exclude (design, section
+    12.1, structure agreement).
+
+    Taken straight after extraction, before installing or testing adds a
+    build directory or a cache. Either listing failing makes the metric
+    missing: an empty list would read as a trial with no files and agree
+    with every other one.
+    """
+    listed = []
+    for extra in ([], ["--others", "--exclude-standard"]):
+        proc = run(["git", "-C", workspace, "ls-files"] + extra, timeout=120)
+        if proc["failed"] or proc["status"] != 0:
+            return absent("listing the trial's files failed: %s"
+                          % (proc["stderr"] or "no output")[:300])
+        listed += [line for line in proc["stdout"].splitlines()
+                   if line.strip()]
+    return measured(sorted({name for name in listed
+                            if name.endswith(".py")}))
 
 
 def cost(record):
@@ -1036,6 +1046,10 @@ def score_trial(record, options, suite, lock):
 
     frozen = (record.get("frozen") or {}).get("tarball")
     workspace = extract(frozen, os.path.join(scoring, "tree"), name)
+
+    # Before the virtual environment, the install or any test can add a
+    # file to the tree.
+    files = python_files(workspace)
     venv = create_venv(os.path.join(scoring, "venv"))
 
     scores = {"arm": arm_name(record["arm"]), "trial": record["trial"],
@@ -1044,7 +1058,8 @@ def score_trial(record, options, suite, lock):
                   "templates_tree"),
               "model": record.get("model"), "suite_revision": suite["revision"],
               "scored_at": datetime.datetime.now().isoformat(
-                  timespec="seconds")}
+                  timespec="seconds"),
+              "python_files": files}
 
     scores["install"] = install_trial(venv, workspace)
     source = package_source(venv)
@@ -1611,6 +1626,29 @@ def coverage_checks(scratch):
     ]
 
 
+def python_files_checks(scratch):
+    """The trial's Python files are what its Git state would commit, and a
+    listing that fails is missing rather than empty."""
+    tree = os.path.join(scratch, "python-files", "tree")
+    os.makedirs(os.path.join(tree, "src"))
+    run(["git", "-C", tree, "init", "-q"], timeout=60)
+    for name, text in (("src/app.py", "x = 1\n"), ("src/new.py", "y = 2\n"),
+                       ("ignored.py", "z = 3\n"),
+                       (".gitignore", "ignored.py\n")):
+        with io.open(os.path.join(tree, *name.split("/")), "w",
+                     encoding="utf-8") as handle:
+            handle.write(text)
+    run(["git", "-C", tree, "add", "src/app.py", ".gitignore"], timeout=60)
+    listed = python_files(tree)
+    broken = python_files(os.path.join(scratch, "python-files", "absent"))
+    return [
+        ("the trial's files are tracked and unignored untracked ones",
+         listed["value"] == ["src/app.py", "src/new.py"]),
+        ("a failed listing is missing, never an empty list",
+         bool(broken["missing"]) and broken["value"] is None),
+    ]
+
+
 def self_test():
     """Prove the missing-vs-zero rule fires before any score is believed.
 
@@ -1634,7 +1672,7 @@ def self_test():
               + lock_checks() + html_checks() + readonly_checks(scratch)
               + lock_source_checks(scratch) + unrun_checks(scratch)
               + claim_checks(scratch) + security_checks(scratch)
-              + coverage_checks(scratch))
+              + coverage_checks(scratch) + python_files_checks(scratch))
     venv = create_venv(os.path.join(scratch, "venv"))
     checks += boot_checks(scratch, venv)
 

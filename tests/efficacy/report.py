@@ -1498,7 +1498,7 @@ def structure_sets(trials, arm):
     for name, trial in trials.items():
         if arm_of(name) != arm:
             continue
-        files = path(trial, "scores", "scope", "python_files")
+        files = metric_value(trial, "python_files")
         if files is not None:
             found.append(set(files))
     return found
@@ -1629,11 +1629,19 @@ def round5_checks():
     for name, files in (("skills-1", ["a.py", "b.py"]),
                         ("skills-2", ["a.py", "b.py"]),
                         ("skills-3", ["a.py", "c.py"])):
-        trials[name]["scores"]["scope"] = {"value": {},
-                                           "python_files": files}
+        trials[name]["scores"]["python_files"] = {"value": files,
+                                                  "missing": None}
     got = pairwise_agreement(structure_sets(trials, "skills"))
     checks.append(("structure agreement is the mean pairwise Jaccard of "
                    "the trials' files", got == round(5 / 9, 3), got))
+
+    # A trial whose listing failed is missing, not empty: left out, it
+    # cannot agree with anything.
+    trials["skills-3"]["scores"]["python_files"] = {
+        "value": None, "missing": "listing the trial's files failed"}
+    got = pairwise_agreement(structure_sets(trials, "skills"))
+    checks.append(("a trial whose file listing failed is left out of "
+                   "structure agreement", got == 1.0, got))
 
     # Security: two trials failing nothing agree fully, a trial with an
     # unmeasured probe is left out, and {x} against {} agrees not at all.
@@ -1668,7 +1676,7 @@ def round5_checks():
     # A rendered five-arm run prints all three agreements for every arm.
     run = {trial_name(arm, index): {
         "scores": {"adherence": {"value": 1, "items": {"a": True}},
-                   "scope": {"value": {}, "python_files": ["app.py"]}},
+                   "python_files": {"value": ["app.py"], "missing": None}},
         "change": None, "judge": None,
         "security": {"probes": {"x": {"passed": True}}}}
         for arm in ("none", "reference", "inline", "hybrid", "skills")
