@@ -61,8 +61,8 @@ Fixed in every run, so only the knobs can move the meters:
 - **The bounds:** at most $100 or two hours per run
 - **The prompt:** one fixed sentence, the same for every arm
 - **The ruler:** the same tool versions and settings for every run
-- **The judge:** Claude Opus 5.5, blind to the arm, reading each app three
-  times
+- **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
+  each app three times
 - **Runs per arm:** 3, or 5 once when a result is close
 
 The six specs:
