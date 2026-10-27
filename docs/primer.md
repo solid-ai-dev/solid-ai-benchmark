@@ -130,7 +130,7 @@ Fixed in every run, so only the knobs can move the meters:
 
 ## 4. One round, start to finish
 
-![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring runs the hidden tests, the attack probes, the code tools and the blind judge on each frozen app. Reading the result pairs each run with the run of the same block that had no file, takes an interval over the K differences, and gives one verdict per meter: better, worse or not shown](diagrams/round-flow.png)
+![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result pairs each run with the run of the same block that had no file, takes an interval over the K differences, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
 
 1. **Make the files.** A generator turns a short project brief into each
    arm's context file, once, with nobody answering its questions. A person
@@ -141,14 +141,17 @@ Fixed in every run, so only the knobs can move the meters:
    two hours.
 3. **Freeze.** The folder is saved exactly as the agent left it, before
    anything reads it.
-4. **Score.** Every frozen app goes through the same checks:
+4. **Score.** Every frozen app is read on six meters:
    - **hidden tests**, written before any run and kept where no agent can
      see them, check the app does what the spec says
    - **attack probes** try 11 security attacks and 3 personal-data checks
-   - **code tools** count style, type and complexity defects
-   - the blind judge, another AI, reads the code three times and scores
-     design, readability, maintainability, security and data protection
-     from 1 to 5
+   - the **judge's scores**: the blind judge, another AI, reads the code
+     three times and scores design, readability, maintainability, security
+     and data protection from 1 to 5
+   - **conventions**: code tools check a 13-item checklist, such as lint,
+     types and test coverage
+   - **size**: the lines and files the agent wrote
+   - **cost**: the dollars, turns and minutes the run took
 5. **Compare.** Each run with a context file is compared with its no-file
    partner, and the differences give one verdict per meter. The runs of one
    arm are also compared with each other: how alike they came out is the
