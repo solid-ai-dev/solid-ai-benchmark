@@ -46,7 +46,7 @@ one sitting and strict enough that a wrong cent shows.
 A round turns one knob at a time and holds everything else still. Then any
 change on the meters has one cause.
 
-![Four knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected) and the task (build, change, fix, refactor, review, evolve, with build selected). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler, the judge and the runs per arm, 3 or 5 once when a result is close. Below that, the meters: hidden tests, attack probes, the judge's scores, conventions, size, cost, and consistency, how alike an arm's runs are](diagrams/knobs.png)
+![Four knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected) and the task (build, change, fix, refactor, review, evolve, with build selected). Below them, the meters: hidden tests, attack probes, the judge's scores, conventions, size, cost, and consistency, how alike an arm's runs are. Below that, what is fixed in every run: the app, the bounds of $100 or two hours, the prompt, the ruler, the judge and the runs per arm, 3 or 5 once when a result is close.](diagrams/knobs.png)
 
 | Knob | Settings | What turning it asks |
 | ---- | -------- | -------------------- |
