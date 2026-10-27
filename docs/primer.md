@@ -193,7 +193,7 @@ gets sharper with every delta, as section 5.3 explains.
 
 ### 5.2 The four verdicts
 
-![Four example ranges of the hidden-test delta, each with two verdicts, against a margin of 2 points. Plus 1 to plus 4: better, and held. Minus 1 to plus 3: undecided, because the bar covers zero, but held, because it stays right of the margin. Minus 5 to plus 3: undecided, and not held, because it reaches past the margin. Minus 4 to minus 1: worse, and not held](diagrams/verdict.png)
+![Four example ranges of the hidden-test delta, each answering two questions against a margin of 2 points: which way did it move, and is it at least as good. Plus 1 to plus 4: better, and yes. Minus 1 to plus 3: undecided, because the bar covers zero, but yes, because it stays right of the margin. Minus 5 to plus 3: undecided, and no, because it reaches past the margin. Minus 4 to minus 1: worse, and no](diagrams/verdict.png)
 
 The bar is the luck check of the round-flow diagram. Its range is the
 **likely range**, which statisticians call a bootstrap interval: where the
@@ -202,7 +202,7 @@ it by resampling the differences thousands of times.
 
 The verdicts answer two different questions.
 
-**Did the context file change the result?**
+**Which way did it move?**
 
 | Verdict | Means | Does not mean |
 | ------- | ----- | ------------- |
@@ -212,18 +212,19 @@ The verdicts answer two different questions.
 
 **Is it at least as good?**
 
-| Verdict | Means | Does not mean |
-| ------- | ----- | ------------- |
-| **Held** | Even the worst end of the range is a small loss, within a **margin** fixed in advance | That it improved |
+| Answer | Means | Does not mean |
+| ------ | ----- | ------------- |
+| **Yes**, held | Even the worst end of the range is a small loss, within a **margin** fixed in advance | That it improved |
+| **No** | The worst end could lose more than the margin | That it got worse |
 
 Undecided says there is no proof it is better. Held says there is proof it
 is not much worse. For hidden tests the margin is 2 points:
 
-| Likely range | Changed the result? | At least as good? |
-| ------------ | ------------------- | ----------------- |
-| +1 to +4 points | Better | Held |
-| −1 to +3 points | Undecided | Held: at worst 1 point lost, within the 2 tolerated |
-| −5 to +3 points | Undecided | Not held: up to 5 points could be lost |
+| Likely range | Which way did it move? | At least as good? |
+| ------------ | ---------------------- | ----------------- |
+| +1 to +4 points | Better | Yes |
+| −1 to +3 points | Undecided | Yes: at worst 1 point lost, within the 2 tolerated |
+| −5 to +3 points | Undecided | No: up to 5 points could be lost |
 
 Held is what a trim of the templates, or round 5's question whether skills
 deliver what hybrid does, needs: a way to show two things are as good as
