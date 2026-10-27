@@ -1,516 +1,511 @@
-# CLAUDE.md — tariff
+# tariff
+
+Imbra Ltd's pricing and invoicing application: a product catalog,
+discount rules of several kinds, tax jurisdictions, customers, and
+invoices assembled from them. Runs locally only; no deployment target,
+no live URL.
+
+Quality conventions are defined in `docs/solid-ai-templates/templates/`
+(a vendored copy at a pinned revision, not a submodule). Key references:
+
+- `docs/solid-ai-templates/templates/core/agents.md` — governs this
+  file's own structure
+- `docs/solid-ai-templates/templates/core/quality.md`
+- `docs/solid-ai-templates/templates/core/git.md`
+- `docs/solid-ai-templates/templates/core/docs.md`
+- `docs/solid-ai-templates/templates/core/testing.md`
+- `docs/solid-ai-templates/templates/core/review.md`
+- `docs/solid-ai-templates/templates/backend/http.md`
+- `docs/solid-ai-templates/templates/backend/database.md`
+- `docs/solid-ai-templates/templates/security/security.md`
+- `docs/solid-ai-templates/templates/frontend/ux.md`
+- `docs/solid-ai-templates/templates/data/data-modeling.md`
+- `docs/solid-ai-templates/templates/data/data-governance.md`
+
+Adoption boundary (MUST): the rules inlined or referenced below are the
+adopted set. They stay in force until this file is edited to change them.
+Reading a newer version of a referenced template, or moving the vendored
+pin, adopts nothing by itself — only an edit to this file changes what is
+adopted.
+
+Not adopted, and intentionally absent below: `backend/api.md` and
+`backend/auth.md`. The pricing engine is a library imported in-process by
+two callers (the web application and another program); it is never
+exposed as a network API, so REST/gRPC/GraphQL contract, versioning and
+token/RBAC rules do not apply. Do not add them without first recording
+why a network-facing contract has become necessary.
+
+Before the first commit that adds `docs/solid-ai-templates/`, exclude
+that directory from every tool that walks the tree: ruff, mypy, any
+secret scanner, and any spell or link checker (MUST).
 
 ## 1. Project
 
-`tariff` is a pricing and invoicing web application for Imbra Ltd. It holds a
-product catalog, discount rules of several kinds, tax jurisdictions and
-customers, and assembles invoices from them.
+### 1.1 Identity
 
 - Owner: Imbra Ltd
-- Repository URL: not provided in the brief. Set it when the repository is created.
-- Runtime: local only. No deployment target and no network access.
-- Actors: the administrator working in a browser, and another program.
-  The other program imports the pricing engine as a library, without the web
-  application present, and consumes invoice exports.
-- The web application is one caller of the pricing engine, not its owner.
-- The store is a local SQLite file. Nothing reaches the network.
-- Interfaces: the library's own API and the invoice exports.
-  These are the compatibility surface (see 5.6).
-- One administrator signs in. Nobody else has an account.
-- Personal data: customers are people. Their name, email and postal address
-  are stored and named on invoices. The business is in the EU, so the GDPR
-  applies (see 5.1).
+- Stack: Python 3.12, Flask 3, Jinja, HTMX, SQLite
+- Tooling: uv, ruff, mypy (strict), pytest
+- Hosting: none — runs locally, single process, no deployment target
+- Actors: the administrator (one account, browser-based) and another
+  program that imports the pricing engine directly, in-process, without
+  the web application present
+- Model: hybrid
 
-## 2. Rules: hybrid model
+### 1.2 Project structure
 
-This file inlines the critical, project-specific rules and points to the
-templates for the rest. The templates are vendored under
-`docs/solid-ai-templates/`. This is a copy of the upstream repository's
-`templates/` directory at a pinned revision, not a submodule. Do not add a
-submodule. Refresh the copy by replacing the directory with a newer copy, and
-record the revision in the pull request that does it.
+Keep the authoritative directory map in `README.md`. Do not duplicate it
+here. Placement rules for this project:
 
-Paths below are relative to `docs/solid-ai-templates/`. Read the files
-relevant to the task before acting on it.
+- Keep the pricing engine (catalog, discount rules, tax jurisdictions,
+  invoice assembly) in its own package, importable with the web
+  application absent (MUST)
+- Keep Flask routes, Jinja templates and HTMX partials in a separate web
+  package that imports the pricing engine; never the reverse (MUST)
+- Mirror the source layout in `tests/`
+- Keep SQLite migrations in one directory, applied in order, numbered
+- Keep `docs/solid-ai-templates/` untouched except for the revision pin
 
-### 2.1 Every template in this project's chain
-
-- `templates/base/core/agents.md` (format rules for this file)
-- `templates/base/core/quality.md`
-- `templates/base/core/git.md`
-- `templates/base/core/docs.md`
-- `templates/base/core/readme.md`
-- `templates/base/core/testing.md`
-- `templates/base/core/review.md`
-- `templates/base/core/oop.md`
-- `templates/base/core/config.md`
-- `templates/base/core/cli.md`
-- `templates/base/core/examples.md`
-- `templates/base/language/python.md`
-- `templates/base/workflow/quality-gates.md`
-- `templates/base/workflow/ai-workflow.md`
-- `templates/base/security/security.md`
-- `templates/base/security/devsecops.md`
-- `templates/base/data/data-modeling.md`
-- `templates/base/data/data-quality.md`
-- `templates/base/infra/cicd.md`
-- `templates/base/infra/containers.md`
-- `templates/backend/http.md`
-- `templates/backend/database.md`
-- `templates/backend/observability.md`
-- `templates/backend/quality.md`
-- `templates/backend/features.md`
-- `templates/backend/messaging.md`
-- `templates/backend/templating.md`
-- `templates/frontend/ux.md`
-- `templates/frontend/quality.md`
-- `templates/stack/python-lib.md`
-- `templates/stack/python-service.md`
-- `templates/stack/python-flask.md`
-- `templates/stack/htmx.md`
-
-### 2.2 Adoption boundary
-
-- The chain supplies candidates, not an obligation. This project adopts what
-  its needs and material risks warrant, as selected in this file.
-- Resolving the chain discovers available rules. It does not authorize work.
-- A newer upstream revision or a new candidate rule creates no compliance
-  work, ticket or decision record by itself. Nothing MUST be adopted just
-  because a template says MUST.
-- Declining a candidate needs at most a line in the pull request or
-  discussion. It needs no ADR, ticket or decline register.
-- Rules adopted here stay in force until this project changes them.
-  Upstream MUST text cannot expand the adopted set silently.
-- Assess security fixes in tools the project executes promptly. Review new
-  conventions only when a project need warrants it.
-
-### 2.3 Precedence
-
-This file governs where it differs from a template. Section 8 lists the
-deliberate divergences and declines. Historical records (ADRs, journal) do
-not override current rules.
-
-## 3. Stack and commands
-
-- Language: Python 3.12. Framework: Flask 3, server-rendered Jinja, HTMX 2.x
-  (Alpine.js only for purely local UI state).
-- Store: SQLite file. Access uses SQLAlchemy 2.x `select()` style with
-  Alembic migrations, in the `store` package only. Do not use Flask-SQLAlchemy:
-  the store must work without Flask.
-- Tooling (bindings from `base-python-tooling`):
-  - Package manager and runner: `uv`.
-  - Lint and format: `ruff`.
-  - Types: `mypy` strict.
-  - Cognitive complexity: `complexipy`.
-  - SAST: `bandit`.
-  - Tests and coverage: `pytest` with `pytest-cov`.
-  - Hooks: `pre-commit`, including `gitleaks`.
-  - All configuration lives in `pyproject.toml`.
-- Python version coherence: `requires-python`, mypy `python_version`, the
-  interpreter pin (`.python-version`) and any CI `setup-python` all name the
-  same version, and change together. Ruff `target-version` MAY trail one minor.
-
-```
-uv sync                                        # install from uv.lock
-uv run pytest                                  # tests + coverage
-uv run ruff check . && uv run ruff format --check .
-uv run mypy                                    # strict, from pyproject.toml
-uv run complexipy src
-uv run bandit -r src
-uv run pre-commit run --all-files
-uv run flask --app tariff.web:create_app run --host 127.0.0.1
-```
-
-- Commit `uv.lock`. Install from it with the locked flag so a stale lock
-  fails rather than resolving silently.
-- The web server binds to loopback only. Never bind `0.0.0.0` and never set
-  `debug` outside a local development session.
-
-## 4. Structure and architecture
-
-`README.md` is the single source of truth for the directory tree. Do not
-draw a second tree here. Placement rules:
-
-- The package is `tariff`, under `src/` (source layout). It contains four
-  parts: `engine`, `store`, `exports` and `web`.
-- `engine` is the pricing engine: catalog items, discount rules, tax
-  jurisdictions and invoice assembly, as pure functions and plain data types.
-  - No I/O, no clock, no randomness read from globals. Inject them.
-  - It MUST NOT import `flask`, `jinja2`, `sqlalchemy`, `tariff.web` or
-    `tariff.store`. The library is used with no web application present.
-  - Its public API is re-exported from `tariff/engine/__init__.py`. Anything
-    not re-exported is private.
-- `store` holds SQLite access behind repository interfaces. Repositories
-  return domain objects, not ORM rows. `store` and `exports` may import
-  `engine`. `engine` never imports them.
-- `exports` writes invoice exports and depends only on `engine` types.
-- `web` holds the Flask application factory, blueprints, templates and
-  static assets. Handlers are thin: decode, call a service or the engine,
-  render. Business logic never lives in a handler or template.
-  - Full pages go in `templates/`.
-  - HTMX fragments go in `templates/partials/`, named for what they render.
-  - No cross-blueprint imports.
-- Migrations live in `migrations/`. Synthetic test data lives under `tests/`.
-- Discount rules of several kinds use the Strategy pattern, one class per
-  kind behind one interface. Adding a kind adds a class and a registry
-  entry, not a branch in the engine.
-- An abstract or overridable operation declares no `*args` or `**kwargs`.
-- Money is integer minor units or `Decimal`, never `float`.
-  - The rounding mode and the rounding point (per line or per invoice) are
-    named constants, documented once.
-  - Amounts carry an ISO 4217 currency code.
-  - Tax rate tables cite their source and effective date
-    (`base-data-quality`).
-- Internal code trusts validated data. Validate at the boundary: forms,
-  imported files and the library's public entry points.
-
-The layering check below runs from the repository root. Keep `FORBIDDEN`
-current with the rules above.
+### 1.3 Commands
 
 ```bash
-py - <<'EOF'
-import ast, pathlib
-
-FORBIDDEN = (
-    ("tariff.engine", "flask"),
-    ("tariff.engine", "jinja2"),
-    ("tariff.engine", "sqlalchemy"),
-    ("tariff.engine", "tariff.web"),
-    ("tariff.engine", "tariff.store"),
-    ("tariff.engine", "tariff.exports"),
-    ("tariff.exports", "flask"),
-    ("tariff.exports", "tariff.web"),
-    ("tariff.store", "flask"),
-    ("tariff.store", "tariff.web"),
-)
-ROOT = pathlib.Path("src")
-
-files = sorted(ROOT.rglob("*.py"))
-print("modules inspected: %d" % len(files))
-findings = []
-for path in files:
-    module = ".".join(path.relative_to(ROOT).with_suffix("").parts)
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    names = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names.extend(a.name for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            names.append(node.module)
-    for name in names:
-        for src, dst in FORBIDDEN:
-            if module.startswith(src) and (
-                name == dst or name.startswith(dst + ".")
-            ):
-                findings.append("%s imports %s" % (module, name))
-print("layering violations: %d" % len(findings))
-for finding in findings:
-    print("  %s" % finding)
-raise SystemExit(1 if findings or not files else 0)
-EOF
+uv sync
+uv run flask --app tariff run --debug
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy --strict .
+uv run pytest
 ```
 
-Pass condition: the inspected count is above zero and the violation count
-is zero. Zero inspected means the root is wrong, not that the tree is clean.
+### 1.4 Governance
 
-## 5. Project rules (inlined)
+- Who approves a change: open — not settled by the project yet
+- How work is tracked: open — not settled by the project yet
+- What is a release: open — not settled by the project yet; the
+  application has no deployment target, so a release is at most a tagged
+  commit, not a deployed artifact
 
-### 5.1 Personal data and the GDPR
+## 2. Code conventions
 
-Customers are natural persons, so every customer field and every invoice
-that names one is personal data.
+### 2.1 Git
 
-- Erasure and access are library operations, not web-only features.
-  `engine` or `store` exposes `export_customer_data(customer_id)` (a copy in
-  a portable, machine-readable format) and `erase_customer(customer_id)`.
-  The administrator UI calls them. Both are covered by tests, including a
-  test that erasure leaves no name, email or postal address anywhere in the
-  store, exports or logs.
-- Erasure versus invoice retention: invoices are financial records that may
-  have to be kept. Default until the owner decides otherwise: erasure
-  replaces the personal fields on the customer and on issued invoices with
-  an irreversible pseudonym and keeps amounts, tax lines, dates and invoice
-  numbers. The owner MUST confirm the retention period and legal basis. Do
-  not change this behaviour without a proposal (see section 7).
-- Data minimisation: store only the fields the brief lists (name, email,
-  postal address). Do not add fields that hold personal data without
-  approval.
-- Never log personal data, request bodies from customer forms, or full
-  invoice contents (`security-logging`, `backend-observability`). Log
-  identifiers only.
-- Test fixtures, seeds and screenshots use synthetic people only. Never
-  commit a real customer, an SQLite file, a backup or an export produced from
-  real data. The `.gitignore` excludes the database file, backups and
-  `exports/` output.
-- The SQLite file, backups and invoice exports hold personal data. Treat
-  them accordingly: never attach them to issues, journals or pull requests.
+- Commit under one full name and one consistent email; never change
+  identity mid-project
+- Work on a branch; never commit directly to `main`
+- Never commit build output, dependency directories, secrets, or the
+  SQLite database file
+- Keep a `.gitignore` covering dependencies, build output, secrets,
+  editor state, OS files and coverage output (MUST)
+- Commit the `uv.lock` lockfile (MUST)
+- Inspect the working tree and index before starting a task; never
+  discard, reset, stash or overwrite a change the task did not make
+- Stage only the changes the task made; read the staged diff before
+  committing
+- Keep a pull request to one concern; test locally before committing
+- Review the diff against the base before merging, in order: security,
+  correctness, clarity, conventions
+- Merge only after review passes and CI is green; never force-push,
+  including `--force-with-lease`
+- Bring a branch up to date by merging the base into it, never by
+  rebase-and-force-push
+- Read the CI run for the push before calling a change good; never merge
+  while a check is failing, cancelled, or not yet registered
 
-### 5.2 Security
+**Off-limits paths** (MUST NOT change without explicit approval; propose
+first, with rollback and tests that would catch a regression):
 
-Applies `templates/base/security/security.md`, selected as follows.
+- Authentication and session code (administrator sign-in)
+- Customer data erasure and export code (GDPR compliance paths)
+- SQLite migrations
+- `.env*` and secret files
+- CI/CD workflow files
 
-- Authentication (one administrator):
-  - Hash the password with Argon2, bcrypt or scrypt.
-  - Compare secrets in constant time.
-  - Throttle repeated failed sign-ins.
-  - Regenerate the session ID on login and invalidate it on logout.
-  - The password hash and the Flask `SECRET_KEY` come from the environment,
-    never from source and never with a default.
-- Sessions use a cookie, so CSRF protection is mandatory. Use the
-  framework's CSRF mechanism on every `POST`, `PUT`, `PATCH` and `DELETE`,
-  including HTMX requests. Send the token via the `hx-headers` on the body
-  element or a hidden field. `GET` never changes state. Set `HttpOnly`,
-  `SameSite=Lax` and `Secure` where the deployment allows it.
-- Jinja autoescape stays on. Never use `|safe` or `Markup` on data that
-  came from a user, a catalog field or an import. Build no HTML by string
-  concatenation.
-- SQL: parameterised statements through SQLAlchemy only. No f-string SQL.
-- Security headers via one `after_request` hook: a strict
-  `Content-Security-Policy` with no `unsafe-inline` or `unsafe-eval`,
-  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-  `Referrer-Policy` and `Permissions-Policy`. Serve HTMX and any script from
-  local static files, not a CDN. Pin static MIME types in code.
-- Errors: never show stack traces, paths or SQL to the browser. Log details
-  server-side. Login errors say "invalid credentials".
-- No untrusted deserialisation (`pickle`, `yaml.load`, `eval`, `exec`).
-  Imports and exports use JSON or CSV, validated against a schema at the
-  boundary.
-- Nothing reaches the network, so no outbound HTTP client is added. Adding
-  one is a new trust boundary and needs approval (`security-ssrf` would then
-  apply).
-- Secrets, `.env*`, keys and the database file never enter version control.
-  `.env.example` carries placeholders only, with names prefixed `TARIFF_`
-  (`base-config`). Validate required configuration at start-up and fail
-  fast. Agents follow `security-agent-secrets`: never read or print secret
-  files or values.
-- CI-independent secret scanning: `gitleaks` in pre-commit over full history.
-  Dependency vulnerabilities: `pip-audit` against the locked set, run
-  locally with the gates. License review before adding a dependency.
+Name any off-limits path touched at the top of the change's summary,
+whether proposed or already approved; a diff confined to prose in such a
+file is ordinary work.
 
-### 5.3 Python safety and style
+### 2.2 Python
 
-- `mypy` strict passes with zero errors. No `Any` in the public API. Every
-  public function and class member is annotated and has a Google-style
-  docstring (ruff `D` rules, tests exempt).
-- No bare `except:` and no `except Exception:` except at a top-level
-  boundary that logs and re-raises or returns an error response. No mutable
-  default arguments. No debug `print`, `pdb`, or commented-out code.
-- Errors raised on purpose derive from one base, `TariffError`, and each
-  also derives from the built-in its site raised before. A test walks every
-  `raise` in the package and fails on one outside the hierarchy
-  (`base-python-errors`).
-- The library attaches only `logging.NullHandler()` to its own logger and
-  installs no writing handler. The web tier configures real logging.
-- Functions and modules: cognitive complexity within the configured limit,
-  nesting depth of at most three levels, no boolean flag parameters, named
-  constants instead of magic numbers, no circular imports.
-- Identifiers are ASCII. Comments, docstrings and documentation are not
-  restricted. Files are UTF-8 with LF line endings. Commit `.editorconfig`
-  and `.gitattributes` (`* text=auto`). Any program that writes text sets
-  its encoding and newline explicitly.
-- Comments explain a non-obvious why, sit directly above the item, and never
-  cite a ticket, PR or ADR number.
-- Probe or scratch scripts are named `probe_*` and deleted before the commit
-  that uses their findings. Anything left in `scripts/` is invoked by a
-  documented command or by CI.
-- Every wait on a thread, process or connection is bounded and reports why
-  it gave up.
+- Run under mypy strict mode; add no untyped `def`, no implicit `Any`,
+  and no `# type: ignore` without the specific error code it silences
+- Run ruff as both linter and formatter; a generator-produced file must
+  pass both without `--fix`
+- Encode every committed text file UTF-8 with LF line endings, and keep
+  identifiers ASCII:
 
-### 5.4 Web and HTMX
+```bash
+pre-commit run check-ascii-identifiers --all-files --verbose
+```
 
-- Server-rendered HTML is the response format. Detect HTMX with the
-  `HX-Request` header, return the partial for HTMX requests, and the full
-  page otherwise (pages work without JavaScript).
-- Validation errors return `422` and re-render the form partial with inline
-  errors and the submitted values. State-changing routes use `POST` or
-  another non-`GET` method.
-- URIs: lowercase, hyphenated, plural nouns, no trailing slash. Query
-  parameters are camelCase. Parse typed query parameters explicitly so
-  absent, valid and invalid are three distinct states, and invalid returns
-  `400`. Never rely on type-coercing helpers that fall back to a default.
-- Every HTMX request shows loading state (`hx-indicator`) and disables the
-  triggering element during the request.
-- UI accessibility target is WCAG 2.1 AA (`templates/frontend/ux.md`):
-  keyboard operable, visible `:focus-visible`, labelled controls and
-  landmarks, and no colour-only meaning. Check it manually before shipping a
-  new interactive component.
+Pass condition: inspected count above zero, `non-ASCII identifiers` zero.
 
-### 5.5 Data and migrations
+- Commit a `.gitattributes` with `* text=auto`, adding `eol=lf` where LF
+  must be forced, and `-text` on any path that is genuinely binary or
+  must keep CRLF
 
-- Schema changes go through Alembic migrations only. Never edit the SQLite
-  file by hand and never edit a merged migration.
-- Every migration is reversible and covers one logical change. Migrations
-  preserve personal-data handling (5.1), so a migration MUST NOT copy
-  personal data into a new column or table without approval.
-- Naming, normalisation, types and foreign keys follow
-  `templates/base/data/data-modeling.md`. Foreign keys are declared and
-  enforced (`PRAGMA foreign_keys=ON` on every connection). Timestamps are
-  UTC. Every query has a bound or a filter.
-- One transaction per unit of work. Never hold a transaction open across a
-  request boundary.
-- Tests run against real SQLite files in a temporary directory, never
-  against mocks of the store.
+## 3. Quality
 
-### 5.6 Public interfaces
+- Keep one authoritative representation of each piece of knowledge
+  (e.g., a tax rule, a currency format); the third copy is a bug
+- Choose the simplest solution a stated requirement justifies; build only
+  what the catalog, discount, tax, customer and invoice features need now
+- Record, beside every deferral, the concrete condition that reopens it
+- Delete a path once it has no caller or its input is retired
 
-The library API (`tariff.engine` exports) and the invoice export format are
-consumed by another program.
+**Naming**
 
-- Removing or renaming a public symbol, or changing a field, ordering,
-  encoding or rounding in an export, is a breaking change. Deprecate first,
-  with a `DeprecationWarning` naming the replacement and removal version.
-- Such a change needs an ADR in `docs/decisions/` and a `CHANGELOG.md` entry
-  saying what breaks and how to migrate. Version with SemVer.
-- Exports include an explicit format version field. At least one test asserts
-  the export against a fixed, independently derived vector, not against the
-  library's own output (`testing-external-definition`).
+- Name a function with a verb, a class or module with a noun, a boolean
+  with `is`/`has`/`can`
+- Use the same name for the same concept in every module (e.g., one name
+  for "discount rule" throughout catalog, pricing and invoice code)
+- Name a public enum member or result discriminator for the capability it
+  offers, never the library behind it
 
-### 5.7 Testing
+**Complexity**
 
-Applies `templates/base/core/testing.md`.
+- Keep cognitive complexity at or under 15 per function; nest at most
+  three levels, with guard clauses and early returns
+- Replace a boolean flag that selects behaviour with an enum or two named
+  functions
+- Name every magic number and magic string as a constant
+- Take a tax, currency or rounding limit from the applicable law or
+  specification and name it; never derive it from an observed sample
 
-- `pytest`. Tier is derived from the directory: `tests/unit/` (fast
-  default), `tests/integration/` (real SQLite, Flask test client) and
-  `tests/e2e/` (opt-in, browser against the app served in-process on an
-  ephemeral port 0). The default run is unit plus integration.
-- Coverage of new code is at least 90%. The overall gate is 80% (new-project
-  policy) and does not regress.
-- The engine is pure and is tested without mocks. Money, tax and discount
-  logic gets parametrised cases and boundary cases (zero, negative, rounding
-  half-way, stacking order). Expected values come from independent
-  calculation (a statute, a hand-worked invoice), never from running the
-  engine and pasting its output. Record the source beside each vector.
-- A test asserting "nothing found" also asserts its inputs were reached.
-- Each test is independent. Set and clear environment variables per test.
-  No test touches the host outside its temporary directory.
-- Do not weaken or delete an existing test to turn a run green without
-  stating why. A green suite is not evidence of the change until CI or the
-  full local gate has run.
-- Test naming: `test_<unit>_<state>_<expected>`.
+**Dependencies and module structure**
 
-### 5.8 Git
+- Keep the module graph acyclic: the pricing engine never imports the web
+  package
+- Enforce that boundary mechanically once the import-ban check is wired
+  into pre-commit, with the pricing-engine-to-web direction declared as a
+  forbidden pair:
 
-- Never commit to `main`. Branch names: `feat/…`, `fix/…`, `chore/…`,
-  `docs/…`.
-- Conventional commit prefixes (`feat:`, `fix:`, `chore:`, `docs:`,
-  `refactor:`, `style:`, `test:`). Imperative mood, subject under 80
-  characters. A single-commit branch that closes an issue carries the issue
-  reference in the commit subject.
-- Small, focused pull requests, one concern each. Run the local gates before
-  committing. Review the diff against the base before merging (priority:
-  security, correctness, clarity, conventions).
-- Never force-push, including `--force-with-lease`. Merge `main` into a
-  behind branch. Repeat the closing keyword before each issue number, and
-  never write a closing keyword beside an issue that should stay open.
-- Regenerate derived artifacts in the same change that edits their source.
-- Never commit build output, virtual environments, `.env*`, keys, database
-  files or exports. Commit `uv.lock`. Treat the repository as public.
-- Releases are annotated tags `vX.Y.Z` cut from `main`. The release process
-  and its pre-release checks are in `templates/base/core/git.md` and are
-  referenced from `docs/PLAYBOOK.md`.
+```bash
+pre-commit run find-import-bans --all-files --verbose
+```
 
-### 5.9 Documentation and content rules
+- Keep the Flask web application a thin layer over the pricing engine
+  library: decode request → call the library → render response; push
+  catalog, discount, tax and invoice logic into the library, not into
+  route handlers
+- Never write to standard output or standard error from the pricing
+  engine library, and never configure logging beyond its own logger
+  (MUST); make its logger injectable, falling back to its module logger
+- Keep constants beside the functions that use them
 
-- Keep `README.md` (nine sections per `base-readme`), `docs/ONBOARDING.md`
-  and `docs/PLAYBOOK.md` (structures in `templates/base/core/docs.md`),
-  `docs/dev-journal.md` (required, oldest first) and `CHANGELOG.md`
-  (entries of at most 40 words, kept by the change that causes them).
-- Update the relevant documents before every commit. The README's structure
-  section is the only directory tree.
-- Do not state a figure about the tree (a count of files, tests, rules) in
-  prose unless a generator produces it.
-- Write in present tense, in full sentences. Show commands in fenced blocks.
-- Decision records (`docs/decisions/NNN-slug.md`, frontmatter format from
-  `base-docs`) are required only for changes a user of the library or the
-  export can observe, such as the public API, export format or erasure
-  semantics. Prose style, tool choice, layout and refactors end in the pull
-  request.
-- Never put a real customer's data in any document, journal or issue.
+**Errors**
 
-## 6. Workflow
+- Validate input at the boundary (HTTP handlers, the other program's call
+  sites) and fail at once on invalid state
+- Never break a public catch contract: a raise callers catch by a
+  built-in type keeps that type
+- Add an error type only where a caller could act differently
+- Never let a caller-side filter stand in for a precondition inside the
+  pricing engine; assert the precondition there
 
-### 6.1 Plan before implementing
+**Deprecation**
 
-For any feature or non-trivial change, write the plan first: files to touch,
-signatures or outline, edge cases and the assumptions made explicit. Do not
-write implementation code until it is approved. Single-line fixes and
-changes already fully specified are exempt. If a constraint invalidates the
-plan mid-way, stop and re-surface the options.
+- Deprecate a public symbol in the pricing engine's API, naming its
+  replacement, before a later change removes it; the other program and
+  the web application are both callers that can be broken by a silent
+  removal
 
-### 6.2 Review and audit scopes
+**Comments and debug code**
 
-- **Code review scope:** read `templates/base/core/review.md`,
-  `templates/base/core/quality.md`, `templates/base/language/python.md`,
-  `templates/base/security/security.md`, `templates/base/core/testing.md`,
-  and section 5 of this file. Apply the priority order security,
-  correctness, clarity, conventions. Verify a finding before reporting it, as
-  `review.md` describes.
-- **Structure audit scope:** run after initial setup, after adding a layer
-  and before a release. Verify every MUST in
-  `templates/base/core/docs.md`, `templates/base/core/readme.md` and
-  `templates/base/core/git.md`, plus `templates/stack/python-flask.md`,
-  `templates/stack/python-lib.md`, `templates/stack/htmx.md` and the
-  layering check in section 4. Check each sub-clause independently.
-- **Quality gates:** `templates/base/workflow/quality-gates.md` defines the
-  model. Layer 1 is editor settings mirroring the gates, tracked in
-  the repository. Layer 2 is `pre-commit`. Layer 3 is the same commands run
-  in CI. No CI platform is specified yet, so until one exists, layer 3 is the
-  full local gate list in section 3, run before every merge (see section 8).
-- **CI/CD and DevSecOps:** referenced from `templates/base/infra/cicd.md` and
-  `templates/base/security/devsecops.md`. Only the build, lint, test and
-  scan stages apply here (see section 8).
+- Prefer code that needs no comment; never cite a ticket or PR number in
+  a comment — state the substance instead
+- Commit no debug output (`print()`) and no commented-out code; gate
+  debug tooling behind a flag, off by default
+- Delete a probe script before the commit that uses its findings; keep
+  the findings in a comment, decision record or doc, never in the probe
 
-### 6.3 End-of-session audit
+**Destructive operations** (governs GDPR erasure above all)
 
-Before ending a session, execute the end-of-session audit defined in
-`scope.md`, as `templates/base/core/agents.md` §6.3 directs. Execute each
-item of its checklist. Do not summarize it, paraphrase it or reduce it to
-bullets. Then update `docs/dev-journal.md` with the session entry (heading
-`## YYYY-MM-DD — Short theme`, with Tool, Key changes, PRs merged, Issues
-closed/created, and Lesson or decisions).
+- Delete, anonymize or overwrite only what the operation can prove it
+  owns: match an erasure or export request by customer ID, never by a
+  name or email string match
+- Validate the input as well: reject an empty or malformed customer
+  identifier before acting
+- Find nothing, and change nothing, where the proof of ownership is
+  unavailable: no guess, no partial match
 
-## 7. Off-limits paths
+**Check trust**
 
-The following MUST NOT be modified without explicit approval. Before
-changing one, propose the change with a rollback strategy and the tests that
-would catch a regression. Approval covers that plan only. A diff touching
-one of these paths says so at the top of its summary. Prose-only changes
-(comments and documentation, with no directive comments) are ordinary work.
+- Confirm a migration or data-fix script is correct, on a copy of real
+  data, before running it against the live SQLite file
+- Cross-check an independent source before overwriting stored customer or
+  pricing data with a source that looks wrong
 
-- Authentication and session code (`src/tariff/web/auth*` and session or
-  secret-key configuration).
-- Money-critical engine code: invoice totals, tax calculation and rounding
-  (`src/tariff/engine/` modules that compute them). The blast radius is
-  every invoice ever issued.
-- Personal-data operations: `export_customer_data`, `erase_customer` and
-  anything that copies or retains customer fields.
-- Database migrations (`migrations/`).
-- `.env*` and anything handling secrets, keys or the password hash.
-- CI/CD workflow definitions (`.github/workflows/` or the equivalent, once
-  one exists), and `.pre-commit-config.yaml` hook definitions.
-- `docs/solid-ai-templates/`. It is a vendored copy of the governing rules.
-  A one-line change here rebinds every rule in this file, and no linter or
-  test reads it. Refresh it only through a proposed change.
+**Completion**
 
-These paths match the intended layout. Adjust them to the real files when
-those exist, and keep this list and the layering check in section 4 in step.
+- Finish a task when the requested behaviour works through the entry
+  point its user or caller reaches (the browser UI, or the library call
+  the other program makes), and the checks that prove it pass
+- Report a check that could not run as not run, never as a pass
 
-## 8. Declined candidates and revisit triggers
+## 4. Security
 
-Declining a candidate needs no ADR (section 2.2). These are recorded because
-they are deliberate and each names what reopens it.
+- Validate all external input (HTTP form/query data, and any input the
+  other program passes into the pricing engine) at the boundary, with a
+  schema validator; use an allowlist, never a blocklist
+- Encode dynamic data for its rendering context at the point of output in
+  Jinja templates; never bypass auto-escaping with a raw-HTML path for
+  customer- or admin-supplied text
+- Use parameterized queries for every SQLite access; never concatenate
+  input into SQL
+- Hash the administrator's password with bcrypt, scrypt or Argon2; use
+  constant-time comparison for any token; lock out or throttle after
+  repeated failed sign-in attempts
+- Generate the session ID with a cryptographic random generator;
+  regenerate it after login; set `HttpOnly`, `Secure`, `SameSite=Lax`
+  cookie flags; expire idle sessions; invalidate on logout
+- Give every state-changing request (`POST`/`PUT`/`PATCH`/`DELETE`) a
+  CSRF token, since the administrator's session is authenticated by an
+  ambient cookie; use the framework's CSRF middleware (e.g. Flask-WTF),
+  never a hand-rolled check
+- Include the CSRF token explicitly in every HTMX request that mutates
+  state (`hx-headers` or a hidden field); HTMX does not add it on its own
+- Never change state on a `GET` request
+- Never hardcode secrets (session signing key, any admin credential) in
+  source; keep them in a local secret file excluded from version control
+- Never expose a stack trace, internal path or SQLite error to the
+  browser; return a generic error externally and log full detail
+  server-side
+- Never log secrets, tokens, or personally identifiable information
+  (customer name, email, postal address); log authentication and
+  authorization failures with an opaque user ID and the client IP, kept
+  only in a security log with its own retention
+- Pin dependency versions and verify them via `uv.lock`; never trust an
+  unpinned upstream package
+- Set security headers on every response (`Content-Security-Policy`,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` or CSP
+  `frame-ancestors`, `Referrer-Policy`, `Permissions-Policy`); do not
+  expose `Server`/`X-Powered-By` version strings
 
-| Candidate | Status | Revisit trigger |
-| --- | --- | --- |
-| Containers, Kubernetes, image scanning (`base-containers`) | Declined: local-only, no deployment target | Revisit trigger: a deployment target or container packaging is chosen |
-| Deploy stages, staging, DAST, IaC scanning (`base-cicd`, `base-devsecops`) | Declined: nothing is deployed | Revisit trigger: the application is hosted anywhere beyond the administrator's machine |
-| Hosted CI (layer 3) | Deferred: local full gate stands in | Revisit trigger: the repository is hosted with a CI platform. Then wire the section 3 commands as required checks |
-| Multi-factor authentication for the administrator | Not adopted: single local user | Revisit trigger: the app becomes reachable off the local machine or gains a second account |
-| HTTPS/HSTS, token auth, HATEOAS, JWT (`backend-http`) | Not applicable: loopback, cookie session, HTML responses | Revisit trigger: a JSON API or network listener is added |
-| Messaging, feature flags, distributed tracing (`backend-messaging`, `backend-features`, tracing in `backend-observability`) | Declined: single process | Revisit trigger: a second process or a background job appears |
-| SEO, structured data, analytics (`frontend-quality`) | Not applicable: not publicly indexed | Revisit trigger: any page becomes public |
-| Mutation testing (`quality-gates-mutation`) | Not adopted | Revisit trigger: the engine suite is mature and a money-path regression escapes it |
-| SBOM and release attachment | Not adopted: nothing is published | Revisit trigger: the library is distributed to anyone outside Imbra |
+Not applicable, and do not add without a stated reason:
 
-<!-- Generated with solid-ai-templates
-(github.com/braboj/solid-ai-templates) -->
+- Transport security (HTTPS/HSTS/TLS) and CORS — the application serves
+  only loopback HTTP to the administrator's local browser; it has no
+  deployment target and no second origin to allow
+- SSRF defences — the application makes no outbound network requests;
+  nothing it does reaches the network
+- File-upload rules — there is no file-upload feature
+
+## 5. Data modeling and GDPR compliance
+
+**Modeling** (products, discount rules, tax jurisdictions, customers,
+invoices)
+
+- Use one naming convention for every table and column (snake_case)
+- Give every table a primary key; store monetary values as integers in
+  minor units, never floating point; store timestamps in UTC; document a
+  maximum length for every text field
+- Enforce every reference (invoice → customer, invoice line → product,
+  discount → product or category) with SQLite foreign key constraints
+  (`PRAGMA foreign_keys = ON`); decide per reference whether deleting the
+  target cascades, clears the reference, or is refused
+- Run every schema change through a versioned migration with both up and
+  down steps; never hand-edit the schema
+
+**Classification**
+
+- Confidential: customer name, email, postal address; invoice records
+  (they carry the same fields)
+- Restricted: the administrator's password hash and the session signing
+  key
+- Internal: product catalog, discount rules, tax jurisdiction
+  configuration
+
+**Personal data (customers)**
+
+- Encrypt PII at rest if the deployment environment changes from a single
+  trusted local machine; document the decision either way
+- Minimize collection: store only name, email and postal address, no more
+- Provide an erasure mechanism: hard-delete or anonymize the customer
+  record on request; never a soft delete of PII
+- Anonymize the customer's name, email and postal address on invoices
+  that must be retained for tax or accounting records after an erasure
+  request, rather than deleting the invoice itself; keep the invoice's
+  financial figures intact
+- Provide a data-portability export: on request, produce the customer's
+  own stored data (name, email, postal address, and the invoices billed
+  to them) in a structured, machine-readable format
+- Never put a customer's name, email or address in an application log or
+  error message; the audit trail below is a separate store, not a log
+
+**Retention**
+
+- Define, per data category, how long it is kept and when it is purged;
+  the statutory retention period for invoices under the applicable tax
+  law is open — settle it before relying on a default
+- Retain customer PII only until it is no longer needed for an open
+  invoice relationship, or until an erasure request, whichever is sooner
+
+**Ownership and audit**
+
+- The administrator is the sole owner of every data domain (customers,
+  products, discounts, tax jurisdictions, invoices) while the application
+  has one operator
+- Log every change to a customer's PII and to the administrator's
+  credentials in an append-only audit table, separate from application
+  logs: who changed what, when, and that a value changed, never the old
+  or new PII value itself
+- Erasing a customer's PII must still leave an audit trail entry that the
+  erasure happened, without a copy of the erased value
+
+## 6. Database
+
+- Parameterize every SQLite query; never build one by string
+  interpolation
+- Bound every list view (customers, invoices, products) with a limit or
+  pagination; never load a full table for an interactive request
+- Fetch related rows (e.g., invoice lines for a set of invoices) in one
+  query, never one query per row in a loop
+- Wrap a multi-table write (assembling an invoice from catalog, discount
+  and tax data) in a transaction; commit only after every write succeeds
+- Keep transactions short; never call the pricing engine's heavier
+  computations or any I/O inside an open transaction
+- Open one connection per request through Flask's application context,
+  closed at teardown; do not size a connection pool for this — SQLite is
+  an embedded local file, not a networked database server
+- Reset state between test runs by wrapping each test in a transaction
+  rolled back after completion, or by using a fresh temporary SQLite file
+  per test; never substitute an in-memory or different database engine in
+  tests
+- Never run a migration against the real local SQLite file from a test
+  suite
+
+## 7. Web interface and UX
+
+**HTTP**
+
+- Read the port from an environment variable such as `PORT`; use a
+  well-known development default
+- Keep Flask handlers thin: decode request → call the pricing engine →
+  render the Jinja template or HTMX fragment; validate all incoming
+  request data before processing
+- Parse a typed query parameter explicitly, distinguishing absent,
+  present-and-valid, and present-but-invalid (raise 400 on the last)
+- Never let a `GET` or `HEAD` request change state; make every `PUT` and
+  `DELETE` idempotent
+- Format every date and time field as ISO 8601, every currency code as
+  ISO 4217, and every country code as ISO 3166-1 alpha-2, in invoice
+  exports and in any JSON the application emits
+- Serialise a computed float that is non-finite (`NaN`/`Infinity`) as
+  `null` in any JSON export, never as a bare token
+- Use a consistent error response shape across all routes; 4xx for client
+  errors, 5xx for server errors, never 200 for an error
+- Enforce authentication on every route except none are declared public;
+  the application has a single administrator account and no self-service
+  sign-up or recovery flow
+
+Not applicable: the process-lifecycle rules for graceful shutdown under
+an orchestrator (drain deadlines, `SIGTERM` handling across instances) —
+the application runs as a single local process with no deployment target
+and no second instance to drain into.
+
+**UX and accessibility**
+
+- Meet WCAG 2.1 AA: keep text contrast at 4.5:1 (3:1 for large text),
+  keep every interactive element keyboard-reachable, use a native button
+  or link rather than a click handler on a non-focusable element, style
+  focus with `:focus-visible`, and never convey meaning by colour alone
+- Give an icon-only control a descriptive `aria-label`
+- Scan rendered pages with an automated accessibility checker; before
+  shipping a new interactive component, tab through it without a mouse
+  and verify with one screen reader
+- Keep visual values (colour, spacing, type) in one CSS source of truth;
+  the project has no shared design system yet, so do not hardcode a
+  visual value in more than one place
+- Support the last two versions of Chrome, Firefox, Safari and Edge
+
+## 8. Review process
+
+Review in this order, most critical first: security, correctness,
+clarity, conventions. `docs/solid-ai-templates/templates/core/quality.md`
+is the standard for items 2–4.
+
+**MUST checklist**
+
+- [ ] No credential, token or sensitive value appears in a committed file
+- [ ] Every failure path is handled; no silent catch, no swallowed
+      exception
+- [ ] Every new dependency carries an acceptable licence
+- [ ] Existing documentation matches the code after the change
+- [ ] Every changed section was re-read whole, not only the changed line
+- [ ] Input from outside the process (query params, form fields) is
+      validated as untrusted before it is used
+- [ ] A refactor preserves behaviour on every path, including null
+      handling, sort order and boundary values
+- [ ] A change touching customer PII or erasure/export code was proposed
+      first, per the off-limits rule in section 2.1
+
+**SHOULD checklist**
+
+- [ ] Each non-trivial function has a unit test per relevant variant
+- [ ] Coverage does not fall; lint and mypy warnings do not rise
+- [ ] Each third-party dependency is necessary, understood and maintained
+- [ ] No new abstraction without two call sites
+
+**Testing**
+
+- Double only what a unit test would cross a boundary to reach (SQLite
+  I/O, time, randomness); keep deterministic in-process collaborators
+  real
+- Assert at least one case against a fixed external vector for every
+  format defined outside the codebase: an ISO 8601 date, an ISO 4217
+  currency code, a jurisdiction's published tax rate
+- Allocate a per-test SQLite file or in-memory-equivalent resource from a
+  fixture, never a shared one across tests
+- Add a regression test for every fixed defect
+
+**Verifying a finding**
+
+- Label a finding unverified until demonstrated by running the path
+- Reproduce a defect before reporting it; read a passing test that
+  contradicts the reproduction before blaming the code
+
+**Deviations**
+
+- Explain a deviation from a SHOULD rule in the pull request
+- Land a deviation from a MUST or MUST NOT rule only with an approver's
+  sign-off and its reason recorded in the pull request; never waive one
+  yourself
+
+## 9. Session protocol
+
+**Start**
+
+- Run `git status` before touching the tree; never discard or overwrite
+  a change the current task did not make
+- Re-read the target code for existing coverage before writing anything
+- Produce a plan (files, signatures, edge cases, assumptions) before a
+  non-trivial change; skip it only for one-line fixes, typos, or fully
+  specified changes
+
+**Proceed**
+
+- Stay inside the approved plan; stop and re-surface the options when a
+  constraint invalidates it
+- Treat any change inside an off-limits path (section 2.1) as needing a
+  proposal before it is made, not after
+
+**End**
+
+Before ending any session, read the MUST checklist in section 8 top to
+bottom and execute every item in order, without summarizing or skipping
+any:
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy --strict .
+uv run pytest
+git status
+git diff --staged
+```
+
+- Confirm every check above passes or is explicitly reported as not run
+- Confirm `CLAUDE.md` and `README.md` still match the code after the
+  change, updating whichever has drifted in the same commit
+- Confirm no secret, credential or customer PII value appears in the
+  diff or in any commit message before committing

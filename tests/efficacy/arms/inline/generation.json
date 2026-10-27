@@ -1,0 +1,170 @@
+{
+  "arm": "inline",
+  "kind": "model",
+  "output_model": "inline",
+  "ref": "9086e0ff",
+  "source": {
+    "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
+    "ref": "9086e0ff",
+    "commit": "9086e0ffc454fbff1d234601822257ce5e40a004"
+  },
+  "roots": [
+    "backend-api",
+    "backend-auth",
+    "backend-database",
+    "frontend-ux",
+    "base-security",
+    "base-data-governance"
+  ],
+  "started_at": "2026-10-27T07:33:38",
+  "commit": "9086e0ffc454fbff1d234601822257ce5e40a004",
+  "resolved_files": [
+    "templates/core/quality.md",
+    "templates/core/git.md",
+    "templates/core/docs.md",
+    "templates/core/testing.md",
+    "templates/core/review.md",
+    "templates/backend/http.md",
+    "templates/backend/api.md",
+    "templates/security/security.md",
+    "templates/backend/auth.md",
+    "templates/backend/database.md",
+    "templates/frontend/ux.md",
+    "templates/data/data-modeling.md",
+    "templates/data/data-governance.md"
+  ],
+  "prompt_chars": 83333,
+  "prompt_leak": null,
+  "prompt_file": "C:/Users/BGEORG~1/AppData/Local/Temp/r5gen\\arm-inline-prompt.txt",
+  "auth_probe": "ready",
+  "command": [
+    "C:\\Users\\bgeorgiev\\.local\\bin\\claude.EXE",
+    "-p",
+    "--output-format",
+    "json",
+    "--model",
+    "claude-sonnet-5",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "bypassPermissions",
+    "--setting-sources",
+    "",
+    "--settings",
+    "C:/Users/BGEORG~1/AppData/Local/Temp/r5gen\\home\\settings.json",
+    "--strict-mcp-config",
+    "--disallowed-tools",
+    "WebSearch",
+    "WebFetch"
+  ],
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "elapsed_s": 358.7,
+  "exit_status": 0,
+  "result": {
+    "duration_api_ms": 355213,
+    "stop_reason": "end_turn",
+    "session_id": "0b18b764-6454-4a3d-b857-b2b08f8dfb10",
+    "total_cost_usd": 0.57898,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 63359,
+      "cache_read_input_tokens": 0,
+      "output_tokens": 32554,
+      "output_tokens_details": {
+        "thinking_tokens": 23577
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 63359,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 32554,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 63359,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 63359
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-sonnet-5": {
+        "inputTokens": 2,
+        "outputTokens": 32554,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 63359,
+        "webSearchRequests": 0,
+        "costUSD": 0.57898,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 23577,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 63359,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 1,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "# tariff\n\nA pricing and invoicing web application for Imbra Ltd: a product catalog,\ndiscount rules of several kinds, tax jurisdictions, customers, and invoices\nassembled from them.\n\nImbra Ltd. Stack: Python 3.12, Flask 3, Jinja, HTMX, SQLite. Tooling: uv,\nruff, mypy (strict), pytest. Runs locally only; there is no deployment\ntarget and nothing in the system reaches the network.\n\n- Model: inline\n\nPrecedence when rules conflict: GDPR obligations (section 3.10) override\nevery other rule in this file; this file overrides personal preference;\n`README.md` is the single source of truth for project structure. This file\ncarries every rule the project has adopted, inline \u2014 nothing here is a\npointer to an external document.\n\nA sibling `AGENTS.md` carries the same rules for any non-Claude agent.\nUpdate `CLAUDE.md`, `AGENTS.md` and `README.md` together whenever a change\ntouches architecture, stack, structure, setup, or the conventions below;\nnever let `AGENTS.md` and `CLAUDE.md` disagree.\n\n## Rule language\n\nA plain imperative (\"Use X\", \"Never Y\") means MUST or MUST NOT. Where\nstrength matters, the keyword is explicit:\n\n| Word | Meaning |\n| --- | --- |\n| MUST | Absolute requirement; a deviation needs an approver's sign-off |\n| MUST NOT | Absolute prohibition; a deviation needs an approver's sign-off |\n| SHOULD | Recommended; a deviation needs a justification |\n| SHOULD NOT | Not recommended; may be ignored with a justification |\n| MAY | Optional; the developer decides |\n\n## 1. Project\n\n### 1.1 Overview\n\nSee the precedence and stack summary above. Two actors reach this system:\nthe administrator, signed in through the browser, and a second program\nthat imports the pricing engine directly as a Python library, with the web\napplication absent. Customers are data subjects under the EU GDPR: their\nname, email and postal address are stored and printed on the invoices\nbilled to them (see section 3.10).\n\n### 1.2 Project structure\n\nSee `README.md` for the full directory layout; this file does not\nduplicate it.\n\n- Keep the pricing engine (catalog, discount rules, tax jurisdictions,\n  invoice assembly, invoice export) as a standalone Python package that\n  imports nothing from Flask, Jinja, HTMX or any HTTP/web-framework code\n  (MUST); another program must be able to import it with the web\n  application absent.\n- Keep the Flask web app a thin caller of that library: a route decodes a\n  request, calls the library, renders a template; never duplicate pricing,\n  discount, tax or invoice-assembly logic in the web layer (MUST).\n- Keep invoice export logic (PDF/CSV/etc.) inside the library beside the\n  invoice-assembly code it serializes, not in the Flask layer.\n\n### 1.3 Commands\n\n```bash\nuv sync                    # install dependencies\nuv run flask run           # run the app locally\nuv run ruff check .        # lint\nuv run ruff format .       # format\nuv run mypy --strict .     # type-check\nuv run pytest              # run tests\nuv run pytest --cov        # run tests with coverage\n```\n\n## 2. Code conventions\n\n### 2.1 Git\n\n- Commit under one full name and one consistent email; never change\n  identity mid-project.\n- Work on a branch; never commit directly to `main`.\n- Never commit build output, the virtual environment, `__pycache__`, or\n  secrets.\n- Keep a `.gitignore` covering `.venv`, `__pycache__`, build output,\n  `.env*`, editor state, OS files and coverage output (MUST).\n- Commit `uv.lock` (MUST).\n- Treat the repository as public: no secret, credential or sensitive value\n  in source or history.\n- Inspect the working tree and the index before starting a task.\n- Never discard, reset, stash or overwrite a change the task did not make\n  (MUST NOT); never clear the tree for a clean test baseline without\n  asking.\n- Stage only the changes the task made; read the staged diff before\n  committing.\n- Stop and ask when a task change and a prior change share a hunk; report\n  a pre-existing change that blocks the task rather than removing it.\n- Keep a pull request to one concern (SHOULD); test locally before\n  committing.\n- Review every diff against the base before merging, in order: security,\n  correctness, clarity, conventions. Merge only once review passes and CI\n  is green.\n- Read the CI run for the push before calling a change good; never merge\n  while a check is failing, cancelled, or not yet registered.\n- Never force-push, including `--force-with-lease` (MUST NOT); update a\n  branch by merging the base into it.\n\n#### Off-limits paths\n\nThese MUST NOT change without explicit approval. Propose a change inside\none of them with a rollback strategy and the tests that would catch a\nregression, before making it:\n\n- Authentication and session code (sign-in, password hashing, session\n  cookie configuration)\n- Database migrations\n- `.env*` and any secrets file\n- CI/CD workflow files\n\nName any off-limits path touched at the top of the change's summary,\nwhether proposed or already approved.\n\n### 2.2 Python\n\n- Name a function with a verb, a class or module with a noun, a boolean\n  with `is`, `has` or `can`.\n- Rename a name that needs a comment to explain it; use the same name for\n  the same concept in every module (e.g. always `tax_jurisdiction`, never\n  mixed with `tax_zone`).\n- Name a public enum member or result discriminator for the capability it\n  offers, never the library behind it.\n- Keep cognitive complexity at or under 15 per function; enforce it with\n  `ruff`'s `C90` rules and `max-complexity = 15` in `pyproject.toml`.\n- Nest at most three levels; use guard clauses and early returns.\n- Replace a boolean flag parameter that selects behaviour with an enum or\n  two named functions.\n- Name every magic number and magic string as a constant; keep a constant\n  beside the function that uses it.\n- Encode every committed text file in UTF-8 with LF line endings; keep\n  identifiers ASCII.\n- Prefer code that needs no comment; comment only non-obvious intent;\n  never cite a ticket or PR number in a comment or docstring.\n- Commit no debug output (`print()`), no commented-out code, and no\n  hardcoded breakpoint; gate any debug tooling behind an environment\n  variable, off by default.\n- Delete a probe script before the commit that uses its findings; keep the\n  findings in a comment, decision record or doc, never in the probe.\n- Type-annotate every function signature; keep `mypy --strict .` and\n  `ruff check .` clean as a merge gate (MUST).\n\n## 3. Quality\n\n### 3.1 Architecture and dependencies\n\n- Keep one authoritative representation of each piece of knowledge (DRY);\n  extract shared logic only where substantial logic repeats.\n- Choose the simplest solution a stated requirement justifies (KISS);\n  build only what is needed now (YAGNI).\n- Compute every derived count, total, tax amount or discount from the\n  data; never hardcode one.\n- Remove unused modules, assets and data files promptly.\n- Snapshot pricing, discount and tax data onto an invoice at creation time;\n  never recompute a historical invoice from current catalog, discount or\n  tax-jurisdiction state (a later price or rate change must never alter an\n  already-issued invoice).\n- Keep the module graph acyclic; break a cycle with a third module, never\n  a divergent local copy.\n- Keep coupling shallow: a change inside one module must not require\n  changes in unrelated modules.\n- Never let the pricing-engine library write to standard output or error,\n  or configure logging beyond its own logger (MUST); make its logger\n  injectable, falling back to its module logger, and verify the silence in\n  a fresh process.\n- Enforce the library/web-app import boundary with a test\n  (e.g. `test_library_has_no_web_imports`) asserting that no module under\n  the pricing-engine package imports `flask`, `jinja2`, or anything from\n  the web layer.\n\n### 3.2 Errors\n\n- Validate input at boundaries (the HTTP layer, the library's public\n  functions) and fail at once on invalid state.\n- Read a value from its source-of-truth field and raise when it is\n  missing; never fall back to a value derived from a slug, name or hash.\n- Never break a public catch contract: a raise callers catch by a built-in\n  type keeps that type.\n- Add an error type only where a caller could act differently.\n\n### 3.3 Deprecation\n\n- Deprecate a public symbol in the pricing-engine library, naming its\n  replacement, before a later change removes it; the second program\n  consumes this library's API directly and has no version negotiation to\n  fall back on.\n- Deprecate every part of one call site together; never alias the outer\n  name alone while silently changing its keyword arguments.\n\n### 3.4 Destructive operations\n\n- Delete, truncate or overwrite only what the operation can prove it\n  should affect: a specific customer ID matched exactly, never a loose\n  filter.\n- Validate the input before any destructive operation: reject an empty or\n  malformed ID.\n- Apply this with particular care to GDPR erasure (section 3.10): verify\n  the customer record matched is the one requested before deleting or\n  anonymizing it.\n\n### 3.5 Completion\n\n- Finish a task when the requested behaviour works through the entry point\n  its user or caller reaches (the browser UI or the library's public API),\n  and the checks that prove it pass.\n- Report a check that could not run as not run, never as a pass.\n- Add an abstraction or process step only when a stated requirement, a\n  demonstrated defect, or a material risk justifies it.\n- Report a problem found outside the task's scope rather than fixing it in\n  the same change (SHOULD).\n\n### 3.6 Testing\n\n- Classify a test by the boundary it crosses: unit (none), integration\n  (the SQLite database), system (the whole app against its requirements),\n  regression (reusing existing tests), exploratory (unscripted).\n- Double only what crosses a boundary: the database, time, randomness;\n  keep deterministic in-process collaborators real.\n- Add a regression test for every fixed defect (SHOULD).\n- Cover every happy path the pricing, discount, tax and invoicing rules\n  define, plus negative inputs and edge cases (SHOULD).\n- Keep pricing, discount and tax logic in pure functions; push the SQLite\n  access to thin adapters at the edges; inject the database session rather\n  than construct it inside the code under test.\n- Set or clear every environment variable a test depends on inside that\n  test; never rely on ambient process state.\n- Treat a test that passes or fails by run order as an isolation bug;\n  investigate a failing test before skipping or suppressing it.\n- Reset database state between test runs (a transaction rolled back per\n  test, or a fresh SQLite file); never substitute a different database\n  engine in tests.\n- Assert at least one case against a fixed vector from the ISO 4217 minor-\n  unit table for currency rounding; never take a round trip through your\n  own rounding code as proof it is correct.\n- Give every fact stored in two places (a documented field's maximum\n  length and the constant enforcing it, for instance) a test that fails\n  when the two diverge.\n- Verify a change to rendered HTML or an HTMX fragment against the\n  rendered output, not the template source.\n- Never let coverage regress between commits; run every test from CI with\n  no human step.\n\n### 3.7 HTTP and web conventions\n\n- Keep Flask route handlers thin: decode the request, call the pricing\n  library or a service function, render the response; never put pricing,\n  discount, tax or invoice logic in a handler.\n- Parse a typed query parameter explicitly so absent (use the default),\n  present-and-valid (use it), and present-but-invalid (raise 400) are\n  distinct; never let a parsing helper silently turn an invalid value into\n  a default.\n- Never let a `GET` or `HEAD` request change state; make every HTMX\n  `PUT`/`DELETE`-driven action idempotent.\n- Represent every date and time as ISO 8601 and every currency amount with\n  its ISO 4217 code; store and compute money as an integer in minor units\n  or as a decimal type, never as a float.\n- Use a consistent error response shape across the app; never return a\n  stack trace, an internal path, or a raw database error to the browser;\n  log the full detail server-side and show the administrator a generic\n  message.\n- Enforce authentication on every route (MUST); this application declares\n  no public endpoint. Apply authentication before any business logic\n  runs.\n- Run a one-off task (a migration, a data fix, a REPL session) as a script\n  committed to the repository, using the application's own code and\n  config, never as an ad-hoc shell command.\n\n### 3.8 Database conventions\n\n- Make every schema change through a migration committed to source control\n  (MUST); never edit the SQLite file by hand. One migration per logical\n  change, with both an `up` and a `down` step; say in the migration and\n  get approval when the `down` step would lose data.\n- Never modify a migration that is already merged.\n- Parameterize every query that takes a value; never build a query by\n  string interpolation (see also section 3.9).\n- Bound every query an interactive request runs with a limit or\n  pagination; select only the columns the code uses; fetch an invoice's\n  related line items in one query, never one query per row.\n- Index every foreign key column (`customer_id` on invoices, `product_id`\n  on line items, and similarly for discount and tax-jurisdiction\n  references); drop an index once it is unused.\n- Wrap a multi-step write (assembling an invoice across its tables) in a\n  transaction; keep transactions short; never call out to another process\n  inside one.\n- Inject the database session as a dependency; no global database handle.\n- Use hard delete or anonymization for a GDPR erasure request, never a\n  soft-delete flag alone (see section 3.10); where a soft delete is used\n  elsewhere for audit history, filter deleted rows out of every query by\n  default.\n- Never run a schema migration against production data inside a test\n  suite.\n\n### 3.9 Security\n\n- Validate all external input (every form field, query parameter and HTMX\n  payload) at the boundary with a schema-validation library; use an\n  allowlist, not a blocklist; reject invalid input with a clear error\n  rather than silently coercing it.\n- Never bypass Jinja's autoescaping with a raw-HTML path for user-supplied\n  data (product names, customer names and addresses, discount codes\n  included).\n- Use parameterized queries for all database access; never concatenate\n  user input into SQL.\n- Hash the administrator's password with bcrypt, scrypt or Argon2; never\n  MD5, SHA-1 or plain SHA-256. Require a minimum password length and\n  reject known-breached passwords; impose no composition rules.\n- Use constant-time comparison for secrets and tokens; lock the account or\n  throttle after repeated failed sign-in attempts.\n- Generate the session ID with a cryptographic random generator and\n  regenerate it after login (session fixation).\n- Set `HttpOnly`, `Secure` and `SameSite=Strict` on the session cookie;\n  expire the session after 30 minutes idle; invalidate it on logout.\n- Give every state-changing request (every `POST`, `PUT`, `PATCH`,\n  `DELETE` the admin UI issues, HTMX included) a CSRF defence, since the\n  session is carried by an ambient cookie; use Flask's own CSRF protection\n  rather than hand-rolled tokens; never change state on a `GET`.\n- Never hardcode a secret, API key or credential in source; keep `.env`\n  out of version control; rotate a secret immediately if it is\n  accidentally committed, and warn the user before committing a file that\n  commonly holds one.\n- Set `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` (or an\n  equivalent CSP `frame-ancestors`) on every response.\n- Never expose a stack trace, internal path or database error to the\n  administrator's browser; return a generic message and log the detail\n  server-side.\n- Never log a secret, token, password, or PII (name, email, address); log\n  authentication failures and access denials at WARN with an opaque user\n  ID, never a submitted username.\n- As the coding agent: never read, print or `cat` a file that may hold a\n  secret (`.env`, `*.pem`, `*.key`, `credentials.json`); never echo or log\n  an environment variable's value; verify a secret's presence by an\n  existence check, never by printing it.\n\n### 3.10 Data modeling and GDPR\n\n- Use one naming convention for every table, field, key and index\n  (`snake_case`); give every table a primary key, surrogate for internal\n  use.\n- Store each fact once; document the rationale for any intentional\n  denormalization.\n- Never pack several values into one field (a comma-joined list of line\n  items, for instance); use a related record instead.\n- Enforce every reference (customer, product, discount rule, tax\n  jurisdiction) with a foreign-key constraint; decide and document what\n  happens on delete for each: clear the reference, refuse the delete, or\n  (for an invoice, which must keep its billed values regardless of later\n  catalog changes) rely on the snapshot in section 3.1 rather than a live\n  reference.\n- Run every schema change through a versioned migration; keep an additive\n  change compatible with old data (a new field optional or defaulted);\n  give a destructive change an add-migrate-drop plan.\n- Store timestamps in UTC; store monetary values as an integer in minor\n  units or a decimal type, never a float; document a maximum length for\n  every text field (customer name, email, postal address, product name,\n  discount code).\n- Classify every field: customer name, email and postal address are\n  Confidential (PII); invoice amounts and line items are Confidential;\n  product catalog, discount rules and tax-jurisdiction data are Internal.\n  Document this in the schema or a data dictionary, and restrict access to\n  the Confidential tier to the signed-in administrator.\n- Minimize PII collection: store only what invoicing needs (name, email,\n  postal address); never put PII in an application log, error message or\n  stack trace.\n- Mask or use synthetic data for PII in any non-production environment\n  (development fixtures, test data).\n- Provide a mechanism to erase a customer's PII on request (GDPR Art. 17):\n  hard-delete or anonymize it, never a soft-delete flag alone. Where a\n  statutory retention duty (e.g. tax-record retention) requires keeping\n  the invoice itself, anonymize the customer's name, email and address on\n  the retained invoice rather than deleting the invoice, and document the\n  retention period relied on.\n- Provide a mechanism to export a copy of everything held about a customer\n  on request (GDPR Art. 15/20), in a structured, commonly used format.\n- Define and document a retention period for each data category\n  (customers, invoices, backups); implement automated purging rather than\n  a manual process; apply the same retention to backups, and never retain\n  a backup indefinitely.\n- Log every change to Confidential data: who (the administrator's opaque\n  ID), when, what changed, and the previous value \u2014 except a credential's\n  or a PII field's own value, which the audit entry must record as\n  \"changed\" without storing either value, so an erasure leaves no copy in\n  the append-only trail.\n- Data ownership (who owns the customers, invoices and catalog domains) is\n  not settled by the project; assign one before this matters operationally.\n\n### 3.11 Accessibility and UX\n\n- Make every interactive element reachable and operable by keyboard; never\n  put a click handler on a non-focusable element \u2014 use a native button or\n  link instead.\n- Style focus with `:focus-visible` and keep a visible focus indicator on\n  every focusable element, including links.\n- Never convey meaning by colour alone; keep text contrast at 4.5:1 (3:1\n  for large text); give every image descriptive `alt` text (`alt=\"\"` when\n  decorative).\n- Use semantic HTML with a correct heading hierarchy.\n- Scan rendered pages with an automated accessibility checker in CI, and\n  merge only on zero violations.\n- Before shipping a new interactive component: tab through it without a\n  mouse, walk it with one screen reader, and zoom to 200% to check nothing\n  clips or scrolls horizontally.\n- Support the last two versions of Chrome, Firefox, Safari and Edge.\n\n## 4. Review process\n\nReview in this order, most critical first:\n\n1. **Security**: anything exploitable, any credential or licence problem\n2. **Correctness**: wrong results, unhandled failures, race conditions\n3. **Clarity**: obscure names, deep nesting, high cognitive complexity,\n   boolean flag parameters\n4. **Conventions**: deviations from the rules in section 2 and 3\n\nLabel each finding a demonstrated defect, a policy deviation, or a\nsuggestion. Block a merge only on a defect or a policy deviation; leave a\nsuggestion to the author.\n\n### End-of-session checklist\n\nRead every item below and execute it in sequence before ending a session;\nnever summarize or skip one.\n\n**MUST**\n\n- [ ] No credential, token or sensitive value appears in a committed file\n- [ ] Every failure path is handled; no silent catch, no swallowed\n      exception\n- [ ] Every new dependency carries a licence the project's policy allows\n- [ ] Significant logic and architectural decisions are documented\n- [ ] Existing documentation matches the code after the change\n- [ ] Every changed section was re-read whole, not only the changed line\n- [ ] Every claim changed text makes about itself, such as a count or\n      \"all\", was checked by counting with a tool\n- [ ] Input from outside the process (a form field, a query parameter) is\n      validated as untrusted before it is destructured, indexed, or used\n      as a key\n- [ ] A refactor preserves behaviour on every path: each case, direction\n      and mode, including null handling, sort order and boundary values\n\n**SHOULD**\n\n- [ ] Each non-trivial function has a unit test per relevant variant\n- [ ] Coverage does not fall\n- [ ] Lint errors and warnings do not rise\n- [ ] Each third-party dependency is necessary, understood and maintained\n- [ ] No new abstraction without two call sites, and no new dependency\n      without a documented reason\n\n### CI signals\n\n- Read the log of a red check before calling the pull request green or\n  red.\n- Separate an infrastructure failure (the check could not run) from a diff\n  failure (it ran and found something), and say which in the merge\n  decision.\n- Never retry until green without saying so; never bypass a failing check\n  by skipping hooks or an admin merge without the approver's explicit\n  acceptance of the risk.\n\n### Picking up an issue\n\n- Re-read the target for existing coverage before writing anything; verify\n  everything the issue cites as existing against the current tree.\n- Check open pull requests and accepted decisions since the issue's filing\n  date for work that already closes or moves it.\n- Resolve a cited version or classification against its actual source\n  rather than trusting the issue's description of it.\n\n### Planning\n\n- Produce a plan before implementing a feature or a non-trivial change:\n  the files, the signatures or outline, the edge cases, the assumptions.\n- Never write implementation code until the plan is approved (MUST NOT);\n  skip the plan only for one-line fixes, typos, and changes the requester\n  has specified in full.\n- Stay inside the approved plan; when a constraint invalidates it, stop\n  and re-surface the options.\n\n### Verifying a finding\n\nLabel a finding unverified until it is demonstrated.\n\n- From reading: reproduce the defect by running the path; read a passing\n  test that contradicts the reproduction before blaming the code.\n- From a measurement: confirm the tool measured the rule's actual unit and\n  the claimed scope (not a diff or a sample); check one flagged item and\n  one zero result by hand.\n- From an extraction: check an element reported absent against the raw\n  artifact; scope the claim to what was inspected (\"not verifiable from\n  the extract\", never \"missing\").\n- From a probe: confirm it ran under the conditions the finding is about\n  (user, credential, environment); scope the claim to what it actually\n  tested.\n- From an agent: check its finding against the file, commit or document\n  that settles it before acting on it or repeating it; count a finding\n  several agents agree on as one finding.\n\n### Deviations\n\n- Explain a deviation from a SHOULD rule in the pull request.\n- Land a deviation from a MUST or MUST NOT rule only with a designated\n  approver's sign-off and its reason recorded in the pull request; never\n  waive one yourself.\n\n### Cold-reader writing\n\nApply this to every ticket, pull request and defect record, since the\nrecord outlives the session:\n\n- State the symptom before the mechanism; expand a term taken from the\n  code at its first use, or avoid it.\n- Show a real example rather than describe one; keep to one idea per\n  sentence.\n\n### Governance questions\n\n- **Who approves a change?** Not stated by the project; open for the\n  project to decide. Until an approver is named, treat every MUST/MUST NOT\n  deviation above as blocked.\n- **How is work tracked?** Not stated; open for the project to decide.\n- **What is a release?** Not applicable in the usual sense: the project\n  runs locally with no deployment target. \"Shipping\" a change means\n  merging it to `main` with a green CI run; there is no deployment step.\n\n## 5. Session protocol\n\n- **Start**: read this file and `README.md`; run `git status` and inspect\n  the working tree and index before making any change; never discard or\n  overwrite a change the task did not make.\n- **Proceed**: follow the planning rule in section 4 for anything beyond a\n  one-line fix; stay inside the approved plan; propose any off-limits-path\n  change (section 2.1) before making it.\n- **Disagreement between a document and the system**: never act on the\n  document alone when the observed system state is defensible; find the\n  rule that governs both (this file, or GDPR for section 3.10) and fix\n  whichever one that rule does not support.\n- **End**: read the end-of-session checklist in section 4 and execute each\n  item in sequence, without summarizing or skipping any; run\n  `uv run ruff check .`, `uv run mypy --strict .` and `uv run pytest`;\n  confirm no off-limits path changed without recorded approval; update\n  `README.md`, `AGENTS.md` and this file together if the change touched\n  structure, stack, or any convention above; commit only the task's\n  changes, following section 2.1.",
+    "ttft_ms": 270171,
+    "type": "result",
+    "duration_ms": 355592,
+    "uuid": "12abf35d-ade1-4e69-b903-4eff581fe48b",
+    "ttft_stream_ms": 1976,
+    "time_to_request_ms": 384,
+    "first_content_frame_ms": 1976,
+    "queued_turn_count": 0,
+    "result_index": 0
+  },
+  "output_leak": null,
+  "outcome": "generated",
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\inline\\CLAUDE.md",
+  "output_lines": 552,
+  "output_words": 4248
+}
