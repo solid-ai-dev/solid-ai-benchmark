@@ -28,6 +28,6 @@ tests passed.
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | No index of reports in this repository, so a reader must know to look in the templates source | Open |
+| 1 | No index of reports in this repository, so a reader must know to look in the templates source | Open, #17 |
 | 2 | Round 4 has a one-page plain summary beside its generated reports. Earlier rounds do not | Open |
 | 3 | Reports use terms such as "verdict vector" and "no improvement shown" without defining them | Settled in the [glossary](../../architecture/12-glossary.md) and the primer |

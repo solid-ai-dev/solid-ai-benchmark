@@ -20,7 +20,7 @@ and costs are estimated from [Run a round](../run/run-a-round.md).
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | Design §9 names round 3 as the baseline, but §6.1 gives a contrast pairing trials from different rounds no verdict. A candidate therefore needs its baseline arms in the same round, which doubles the trials | Open |
+| 1 | Design §9 names round 3 as the baseline, but §6.1 gives a contrast pairing trials from different rounds no verdict. A candidate therefore needs its baseline arms in the same round, which doubles the trials | Open, #18 |
 | 2 | At K = 3 a metric's interval is often too wide to read held, and the trim is then unproven, not safe | Settled in design §9 |
 | 3 | A trim that turns any primary dimension worse is rejected | Settled in design §9 |
 | 4 | Tuning against one app overfits to it. `ledger` stays sealed for the final claim | Settled in design §9 |

@@ -23,4 +23,4 @@ a templates clone to write the report into. Minutes are estimated.
 | - | ------- | ------ |
 | 1 | Round 3's run root and scoring area were deleted with nothing kept, so none of its readings can be re-run. Rounds are now archived before they are reported | Settled in design §10, 2026-10-15 |
 | 2 | A file over 50 MB is refused, because a push would be | Settled in the harness guide |
-| 3 | The report lands in another repository, so this one holds no results | Open, see [Read a report](../read/read-a-report.md) |
+| 3 | The report lands in another repository, so this one holds no results | Open, #17, see [Read a report](../read/read-a-report.md) |

@@ -22,7 +22,7 @@ first trial. Minutes are estimated from writing round 5's section 13.
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | Nothing in the code checks that a round's hypothesis was committed before its first trial. The order rests on the design's date line and git history | Open |
+| 1 | Nothing in the code checks that a round's hypothesis was committed before its first trial. The order rests on the design's date line and git history | Open, #14 |
 | 2 | A hypothesis decides a record in another repository, such as ADR-058 in `solid-ai-templates`. The design names it, and the record cites the report | Settled in design §13 |
 | 3 | A hypothesis on agreement across trials has one value per arm, so no interval. Its result is descriptive | Settled in design §12.1 |
 | 4 | Once a round's trial has run, its section may not change | Settled in design §13.4 |

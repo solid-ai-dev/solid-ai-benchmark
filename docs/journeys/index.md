@@ -43,10 +43,10 @@ from, or estimated.
 
 ## Open findings
 
-| Finding | Journey |
-| ------- | ------- |
-| Nothing checks that a hypothesis was committed before its round's first trial | [Register a hypothesis](prepare/register-a-hypothesis.md) |
-| The harness guide's advice on the checkout's HEAD predates the templates moving out | [Run a round](run/run-a-round.md) |
-| No CI runs the self tests, though the control guide says it does | [Check the judge](check/check-the-judge.md) |
-| No index of reports in this repository | [Read a report](read/read-a-report.md) |
-| A candidate compared with an earlier round's baseline gets no verdict | [Measure a template change](read/measure-a-template-change.md) |
+| Finding | Journey | Issue |
+| ------- | ------- | ----- |
+| Nothing checks that a hypothesis was committed before its round's first trial | [Register a hypothesis](prepare/register-a-hypothesis.md) | #14 |
+| The harness guide's advice on the checkout's HEAD predates the templates moving out | [Run a round](run/run-a-round.md) | #15 |
+| No CI runs the self tests, though the control guide says it does | [Check the judge](check/check-the-judge.md) | #16 |
+| No index of reports in this repository | [Read a report](read/read-a-report.md) | #17 |
+| A candidate compared with an earlier round's baseline gets no verdict | [Measure a template change](read/measure-a-template-change.md) | #18 |
