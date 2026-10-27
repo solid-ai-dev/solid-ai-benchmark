@@ -22,6 +22,7 @@ import os
 import random
 import re
 import shutil
+import itertools
 import statistics
 import sys
 import tempfile
@@ -1476,6 +1477,50 @@ def conventions_agreement(trials, arm):
     return round(same / len(common), 3), len(common)
 
 
+def jaccard(left, right):
+    """The Jaccard similarity of two sets; two empty sets agree fully."""
+    if not left and not right:
+        return 1.0
+    return len(left & right) / len(left | right)
+
+
+def pairwise_agreement(sets):
+    """Section 12.1's pairwise measure: the mean Jaccard similarity over
+    every pair of an arm's trials. None with fewer than two."""
+    pairs = [jaccard(a, b) for a, b in itertools.combinations(sets, 2)]
+    return round(statistics.fmean(pairs), 3) if pairs else None
+
+
+def structure_sets(trials, arm):
+    """Each of an arm's trials' Python file paths, where scoring recorded
+    them; a trial without the record is left out."""
+    found = []
+    for name, trial in trials.items():
+        if arm_of(name) != arm:
+            continue
+        files = path(trial, "scores", "scope", "python_files")
+        if files is not None:
+            found.append(set(files))
+    return found
+
+
+def security_sets(trials, arm):
+    """Each of an arm's trials' failed security and data-protection probes;
+    a trial with a probe left unmeasured is left out, since its set would
+    be incomplete."""
+    found = []
+    for name, trial in trials.items():
+        if arm_of(name) != arm:
+            continue
+        probes = path(trial, "security", "probes")
+        if not probes or any(probe.get("passed") is None
+                             for probe in probes.values()):
+            continue
+        found.append({probe for probe, result in probes.items()
+                      if result.get("passed") is False})
+    return found
+
+
 def row_outcome(contrast):
     """One row of a hypothesis: worse, held (better counts as held) or
     open, from a contrast's verdict and non-inferiority."""
@@ -1523,17 +1568,27 @@ def round5_section(trials, table, results):
     arms = [arm for arm in ("none", "reference", "inline", "hybrid",
                             "skills") if arm in present]
     lines = ["## Round 5: how the rules are delivered", "",
-             "| Arm | Words every turn | Conventions agreement | Items "
-             "compared | Task success, worst | Task success, mean |",
-             "|---|---|---|---|---|---|"]
+             "Agreement is section 12.1's: conventions over the adherence "
+             "items every trial measured; structure and security as the "
+             "mean Jaccard similarity over pairs of trials, of their Python "
+             "files and of the probes they fail. A dash is not computed.",
+             "",
+             "| Arm | Words every turn | Conventions agreement (items) | "
+             "Structure agreement | Security agreement | Task success, "
+             "worst | Task success, mean |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
+
+    def shown(value):
+        return "—" if value is None else "%.2f" % value
     for arm in arms:
         words = context_words(arm)
         share, items = conventions_agreement(trials, arm)
         values = [value for value in table["task_success"]["values"].get(
             arm, {}).values() if value is not None]
-        lines.append("| %s | %s | %s | %d | %s | %s |" % (
-            arm, "—" if words is None else words,
-            "—" if share is None else "%.2f" % share, items,
+        lines.append("| %s | %s | %s (%d) | %s | %s | %s | %s |" % (
+            arm, "—" if words is None else words, shown(share), items,
+            shown(pairwise_agreement(structure_sets(trials, arm))),
+            shown(pairwise_agreement(security_sets(trials, arm))),
             number(min(values)) if values else "—",
             number(statistics.fmean(values)) if values else "—"))
     lines.append("")
@@ -1570,6 +1625,28 @@ def round5_checks():
     checks = [("agreement counts only items every trial measured",
                (share, items) == (0.5, 2), (share, items))]
 
+    # Structure: {a, b}, {a, b} and {a, c} pair as 1, 1/3 and 1/3.
+    for name, files in (("skills-1", ["a.py", "b.py"]),
+                        ("skills-2", ["a.py", "b.py"]),
+                        ("skills-3", ["a.py", "c.py"])):
+        trials[name]["scores"]["scope"] = {"value": {},
+                                           "python_files": files}
+    got = pairwise_agreement(structure_sets(trials, "skills"))
+    checks.append(("structure agreement is the mean pairwise Jaccard of "
+                   "the trials' files", got == round(5 / 9, 3), got))
+
+    # Security: two trials failing nothing agree fully, a trial with an
+    # unmeasured probe is left out, and {x} against {} agrees not at all.
+    trials["skills-1"]["security"] = {"probes": {"x": {"passed": True}}}
+    trials["skills-2"]["security"] = {"probes": {"x": {"passed": True}}}
+    trials["skills-3"]["security"] = {"probes": {"x": {"passed": None}}}
+    full = pairwise_agreement(security_sets(trials, "skills"))
+    trials["skills-2"]["security"] = {"probes": {"x": {"passed": False}}}
+    none = pairwise_agreement(security_sets(trials, "skills"))
+    checks.append(("security agreement counts two empty sets as agreement "
+                   "and leaves out an unmeasured trial",
+                   (full, none) == (1.0, 0.0), (full, none)))
+
     def results(verdict, within):
         contrast = {"verdict": verdict, "non_inferior": {"within": within}}
         return {key: {"skills-hybrid": contrast, "reference-hybrid": contrast}
@@ -1587,6 +1664,25 @@ def round5_checks():
         got = (hypothesis(planted, "skills-hybrid", "held")[0],
                hypothesis(planted, "reference-hybrid", "worse")[0])
         checks.append((label, got == (h1, h3), got))
+
+    # A rendered five-arm run prints all three agreements for every arm.
+    run = {trial_name(arm, index): {
+        "scores": {"adherence": {"value": 1, "items": {"a": True}},
+                   "scope": {"value": {}, "python_files": ["app.py"]}},
+        "change": None, "judge": None,
+        "security": {"probes": {"x": {"passed": True}}}}
+        for arm in ("none", "reference", "inline", "hybrid", "skills")
+        for index in range(1, K_PRIMARY + 1)}
+    _, _, text = rendered(run, 0, {})
+    section = text[text.find("## Round 5"):]
+    checks.append(("a five-arm report prints conventions, structure and "
+                   "security agreement for every arm",
+                   "Structure agreement | Security agreement" in section
+                   and all("| %s |" % arm in section and
+                           "1.00 (1) | 1.00 | 1.00 |" in section
+                           for arm in ("none", "reference", "inline",
+                                       "hybrid", "skills")),
+                   section[:600]))
     return checks
 
 

@@ -972,11 +972,23 @@ def scope(workspace, roots):
                if any(token in os.path.basename(name).upper()
                       for token in UNASKED)]
     source = count_source(roots)
+
+    # Section 12.1's structure agreement compares trials by the Python files
+    # their own Git state would commit: tracked, plus untracked files their
+    # `.gitignore` does not exclude, without scoring's `.score` artefacts.
+    others = run(["git", "-C", workspace, "ls-files", "--others",
+                  "--exclude-standard"], timeout=120)
+    extra = ([] if others["failed"] or others["status"] != 0
+             else [line for line in others["stdout"].splitlines()
+                   if line.strip()])
+    python = sorted({name for name in files + extra
+                     if name.endswith(".py")
+                     and not name.split("/")[0].startswith(".score")})
     return measured({"tracked_files": len(files),
                      "source_files": source["files"],
                      "source_lines": source["lines"],
                      "unasked_artifacts": len(unasked)},
-                    unasked=unasked)
+                    unasked=unasked, python_files=python)
 
 
 def cost(record):
