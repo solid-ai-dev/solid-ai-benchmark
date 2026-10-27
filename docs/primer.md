@@ -176,7 +176,7 @@ Section 5 explains the comparison and the verdicts.
 
 ### 5.1 Pairs, not averages
 
-![Fifteen runs in three blocks, five arms per block, run one after another: none-1, inline-1, hybrid-1, reference-1 and skills-1, then block 2, then block 3. A contrast such as inline minus none is three differences, inline-1 minus none-1, inline-2 minus none-2 and inline-3 minus none-3, with one interval over the three](diagrams/run-order.png)
+![Fifteen runs in a grid, one row per block and one column per arm: none, inline, hybrid, reference and skills. Each block runs every arm once, then the next block starts. Below the grid, each context-file arm has three deltas against none, such as inline-1 minus none-1, inline-2 minus none-2 and inline-3 minus none-3, which go through one luck check and get one verdict per meter](diagrams/run-order.png)
 
 A model's behaviour drifts from day to day. So the arms take turns: block 1
 runs every arm once, back to back, then block 2, then block 3. Runs in one
