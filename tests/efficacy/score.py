@@ -1,9 +1,8 @@
 """Score one frozen efficacy trial with the deterministic backbone.
 
-The design, the metric directions and the verdict rule live in
-`docs/design/efficacy-benchmark.md`. This module owns the part of section 5
-that needs no judgement: the clean install, the hidden acceptance suite, the
-static battery, the scope count and the cost read off the trial record. The
+This module owns the part of scoring that needs no judgement: the clean
+install, the hidden acceptance suite, the static battery, the scope count
+and the cost read off the trial record. The
 structural design probes and the web-quality probes live in `probes.py`; the
 model judge in `judge.py`; the contrasts and the report in `report.py`.
 
@@ -47,8 +46,8 @@ TOOLCONFIG = os.path.join(HERE, "toolconfig")
 RUFF_CONFIG = os.path.join(TOOLCONFIG, "ruff.toml")
 MYPY_CONFIG = os.path.join(TOOLCONFIG, "mypy.ini")
 
-# The grader lives in its own repository, private for the reason the design
-# gives: this repository is public, and a suite here is one search away from
+# The grader lives in its own repository, private because this repository
+# is public, and a suite here is one search away from
 # any later trial with web access.
 HIDDEN_SUITE = "braboj/tariff-hidden-suite"
 
@@ -61,7 +60,7 @@ PACKAGE = "tariff"
 ADMIN_PASSWORD_VARIABLE = "TARIFF_ADMIN_PASSWORD"
 ADMIN_PASSWORD = "scoring-admin-password"
 
-# Section 6 signs the session cookie with this variable's value, which is set
+# The spec signs the session cookie with this variable's value, which is set
 # wherever the application runs. An application that refuses to start
 # without it is following its rules, so scoring always supplies one. It is
 # drawn per run rather than written down, so no fixed key reaches a trial.
@@ -70,7 +69,7 @@ SECRET_KEY = secrets.token_hex(32)
 
 # Files nobody asked for. The prompt asks for an application; a trial that
 # also writes a decision record or a changelog spent budget on it, which is a
-# metric the design reports rather than a fault it punishes.
+# metric the report shows rather than a fault it punishes.
 UNASKED = ("CHANGELOG", "ADR", "DECISIONS", "PLAYBOOK", "ONBOARDING",
            "JOURNAL", "ROADMAP", "CONTRIBUTING")
 
@@ -78,7 +77,7 @@ TOOL_TIMEOUT = 900
 
 
 class ScoreError(Exception):
-    """A trial could not be scored as the design requires."""
+    """A trial could not be scored with every input it needs."""
 
 
 def measured(value, **extra):

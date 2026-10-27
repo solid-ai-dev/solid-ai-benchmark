@@ -1,10 +1,10 @@
 """Judge one frozen efficacy trial, blind.
 
-The design's section 5 fixes what this asks for: a 1-5 rubric with a quoted
-evidence line per score, a pattern census that says what each pattern removes
-or opens, and the three primary dimensions the report leads with. Section 7
-fixes the controls: blind to arm, order shuffled, condition markers
-stripped, model id and reasoning effort recorded, and a judge from another
+It asks for a 1-5 rubric with a quoted evidence line per score, a pattern
+census that says what each pattern removes or opens, and the primary
+dimensions the report leads with. The controls: blind to arm, order
+shuffled, condition markers stripped, model id and reasoning effort
+recorded, and, where a round asks for one, a second judge from another
 vendor reading a sample as a cross-check.
 
 Two properties make the result readable as evidence rather than as an
@@ -87,7 +87,7 @@ DIMENSIONS = (
     "security", "data_protection",
 )
 
-# What the report leads with, owner-declared in the design.
+# What the report leads with, declared by the owner before the run.
 PRIMARY = ("design", "readability", "maintainability", "security",
            "data_protection")
 
@@ -495,7 +495,7 @@ def verify_evidence(payload, lines):
 
 
 class JudgeError(Exception):
-    """The judge cannot be launched as the design requires."""
+    """The judge cannot be launched with its version and inputs intact."""
 
 
 def judge_executable(cli=DEFAULT_CLI):
@@ -664,7 +664,7 @@ def refusal(stripped):
 
     # A bundle that still names its condition is not judged at all. A score
     # taken from a tree that says which arm it is cannot be un-taken, and the
-    # design's blinding would read as held.
+    # blinding would read as held.
     if stripped["leaks"]:
         return "the bundle still names its condition: %s" % stripped["leaks"][:5]
 

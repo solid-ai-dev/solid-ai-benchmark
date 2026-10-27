@@ -1,4 +1,4 @@
-"""Aggregate scored trials into the report the design's section 6 fixes.
+"""Aggregate scored trials into the dated round report.
 
 Per metric: the mean per arm, the three paired contrasts, a bias-corrected and
 accelerated bootstrap interval over the paired differences, and the verdict
@@ -51,7 +51,7 @@ WITHDRAWN = os.path.join(HERE, "withdrawn.json")
 RESAMPLES = 10000
 CONFIDENCE = 0.95
 
-# Every contrast the design declares in section 6.1, each a treatment arm
+# Every contrast declared before the run, each a treatment arm
 # against a baseline. A run
 # prints the contrasts whose arms it holds; the rest are computed as not
 # computed and left out of every table. full - hand is the one an adopter
@@ -62,14 +62,14 @@ CONTRASTS = (("full", "none"), ("short", "none"), ("hybrid", "none"),
              ("hand", "none"), ("full", "hand"), ("short", "hand"),
              ("hybrid", "full"), ("short", "full"),
 
-             # Round 5 (design, section 13.3): each arm against none, the two
+             # Round 5: each arm against none, the two
              # hypotheses' contrasts against hybrid, and skills against
              # inline, the same rules with and without the split.
              ("reference", "none"), ("inline", "none"), ("skills", "none"),
              ("skills", "hybrid"), ("reference", "hybrid"),
              ("skills", "inline"))
 
-# Declared in the design before the run. "up" improves upward, "down"
+# Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
 UP, DOWN, NEUTRAL = "up", "down", "neutral"
 
@@ -83,8 +83,8 @@ PRIMARY = ("judge_design", "judge_readability", "judge_maintainability",
 # baseline arm's mean, so that it scales with the metric.
 ABSOLUTE, RELATIVE = "absolute", "relative"
 
-# The static-analysis counts reported per KLOC, which the design's section
-# 1.2 holds to one relative margin between them.
+# The static-analysis counts reported per KLOC, held to one relative margin
+# between them.
 STATIC_PER_KLOC = ("ruff_per_kloc", "unformatted_per_kloc", "mypy_per_kloc",
                    "bandit_per_kloc", "complexity_over_15_per_kloc",
                    "unused_per_kloc")
@@ -107,7 +107,7 @@ MARGINS = {
 MARGINS.update((key, ("10 % relative", 0.10, RELATIVE))
                for key in STATIC_PER_KLOC)
 
-# The practical thresholds of the design's section 1.2 that can owe the one
+# The practical thresholds that can owe the one
 # escalation to K = 5. Only a primary dimension triggers it, so no other
 # metric's threshold is carried here, where something could come to read it.
 PRACTICAL = {key: ("0.5 points", 0.5) for key in PRIMARY
@@ -209,7 +209,7 @@ def pattern_count(trial, verdict):
 
 
 # Every metric, its direction and where its number comes from. The direction
-# column is the design's, declared before the run; an interval is read against
+# column is declared before the run; an interval is read against
 # it and never against "bigger is better".
 METRICS = (
     ("judge_design", "Design (SOLID and patterns), 1-5", UP,
@@ -483,7 +483,7 @@ def non_inferior(key, interval, direction, baseline_mean=None):
 
     An interval containing zero is absence of evidence. The claim that nothing
     got worse needs the whole degradation side of the interval inside the
-    margin the design fixes.
+    margin fixed before the run.
     """
     if key not in MARGINS:
         return None
@@ -847,9 +847,8 @@ def escalation_triggers(results):
             if low is None or high is None or not contrast["pairs"]:
                 continue
 
-            # Read by size in either direction, as the design's section 1.3
-            # fixes: an escalation owed only to a favourable effect would lean
-            # the stopping rule toward "better".
+            # Read by size in either direction: an escalation owed only to a
+            # favourable effect would lean the stopping rule toward "better".
             effect = statistics.fmean(contrast["pairs"])
             if low <= 0 <= high and abs(effect) > threshold:
                 triggers.append({"metric": key, "contrast": name,
@@ -1097,7 +1096,7 @@ def unrecorded_voids(root, sequence, recorded):
 
 def write_report(root, trials, table, results, seed, escalation,
                  out_dir=AUDITS, posthoc=None, withdrawn=None, cross=None):
-    """The report the design names, under `docs/audits/`.
+    """The dated round report, under `docs/audits/`.
 
     The directory is an argument so a shakedown of the writer can render into
     a scratch directory. A fabricated run must not be able to leave a file
@@ -1120,12 +1119,12 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.append("")
     lines.append("Does a generated context file improve the result? The "
                  "question, the verdict rule and the metric directions were "
-                 "fixed before any trial ran, in "
-                 "`docs/design/efficacy-benchmark.md`.")
+                 "fixed before any trial ran, in the "
+                 "solid-ai-benchmark repository.")
     lines.append("")
     lines.append("**Every interval below is descriptive.** At K = %d no "
                  "arrangement of paired differences reaches conventional "
-                 "significance, which the design states and this report "
+                 "significance, which the registration states and this report "
                  "repeats rather than footnotes." % k)
     lines.append("")
 
@@ -1192,10 +1191,11 @@ def write_report(root, trials, table, results, seed, escalation,
 
     lines.append("## Primary dimensions")
     lines.append("")
-    lines.append("The report leads with these, owner-declared in the design: "
-                 "%s judge rows and %s probe pass rates. Task success and cost "
-                 "follow." % (counted(len(PRIMARY) - len(PROBE_RATES)),
-                              counted(len(PROBE_RATES))))
+    lines.append("The report leads with these, declared by the owner "
+                 "before the run: %s judge rows and %s probe pass rates. "
+                 "Task success and cost follow."
+                 % (counted(len(PRIMARY) - len(PROBE_RATES)),
+                    counted(len(PROBE_RATES))))
     lines.append("")
     lines.extend(contrast_table(table, results, PRIMARY, active=active))
     lines.append("")
@@ -1272,8 +1272,8 @@ def write_report(root, trials, table, results, seed, escalation,
         lines.append("None: no trial was voided.")
     else:
         lines.append("Each was voided and re-run once in its own place, as "
-                     "the design's failure handling fixes. A voided "
-                     "workspace is kept and never scored.")
+                     "registered before the run. A voided workspace is kept "
+                     "and never scored.")
         lines.append("")
         lines.append("| Trial | Started | Why | Kept at | Re-run |")
         lines.append("|---|---|---|---|---|")
@@ -1319,7 +1319,7 @@ def write_report(root, trials, table, results, seed, escalation,
                  "and never replace.")
     lines.append("")
 
-    # A run that escalated reports both vectors, as the design requires, so
+    # A run that escalated reports both vectors, so
     # each contrast at K = 5 sits beside the same contrast over the first
     # three blocks rather than in a second table a reader has to line up.
     earlier = escalation.get("results_k3")
@@ -1441,26 +1441,27 @@ COUNTED = ("no", "one", "two", "three", "four", "five")
 NOT_MEASURED = "not measured"
 
 # A run whose hidden-suite pass rate sits under the bare arm's mean by more
-# than this is named in the finding table. It is the design's practical
-# threshold for task success, section 1.2; nothing else reads it.
+# than this is named in the finding table. It is the practical threshold
+# registered for task success; nothing else reads it.
 SUITE_DIP = 0.05
 
 
-# Round 5's arms and hypotheses (design, section 13.3): the primary rows H1
+# Round 5's arms and hypotheses, as registered: the primary rows H1
 # and H3 read, and the contrast each reads them on. H1 is supported when
 # every row is held or better; H3 when any row is worse, and refuted, which
-# reopens ADR-052, when every row is held or better.
+# reopens the decision that hybrid is the delivery floor, when every row is
+# held or better.
 ROUND5_ARMS = ("reference", "inline", "skills")
 ROUND5_ROWS = ("adherence",) + PROBE_RATES + ("judge_security",
                                               "judge_data_protection")
 ROUND5_HYPOTHESES = (
-    ("H1, ADR-058", "skills-hybrid", "held"),
-    ("H3, ADR-052", "reference-hybrid", "worse"),
+    ("H1, skills deliver what hybrid does", "skills-hybrid", "held"),
+    ("H3, a reference alone delivers less", "reference-hybrid", "worse"),
 )
 
 
 def conventions_agreement(trials, arm):
-    """Section 12.1's conventions agreement for one arm, and the items it
+    """The conventions agreement for one arm, and the items it
     compares: of the adherence items measured in every one of the arm's
     trials, the share on which all of them give the same verdict. None with
     fewer than two trials or no item measured in all of them."""
@@ -1485,7 +1486,7 @@ def jaccard(left, right):
 
 
 def pairwise_agreement(sets):
-    """Section 12.1's pairwise measure: the mean Jaccard similarity over
+    """The pairwise agreement: the mean Jaccard similarity over
     every pair of an arm's trials. None with fewer than two."""
     pairs = [jaccard(a, b) for a, b in itertools.combinations(sets, 2)]
     return round(statistics.fmean(pairs), 3) if pairs else None
@@ -1568,7 +1569,7 @@ def round5_section(trials, table, results):
     arms = [arm for arm in ("none", "reference", "inline", "hybrid",
                             "skills") if arm in present]
     lines = ["## Round 5: how the rules are delivered", "",
-             "Agreement is section 12.1's: conventions over the adherence "
+             "Agreement reads conventions over the adherence "
              "items every trial measured; structure and security as the "
              "mean Jaccard similarity over pairs of trials, of their Python "
              "files and of the probes they fail. A dash is not computed.",
@@ -1615,7 +1616,7 @@ def round5_section(trials, table, results):
 
 def round5_checks():
     """Agreement counts only items every trial measured, and a hypothesis
-    reads supported, refuted or inconclusive by the design's rule."""
+    reads supported, refuted or inconclusive by its registered rule."""
     def trial(items):
         return {"scores": {"adherence": {"value": 1, "items": items}}}
     trials = {"skills-1": trial({"a": True, "b": True, "c": None}),
@@ -2002,8 +2003,8 @@ def finding_lines(trials, table, results, active):
         lines.append("")
 
     # A column or a contrast pairing a reused trial with one run in this
-    # round crosses rounds, which the design's section 6.1 has the report say
-    # here rather than in a footnote.
+    # round crosses rounds, which the report says here rather than in a
+    # footnote.
     reused = reused_arms(trials)
     if reused:
         crossed = crossing(active, reused)
@@ -2146,7 +2147,7 @@ def thresholds():
 
 
 def escalation_section(escalation):
-    """The report's lines on the one escalation to K = 5 the design permits."""
+    """The report's lines on the one escalation to K = 5 allowed."""
     k = escalation["k"]
     lines = ["## The escalation to K = %d" % K_CEILING,
              "",
@@ -2172,7 +2173,7 @@ def escalation_section(escalation):
     elif not owed:
         lines.append("**Run without a trigger.** The first %d blocks owed no "
                      "escalation, so every block past them was sampled outside "
-                     "the design's rule. Read the K = %d vector; the K = %d "
+                     "the escalation rule. Read the K = %d vector; the K = %d "
                      "rows are not evidence." % (K_PRIMARY, K_PRIMARY, k))
     elif state == "part-escalated":
         lines.append("**Part-run.** The first %d blocks owed it and the run "
@@ -2287,7 +2288,7 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-# The design's own worked table, which is what the verdict rule has to
+# The registered worked table, which is what the verdict rule has to
 # reproduce. The third row is the one an earlier draft read wrongly: three
 # differences that all improve cannot produce an interval containing zero,
 # however much the raw columns overlap.
@@ -3088,7 +3089,7 @@ def self_test(seed):
         checks.append((label, got == expected, got))
 
     # Every per-KLOC row is a static-analysis count, so each carries the one
-    # margin section 1.2 gives them; a row added without it fails here.
+    # registered margin; a row added without it fails here.
     per_kloc_rows = {key for key, _, _, _ in METRICS
                      if key.endswith("_per_kloc")}
     covered = all(MARGINS.get(key, (None,))[0] == "10 % relative"
@@ -3191,7 +3192,7 @@ def main(argv):
     # the ceiling is refused rather than reported as though the bound held.
     k = max(index_of(name) for name in trials)
     if k > K_CEILING:
-        print("refused: the run holds K = %d, past the design's ceiling of "
+        print("refused: the run holds K = %d, past the ceiling of "
               "K = %d" % (k, K_CEILING))
         return 2
     table = collect(trials)
