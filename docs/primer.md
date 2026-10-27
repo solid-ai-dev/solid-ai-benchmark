@@ -10,7 +10,7 @@ parts are built.
 ## 1. The question
 
 Teams give AI coding agents a written note of house rules, a file named
-`CLAUDE.md`. Such a note is a **context file**. The library
+`CLAUDE.md` or `AGENTS.md`. Such a note is a **context file**. The library
 `solid-ai-templates` writes these files from a collection of rules.
 
 The benchmark asks one question:
