@@ -2,8 +2,8 @@
 
 `score.py` owns the backbone — install, hidden suite, static battery, scope
 and cost — and calls in here for the two families of measurement that need to
-reach inside the trial's own interpreter: the structural design probes of the
-design's section 5, and the web-quality probes beside them.
+reach inside the trial's own interpreter: the structural design probes,
+and the web-quality probes beside them.
 
 Both run as one script inside the trial's environment, because `grimp`, the
 application factory and the browser all live there. A probe that cannot run
@@ -20,8 +20,8 @@ import re
 # a module path the arm was free to choose.
 PACKAGE = "tariff"
 
-# The section 5 surface. A name missing from a trial is a finding; a name the
-# trial adds is reported as extra rather than as wrong.
+# The names the spec requires. A name missing from a trial is a finding; a
+# name the trial adds is reported as extra rather than as wrong.
 REQUIRED_NAMES = ("Product", "Catalog", "InvoiceLine", "Invoice",
                   "Jurisdiction", "PercentageRule", "BulkRule", "TieredRule",
                   "CouponRule", "price", "TariffError")
@@ -224,7 +224,7 @@ for path, tree in TREES.items():
                 ladders.append([os.path.basename(path), depth])
 report["kind_ladders"] = ladders
 
-# Public surface, against what section 5 requires.
+# Public surface, against the names the spec requires.
 try:
     import importlib
     module = importlib.import_module(PACKAGE)

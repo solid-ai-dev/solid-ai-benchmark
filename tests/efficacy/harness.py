@@ -1,7 +1,6 @@
 """Set up and run one efficacy-benchmark trial.
 
-The design, its question and its verdict rule live in
-`docs/design/efficacy-benchmark.md`. This module owns section 4 of it: the
+This module owns a trial's protocol: the
 workspace an arm starts from, the isolated configuration it runs under, the
 one prompt every arm receives, and the freeze that ends a trial.
 
@@ -40,17 +39,18 @@ SPEC = os.path.join(HERE, "SPEC.md")
 # The specifications a round can build against, by the word `--spec` takes.
 # Each reaches the workspace as SPEC.md, so the prompt is one text for both.
 # The thin one keeps the contract the hidden suite drives and drops the
-# practices: the design's section 12 says which.
+# practices a context file might otherwise supply.
 SPECS = {"normal": SPEC, "thin": os.path.join(HERE, "SPEC-thin.md")}
 ARMS_DIR = os.path.join(HERE, "arms")
 
-# The change task's prompt lives in a file of its own, the one copy the
-# design links to. A copy restated in code could drift from it, and a prompt
-# found by a heading in the design breaks when the design is restructured.
+# The change task's prompt lives in a file of its own, its only copy. A copy
+# restated in code could drift from it, and a prompt found by a heading in a
+# document breaks when the document is restructured.
 CHANGE_PROMPT = os.path.join(HERE, "change-prompt.txt")
 
-# Identical for every arm, per the design's section 4. Changing it changes
-# what the benchmark measures, so it is a constant and not an option.
+# Identical for every arm, so the context file is the only difference.
+# Changing it changes what the benchmark measures, so it is a constant and
+# not an option.
 PROMPT = (
     "Implement the application described in SPEC.md. Done means: "
     "`pip install .` succeeds in a clean virtualenv, your own tests pass, "
@@ -58,12 +58,12 @@ PROMPT = (
     "seed fixture. Commit when done."
 )
 
-# The two bounds on a trial, fixed in the design's section 4. The budget is
+# The two bounds on a trial, fixed before any round runs. The budget is
 # read against the CLI's own cost figure and checked between turns.
 BUDGET_USD = 100.0
 TIMEOUT_S = 7200
 
-# K as the design fixes it, and the ceiling of the design's one escalation. No run
+# K as registered, and the ceiling of the one escalation allowed. No run
 # goes past the ceiling, because sampling until an interval clears zero is the
 # failure the bound exists to prevent.
 K_PRIMARY = 3
@@ -86,7 +86,7 @@ TEMPLATES_ENV = "BENCHMARK_TEMPLATES"
 VENDORED = {"ref": RELEASE, "path": "templates",
             "into": "docs/solid-ai-templates"}
 
-# Round 5's templates and roots (design, section 13.2): one commit and one
+# Round 5's templates and roots, as registered: one commit and one
 # chain for every arm, so the arms differ only in how they deliver it.
 ROUND5_REF = "9086e0ff"
 ROUND5_ROOTS = ["backend-api", "backend-auth", "backend-database",
@@ -187,7 +187,7 @@ def name_of(record):
     """The trial a run record or a score describes, by canonical name."""
     return trial_name(arm_name(record.get("arm")), record.get("trial"))
 
-# Web access is the confound the design names: an arm that reads the
+# Web access is a confound: an arm that reads the
 # templates online is not the arm being measured. The two web tools are
 # disallowed; the shell keeps its network, because every trial installs
 # packages, so a fetch through it shows only in the transcript.
@@ -589,7 +589,7 @@ def prepare_home(root):
     One home for the whole run rather than one per trial: it holds no trial
     state, and a single directory is one thing to assert about.
 
-    Everything the design's isolation names is absent by construction —
+    Everything a trial must be isolated from is absent by construction —
     no global `CLAUDE.md`, no hooks, no auto-memory, no MCP — because the
     directory is new. The credential file is linked in, and nothing else
     is: it carries no context, and without it there is no run at all.
@@ -762,7 +762,7 @@ def agent_environment(home, environ=None, temp=None):
 def agent_command(home, model, effort, budget, settings=None):
     """The argv for one trial; the prompt goes on standard input.
 
-    `--max-turns`, which the design's protocol names, is not a flag this
+    `--max-turns`, the natural bound on a trial, is not a flag this
     CLI carries. The bound is a dollar budget and the wall-clock timeout the
     caller applies, and the record states which of them ended a trial.
     `settings` is the trial's own settings file, the home's by default.
@@ -1281,7 +1281,7 @@ def read_input(path):
 
 
 def read_change_prompt(path=CHANGE_PROMPT):
-    """The change task's prompt, as the design pins it."""
+    """The change task's prompt, as pinned before the round."""
     return read_input(path)
 
 
@@ -1568,7 +1568,7 @@ def order(arms, k):
     """Interleave the trials by block: none-1, short-1, hybrid-1, none-2, ...
 
     A model-side change part-way through a run then lands across the arms
-    rather than on one of them, which is the confound the design names.
+    rather than on one of them, where it would pass for the arm's effect.
     """
     return [(arm, trial) for trial in range(1, k + 1) for arm in arms]
 
@@ -1576,7 +1576,7 @@ def order(arms, k):
 def pending_trials(arms, k, start=None):
     """The interleaved order, from `start` onwards where one is given."""
     if not 1 <= k <= K_CEILING:
-        raise TrialError("--k %d is outside 1 to %d: the design escalates once "
+        raise TrialError("--k %d is outside 1 to %d: a round escalates once "
                          "to K = %d and never further"
                          % (k, K_CEILING, K_CEILING))
     trials = order(arms, k)
@@ -2840,9 +2840,9 @@ def recover_checks():
 
 
 def round5_checks():
-    """Round 5's arms are registered as the design's section 13.2 makes
-    them, a vendoring arm takes its recorded ref, and the skills land where
-    Claude Code loads them, out of the workspace's index."""
+    """Round 5's arms are registered as they are made, a vendoring arm
+    takes its recorded ref, and the skills land where Claude Code loads
+    them, out of the workspace's index."""
     checks = [
         ("round 5's arms: reference vendors, inline does not, skills has "
          "skills",
@@ -2935,8 +2935,8 @@ def parse_args(argv):
                              "for a run, so a run names the arms it "
                              "holds")
     parser.add_argument("--k", type=int, default=K_PRIMARY,
-                        help="trials per arm (default %d, the K the design "
-                             "fixes; at most %d, the escalation's ceiling)"
+                        help="trials per arm (default %d, the registered K; "
+                             "at most %d, the escalation's ceiling)"
                              % (K_PRIMARY, K_CEILING))
     parser.add_argument("--model", default="claude-sonnet-5",
                         help="exact generator model id, recorded in the report")
@@ -2946,11 +2946,11 @@ def parse_args(argv):
                              "SPEC.md (default normal)")
     parser.add_argument("--budget", type=float, default=BUDGET_USD,
                         help="dollar ceiling per trial, read against the "
-                             "CLI's own cost figure (default %s, the design's)"
+                             "CLI's own cost figure (default %s)"
                         % BUDGET_USD)
     parser.add_argument("--timeout", type=int, default=TIMEOUT_S,
                         help="wall-clock ceiling per trial, in seconds "
-                             "(default %s, the design's)" % TIMEOUT_S)
+                             "(default %s)" % TIMEOUT_S)
     parser.add_argument("--from", dest="start",
                         help="start at this trial in the interleaved order, "
                              "as short-2")

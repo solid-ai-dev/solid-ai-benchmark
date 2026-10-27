@@ -1,7 +1,7 @@
 """Generate one round-5 arm's context file, once, with nobody answering.
 
-The design's section 13.2 fixes how each arm is made from one chain of the
-templates at one commit. This module makes them:
+Every round-5 arm is made from one chain of the templates at one commit, so
+the arms differ only in how they deliver it. This module makes them:
 
 - `reference` is fixed text naming each template of the chain
 - `inline` and `hybrid` are one non-interactive generation each, following
@@ -38,8 +38,8 @@ from harness import (ROUND5_DECLINED, ROUND5_REF,  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The generated arms' project brief lives in a file of its own, the one copy
-# the design links to, for the reason `harness.CHANGE_PROMPT` gives.
+# The generated arms' project brief lives in a file of its own, its only
+# copy, for the reason `harness.CHANGE_PROMPT` gives.
 BRIEF = os.path.join(HERE, "brief.txt")
 
 # The arms this module makes, each with the directory under `arms/` its file
@@ -204,8 +204,8 @@ def read_brief(path=BRIEF):
     """The pinned brief, read from its only copy.
 
     Reading it here rather than restating it keeps one source of truth: a
-    brief duplicated in code drifts from the one the design fixed, and the
-    arm would then be generated from something nobody agreed.
+    brief duplicated in code drifts from the one fixed before the round, and
+    the arm would then be generated from something nobody agreed.
     """
     brief = read_input(path)
     if len(brief) < 100:
@@ -375,7 +375,7 @@ def parse_args(argv):
                              "Required for everything but --self-test")
     parser.add_argument("--ref", default=ROUND5_REF,
                         help="the templates commit to resolve the chain at "
-                             "(default %s, the design's)" % ROUND5_REF)
+                             "(default %s, the registered one)" % ROUND5_REF)
     parser.add_argument("--templates",
                         help="a git clone of the templates repository, "
                              "upstream or a fork; overrides %s"

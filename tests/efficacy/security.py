@@ -2,7 +2,7 @@
 
 Seven source, dependency and runtime checks were declared after round 1, so
 for rounds 1 and 2 they describe a run and decide nothing. From round 3 they
-are among the probes design section 5.8 fixes before the run: eleven for
+are among the probes fixed before the run: eleven for
 security and three for data protection, each passed or failed, read as two
 pass rates.
 
@@ -867,8 +867,8 @@ def runtime_metrics(payload, reason=None):
     return metrics
 
 
-# The probes design section 5.8 fixes, in its order. Each passes or fails;
-# the two pass rates are what the report reads.
+# The probes fixed before the run, in their registered order. Each passes
+# or fails; the two pass rates are what the report reads.
 SECURITY_PROBES = ("password_at_rest", "account_enumeration",
                    "open_redirect", "sign_in_csrf", "secret_key", "debug",
                    "sql_strings", "vulnerable_dependencies", "cookie_flags",
@@ -936,7 +936,7 @@ def probe_results(result, payload, reason, lost):
 
 def pass_rate(probes, names):
     """The share of `names` passed. A missing probe leaves the rate missing:
-    a rate over fewer probes would not be the rate the design fixes."""
+    a rate over fewer probes would not be the registered rate."""
     missing = ["%s: %s" % (name, probes[name]["missing"]) for name in names
                if probes[name].get("missing")]
     if missing:
