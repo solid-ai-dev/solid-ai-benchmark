@@ -46,7 +46,7 @@ one sitting and strict enough that a wrong cent shows.
 A round turns one knob at a time and holds everything else still. Then any
 change on the meters has one cause.
 
-![Five knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected), the task (build, change, fix, refactor, review, evolve, with build selected) and the runs per arm (3 or 5). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler and the judge. Below that, the meters read on every run: hidden tests, attack probes, the judge's scores, conventions, size and cost](diagrams/knobs.png)
+![Four knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected) and the task (build, change, fix, refactor, review, evolve, with build selected). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler, the judge and the runs per arm, 3 or 5 once when a result is close. Below that, the meters: hidden tests, attack probes, the judge's scores, conventions, size, cost, and consistency, how alike an arm's runs are](diagrams/knobs.png)
 
 | Knob | Settings | What turning it asks |
 | ---- | -------- | -------------------- |
@@ -54,7 +54,6 @@ change on the meters has one cause.
 | Specification | `thin`, `normal`, `overspecified`, `pressure`, `conflict`, `broken` | Does a file supply what the spec leaves out, and hold or yield when the spec pushes against it |
 | Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a file help a weaker model more, and a stronger one less |
 | Task | build, change, fix, refactor, review, evolve | Does a file help beyond a first build, and over a project's life |
-| Runs per arm, K | 3, at most 5 | How steady a result is |
 
 The six specs:
 
@@ -112,7 +111,9 @@ The design's section 13 registers the arms and the questions they answer.
      design, readability, maintainability, security and data protection
      from 1 to 5
 5. **Compare.** Each run with a file is compared with its no-file partner,
-   and the differences give one verdict per meter.
+   and the differences give one verdict per meter. The runs of one arm are
+   also compared with each other: how alike they came out is the arm's
+   **consistency**.
 
 ## 5. Why runs are paired
 
