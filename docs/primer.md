@@ -130,7 +130,7 @@ Fixed in every run, so only the knobs can move the meters:
 
 ## 4. One round, start to finish
 
-![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, takes an interval over the K differences, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
+![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, takes the likely range of the average difference, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
 
 1. **Make the files.** A generator turns a short project brief into each
    arm's context file, once, with nobody answering its questions. A person
@@ -183,9 +183,10 @@ out, and those three decide.
 | **Not shown** | The pairs disagree, so no direction is clear | That the two are equal |
 | **Held** | Not shown, and no loss beyond a set **margin** | That it improved |
 
-The bar is a **bootstrap interval**: the spread of averages the three
-differences could produce if the runs were drawn again. A bar that covers
-zero cannot tell better from worse.
+The bar is the **likely range**, which statisticians call a bootstrap
+interval: where the average difference would land if the runs were redone.
+The benchmark finds it by resampling the three differences thousands of
+times. A bar that covers zero cannot tell better from worse.
 
 ### 5.3 Three runs are a signal
 
