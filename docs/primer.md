@@ -193,7 +193,7 @@ gets sharper with every delta, as section 5.3 explains.
 
 ### 5.2 The four verdicts
 
-![Five example rows, each with three dots for three pairs and a bar for the interval they allow. Two rows read Better: the bar lies wholly right of zero, once with the pairs nearly equal and once spread out. Not shown: the pairs disagree and the bar covers zero. Held: the same pairs, whose bar stays clear of the shaded loss past the margin. Worse: every pair got worse, and the bar lies wholly left of zero](diagrams/verdict.png)
+![Four example ranges of the hidden-test delta, each with two verdicts, against a margin of 2 points. Plus 1 to plus 4: better, and held. Minus 1 to plus 3: not shown, because the bar covers zero, but held, because it stays right of the margin. Minus 5 to plus 3: not shown, and not held, because it reaches past the margin. Minus 4 to minus 1: worse, and not held](diagrams/verdict.png)
 
 The bar is the luck check of the round-flow diagram. Its range is the
 **likely range**, which statisticians call a bootstrap interval: where the
