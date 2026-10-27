@@ -80,15 +80,37 @@ RELEASE = "v2.90.0"
 # measures any source.
 TEMPLATES_ENV = "BENCHMARK_TEMPLATES"
 
-# What the hybrid arm's workspace carries besides its file: the templates
-# source's `templates/` directory at the release, where a submodule would
-# put it. The rest of that repository stays out.
+# What a vendoring arm's workspace carries besides its file: the templates
+# source's `templates/` directory at the arm's recorded ref, where a
+# submodule would put it. The rest of that repository stays out.
 VENDORED = {"ref": RELEASE, "path": "templates",
             "into": "docs/solid-ai-templates"}
 
+# Round 5's templates and roots (design, section 13.2): one commit and one
+# chain for every arm, so the arms differ only in how they deliver it.
+ROUND5_REF = "9086e0ff"
+ROUND5_ROOTS = ["backend-api", "backend-auth", "backend-database",
+                "frontend-ux", "base-security", "base-data-governance"]
+
+# The sections the brief rules out for tariff, which the `skills` arm's
+# emitter leaves out as a project's declined list would (design, section
+# 13.2). Fixed once, from the brief alone, for every trial of the round.
+ROUND5_DECLINED = [
+    "templates/security/security.md#Server-Side Request Forgery (SSRF)",
+    "templates/security/security.md#File uploads",
+    "templates/security/security.md#CORS",
+    "templates/backend/auth.md#API keys (service-to-service)",
+]
+
+# Where the `skills` arm's skills go in the workspace: the folder Claude
+# Code loads skills from on demand.
+SKILLS_INTO = ".claude/skills"
+
 # The arms, each a word, and the context file each starts with, relative to
 # `arms/`. Arm `none` carries no file: it is the bare agent. The two files
-# round 1 ran keep the directories its generation record names.
+# round 1 ran keep the directories its generation record names. `inline`,
+# `reference` and `skills` are round 5's; `hybrid` was regenerated for it,
+# and an arm's vendored ref comes from its generation record.
 ARMS = {
     "none": {"label": "no context file", "context": None},
     "full": {"label": "the templates' file, inline",
@@ -99,6 +121,12 @@ ARMS = {
                "context": "hybrid/CLAUDE.md", "vendor": VENDORED},
     "hand": {"label": "the hand-written file",
              "context": "hand/CLAUDE.md"},
+    "reference": {"label": "the templates, named only",
+                  "context": "reference/CLAUDE.md", "vendor": VENDORED},
+    "inline": {"label": "the templates' file, inline from agents.md",
+               "context": "inline/CLAUDE.md"},
+    "skills": {"label": "the emitted root file and task skills",
+               "context": "skills/CLAUDE.md", "skills": "skills/skills"},
 }
 
 # Round 1 named its arms by letter and its trials `A1`, `B2`, `C3`. Its run
@@ -179,9 +207,18 @@ REACH_TERMS = ("solid-ai-templates", "hidden-suite")
 REPOSITORY_TERMS = ("solid-ai-dev/solid-ai-templates",
                     "braboj/solid-ai-templates")
 
-# No user, project or local settings, and no MCP server the harness did not
-# pass -- which is none. Both flags are isolation, not preference.
-SETTING_SOURCES = ""
+# The workspace's own project settings and nothing else: no user or local
+# settings, and no MCP server the harness did not pass -- which is none.
+# The project source is what makes Claude Code discover the skills arm's
+# `.claude/skills/`; every arm gets it, so the arms differ only in what
+# their workspace holds. The deny rules come from the harness's own
+# settings file, passed apart from the sources.
+SETTING_SOURCES = "project"
+
+# What the skills probe asks: the names the agent sees, and nothing else.
+SKILLS_PROMPT = ("Without using any tool, list the names of the skills "
+                 "available to you, one per line, and nothing else. If there "
+                 "are none, reply NONE.")
 
 # A minimal settings file, so `--settings` names something real rather than
 # falling back to whatever the machine carries.
@@ -437,6 +474,35 @@ def vendor_templates(workspace, vendor):
     return dict(vendor, tree=tree, source=source_record(vendor["ref"]))
 
 
+def arm_vendor(arm):
+    """What an arm vendors, at the ref its generation record names; None
+    for an arm that vendors nothing."""
+    vendor = ARMS[arm].get("vendor")
+    if not vendor:
+        return None
+    record = os.path.join(ARMS_DIR, os.path.dirname(ARMS[arm]["context"]),
+                          "generation.json")
+    if os.path.isfile(record):
+        with io.open(record, encoding="utf-8") as handle:
+            ref = json.load(handle).get("ref")
+        if ref:
+            return dict(vendor, ref=ref)
+    return dict(vendor)
+
+
+def place_skills(workspace, source):
+    """Copy an arm's skills to where Claude Code loads them, kept out of the
+    workspace's index like the vendored templates, so no size or scope
+    metric counts them; return the kinds placed."""
+    target = os.path.join(workspace, *SKILLS_INTO.split("/"))
+    shutil.copytree(source, target)
+    exclude = os.path.join(workspace, ".git", "info", "exclude")
+    os.makedirs(os.path.dirname(exclude), exist_ok=True)
+    with io.open(exclude, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write("/%s/\n" % SKILLS_INTO)
+    return sorted(os.listdir(target))
+
+
 def prepare_workspace(arm, trial, root, spec=SPEC):
     """Create the starting workspace for one trial; return its path and the
     record of what was vendored into it, None for every arm but the hybrid.
@@ -462,14 +528,20 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
         if not os.path.isfile(source):
             raise TrialError(
                 "arm %s needs %s, which does not exist. A generated file is "
-                "produced through the interview at the recorded release, "
-                "never hand-written." % (arm, source))
+                "made by generate_arm.py at the recorded ref, never "
+                "hand-written." % (arm, source))
         shutil.copyfile(source, os.path.join(workspace, "CLAUDE.md"))
 
     git(workspace, "init", "-q")
     vendored = None
     if ARMS[arm].get("vendor"):
-        vendored = vendor_templates(workspace, ARMS[arm]["vendor"])
+        vendored = vendor_templates(workspace, arm_vendor(arm))
+    if ARMS[arm].get("skills"):
+        source = os.path.join(ARMS_DIR, ARMS[arm]["skills"])
+        if not os.path.isdir(source):
+            raise TrialError("arm %s needs its skills at %s, which do not "
+                             "exist" % (arm, source))
+        place_skills(workspace, source)
     git(workspace, "add", "-A")
     git(workspace, "-c", "user.name=efficacy",
         "-c", "user.email=efficacy@example.invalid",
@@ -554,6 +626,47 @@ def assert_authenticated(home, env_builder, executable):
         raise TrialError("the CLI is not usable in the isolated home: %s"
                          % payload.get("result", "")[:200])
     return payload.get("result", "").strip()
+
+
+def missing_skills(listed, kinds):
+    """The kinds an agent's list of its skills leaves out."""
+    names = {line.strip().strip("-*` ").lower()
+             for line in (listed or "").splitlines()}
+    return [kind for kind in kinds if kind.lower() not in names]
+
+
+def assert_skills_discovered(home, env_builder, executable, source):
+    """Refuse a run whose agent would not see the skills arm's skills.
+
+    Placing the files proves nothing: Claude Code discovers project skills
+    only under the project setting source. One cheap call from a scratch
+    workspace holding the arm's real skills, under the trial's own flags,
+    asks for the names it sees; every kind must be among them.
+    """
+    kinds = sorted(os.listdir(source))
+    workspace = tempfile.mkdtemp(prefix="efficacy-skills-probe-")
+    try:
+        git(workspace, "init", "-q")
+        place_skills(workspace, source)
+        proc = subprocess.run(
+            [executable, "-p", "--output-format", "json",
+             "--setting-sources", SETTING_SOURCES, "--settings",
+             os.path.join(home, "settings.json"), "--strict-mcp-config"],
+            input=SKILLS_PROMPT, cwd=workspace, env=env_builder(home),
+            capture_output=True, text=True, encoding="utf-8", timeout=180)
+    finally:
+        remove_tree(workspace)
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError:
+        raise TrialError("the skills probe returned no JSON: %s"
+                         % (proc.stdout or proc.stderr)[:400])
+    listed = payload.get("result", "")
+    missing = missing_skills(listed, kinds)
+    if payload.get("is_error") or missing:
+        raise TrialError("the agent does not see the skills arm's skills: "
+                         "missing %s" % ", ".join(missing or ["all"]))
+    return kinds
 
 
 # A trial inherits this machine, not the process that launched it. Each group
@@ -2726,6 +2839,60 @@ def recover_checks():
     return checks
 
 
+def round5_checks():
+    """Round 5's arms are registered as the design's section 13.2 makes
+    them, a vendoring arm takes its recorded ref, and the skills land where
+    Claude Code loads them, out of the workspace's index."""
+    checks = [
+        ("round 5's arms: reference vendors, inline does not, skills has "
+         "skills",
+         all(arm in ARMS for arm in ("none", "reference", "inline", "hybrid",
+                                      "skills"))
+         and ARMS["reference"].get("vendor") is not None
+         and ARMS["inline"].get("vendor") is None
+         and ARMS["skills"].get("skills") is not None),
+        ("an arm that vendors nothing has no vendored ref",
+         arm_vendor("none") is None and arm_vendor("inline") is None),
+    ]
+    record = os.path.join(ARMS_DIR, "hybrid", "generation.json")
+    with io.open(record, encoding="utf-8") as handle:
+        recorded = json.load(handle).get("ref")
+    checks.append(("a vendoring arm vendors at its recorded ref",
+                   recorded is not None
+                   and arm_vendor("hybrid")["ref"] == recorded))
+
+    scratch = os.path.join(tempfile.gettempdir(), "efficacy-skills-self-test")
+    remove_tree(scratch)
+    source = os.path.join(scratch, "source", "review")
+    os.makedirs(source)
+    with io.open(os.path.join(source, "SKILL.md"), "w",
+                 encoding="utf-8") as handle:
+        handle.write("---\nname: review\n---\n")
+    workspace = os.path.join(scratch, "skills-1")
+    os.makedirs(workspace)
+    git(workspace, "init", "-q")
+    kinds = place_skills(workspace, os.path.dirname(source))
+    placed = os.path.join(workspace, *SKILLS_INTO.split("/"), "review",
+                          "SKILL.md")
+    argv = agent_command(scratch, "model", "high", None)
+    checks.append(("a trial reads the workspace's project settings and no "
+                   "other source",
+                   argv[argv.index("--setting-sources") + 1] == "project"))
+    listed = "review\n- write-tests\n`add-check`\ndataviz"
+    checks.append(("the skills probe finds a listed kind and names a missing "
+                   "one",
+                   missing_skills(listed, ["add-check", "review",
+                                           "write-tests"]) == []
+                   and missing_skills(listed, ["review", "regenerate"])
+                   == ["regenerate"]))
+    checks.append(("the skills land where Claude Code loads them, out of "
+                   "the index",
+                   kinds == ["review"] and os.path.isfile(placed)
+                   and git(workspace, "status", "--porcelain") == ""))
+    remove_tree(scratch)
+    return checks
+
+
 def self_test():
     """Prove the naming, isolation, outcome, resume, change and vendoring
     rules before a trial."""
@@ -2735,7 +2902,7 @@ def self_test():
               + process_checks()
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()
               + vendor_checks() + denial_checks() + kill_checks()
-              + recover_checks())
+              + recover_checks() + round5_checks())
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     passed = sum(1 for _, ok in checks if ok)
@@ -2880,6 +3047,19 @@ def main(argv):
             lib.print_verdict(False, "0 trial(s), 0 done, 1 refused")
             return 1
         print("generator ready: %s" % ready)
+
+        # Files in `.claude/skills/` are not skills an agent sees until the
+        # CLI discovers them, so a run with the skills arm proves it first.
+        if "skills" in arms:
+            try:
+                seen = assert_skills_discovered(
+                    home, agent_environment, agent_executable(),
+                    os.path.join(ARMS_DIR, ARMS["skills"]["skills"]))
+            except (TrialError, subprocess.TimeoutExpired) as error:
+                print("refused: %s" % error)
+                lib.print_verdict(False, "0 trial(s), 0 done, 1 refused")
+                return 1
+            print("the agent sees the skills arm's %d skills" % len(seen))
 
     started_at = datetime.datetime.now()
     run_file = os.path.join(

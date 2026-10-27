@@ -8,11 +8,11 @@ parts that run live in `tests/efficacy/`; the paths below are relative to it.
 |---|---|
 | `SPEC.md` | the application every arm is asked to build; copied into each workspace |
 | `SPEC-thin.md` | the same contract without the practices, for `--spec thin`; copied in as `SPEC.md` |
-| `brief.txt` | the project brief the generated arms' interview reads, the only copy |
+| `brief.txt` | the project brief the generated arms are made from, the only copy |
 | `change-prompt.txt` | the change task's prompt, the only copy |
-| `arms/<arm>/CLAUDE.md` | each arm's context file: `full`, `short`, `hybrid` generated, `hand` hand-written |
+| `arms/<arm>/CLAUDE.md` | each arm's context file; `arms/skills/skills/` holds the skills arm's skills |
 | `arms/<arm>/generation.json` | the record of each generated file's generation |
-| `generate_arm.py` | generates one arm's file through the interview |
+| `generate_arm.py` | makes one round-5 arm's file: fixed text, a generation from `agents.md`, or the emitter |
 | `harness.py` | sets up a workspace, runs one trial in isolation, freezes the result |
 | `score.py` | scores one frozen trial: install, boot, the hidden suite, the static tools, adherence, scope, cost |
 | `probes.py` | the structural and web-quality probes that run inside the trial's own interpreter |
@@ -53,6 +53,12 @@ The suite then skips its browser flows, and the trial is flagged as partial.
 | `short` | the templates' file, generated under a 40-line budget |
 | `hybrid` | the templates' file in the hybrid model, with the templates vendored |
 | `hand` | the hand-written file |
+| `reference` | a file naming each template of the chain, with the templates vendored (round 5) |
+| `inline` | the templates' file, generated from `agents.md`, inline (round 5) |
+| `skills` | the emitted root file, with the task skills in `.claude/skills/` (round 5) |
+
+Rounds 1 to 4 ran `full`, `short` and `hand`, and a `hybrid` made through
+the interview; round 5 regenerated `hybrid` from `agents.md` (design §13).
 
 A trial is `<arm>-<block>`: `short-2` is arm `short`'s trial in block 2,
 paired with `none-2`. Every workspace, tarball, score, judging and `--from`
@@ -65,26 +71,27 @@ names on disk, and every reader maps them to `none`, `full` and `hand`.
 
 ```bash
 py tests/efficacy/generate_arm.py --self-test
-py tests/efficacy/generate_arm.py --arm short --root <outside this repository> --dry-run
-py tests/efficacy/generate_arm.py --arm short --root <outside this repository>
+py tests/efficacy/generate_arm.py --arm inline --root <outside this repository> --dry-run
+py tests/efficacy/generate_arm.py --arm inline --root <outside this repository>
 ```
 
-**One non-interactive invocation per generated arm** (`full`, `short`,
-`hybrid`), per the design's §3.3.
+**Each round-5 arm is made once, from one chain** (design §13.2): the
+templates at `harness.ROUND5_REF`, resolved for `harness.ROUND5_ROOTS`.
 
-- The brief is read from `brief.txt` and treated as the client's answers.
-  Nobody answers questions.
-- The instruction names the arm's output model and, for `short`, its budget:
-  at most 40 lines, none over 88 characters.
-- A result over either bound is refused and kept beside the record as
-  rejected, never trimmed.
+| Arm | Made by |
+| --- | --- |
+| `reference` | fixed text naming each file of the chain under the vendored path |
+| `inline`, `hybrid` | one non-interactive generation following `templates/core/agents.md`, no interview, from `brief.txt` |
+| `skills` | `resolve_chain.py --emit` with `harness.ROUND5_DECLINED`, the facts filled from the brief |
+
+- Nobody answers questions, and nobody trims a result.
 - An existing file is never overwritten without `--replace`.
 
 Why: a person answering or trimming would put their judgement into the arm.
 
 **The record.** Each generated file has `generation.json` beside it: the
-release and the chain it resolved, the model, the CLI's result, both leak
-scans and the budget check. The report reads it from there.
+ref and the chain it resolved, the source's commit, how the file was made,
+its size, and the leak scans. The report reads it from there.
 
 **Two leak scans ask different questions.**
 
@@ -93,9 +100,10 @@ scans and the budget check. The report reads it from there.
 - The output scan is narrow. Once the prompt is clean, only data nobody
   could derive, such as a seed SKU, a rule id or a worked figure, is a leak.
 
-**Checking it.** The self test proves the leak scan and the budget can fail.
-The dry run builds and scans the prompt without calling a model: the cheap
-check after any change to the brief, the roots or an arm's clause.
+**Checking it.** The self test proves the leak scan, the reference text and
+the fact filling can fail. The dry run builds and scans a model arm's
+prompt without calling a model: the cheap check after any change to the
+brief, the roots or an arm's clause.
 
 ## Running it
 

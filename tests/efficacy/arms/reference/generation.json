@@ -1,0 +1,41 @@
+{
+  "arm": "reference",
+  "kind": "fixed",
+  "output_model": null,
+  "ref": "9086e0ff",
+  "source": {
+    "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
+    "ref": "9086e0ff",
+    "commit": "9086e0ffc454fbff1d234601822257ce5e40a004"
+  },
+  "roots": [
+    "backend-api",
+    "backend-auth",
+    "backend-database",
+    "frontend-ux",
+    "base-security",
+    "base-data-governance"
+  ],
+  "started_at": "2026-10-27T07:33:03",
+  "commit": "9086e0ffc454fbff1d234601822257ce5e40a004",
+  "resolved_files": [
+    "templates/core/quality.md",
+    "templates/core/git.md",
+    "templates/core/docs.md",
+    "templates/core/testing.md",
+    "templates/core/review.md",
+    "templates/backend/http.md",
+    "templates/backend/api.md",
+    "templates/security/security.md",
+    "templates/backend/auth.md",
+    "templates/backend/database.md",
+    "templates/frontend/ux.md",
+    "templates/data/data-modeling.md",
+    "templates/data/data-governance.md"
+  ],
+  "output_leak": null,
+  "outcome": "generated",
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\reference\\CLAUDE.md",
+  "output_lines": 19,
+  "output_words": 56
+}
