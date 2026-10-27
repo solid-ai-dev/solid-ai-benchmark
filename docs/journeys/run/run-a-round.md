@@ -1,25 +1,39 @@
 # Run a round
 
-The operator runs a round of five arms at K = 3 on the Windows
-workstation: build trials, change tasks, then scoring. Target: every trial
-built, changed and scored, with none lost to the setup.
+The operator runs a round of five arms at K = 3 on the Windows workstation:
+the build trials, the change tasks, then scoring.
 
-Assumptions: the arms' files exist, the needs of [ch.
-7](../../architecture/07-deployment-view.md) are installed, and 15 GB is free on the run
-root's drive. Times and costs per trial are measured in rounds 1 and 2 at
-`claude-sonnet-5`. Scoring times are estimated.
+Target:
 
-| # | Step | Minutes | Cost | Notes |
-| - | ---- | ------- | ---- | ----- |
-| 1 | Checks `claude`, `gh`, Python 3.12, Java and free disk | 10 | | A missing piece shows as a refusal or a missing metric |
-| 2 | `harness.py --self-test` | 5 | | Estimate. Plants each thing the harness removes or catches |
-| 3 | A dry run of the whole round | 5 | | Prepares every workspace in `<root>-dry-run`, calls no model |
-| 4 | The build trials, 15 in interleaved order | 240 to 420 | about $195 | Measured: 16 to 28 minutes and $8.7 to $16.7 per trial |
-| 5 | The change tasks, 15 in the same order | 120 to 240 | about $130 | Measured in round 1: $5 to $17 per task. Minutes estimated |
-| 6 | `score.py`, build then change, with the security probes | 150 | | Estimate: about 5 minutes per trial |
-| | Total | 9 to 14 hours | about $325 | Subscription quota, not invoice |
+- Every trial built, changed and scored, with none lost to the setup
+  ([ch. 6.1](../../architecture/06-runtime-view.md))
 
-Commands:
+Assumptions:
+
+- The arms' files exist
+- The needs of [ch. 7](../../architecture/07-deployment-view.md) are installed, with 15
+  GB free on the run root's drive
+- Times and costs per trial are measured in rounds 1 and 2 at
+  `claude-sonnet-5`. Scoring times are estimates
+- The cost is subscription quota, not invoice
+
+## Steps
+
+| # | Who | Step | Time | Notes |
+| - | --- | ---- | ---- | ----- |
+| 1 | Operator | Checks `claude`, `gh`, Python 3.12, Java and free disk | 10 min | A missing piece shows as a refusal or a missing metric |
+| 2 | Operator | Runs the harness's self test | 5 min | Plants each thing the harness removes or catches |
+| 3 | Operator | Dry-runs the whole round | 5 min | Prepares every workspace in `<root>-dry-run`, calls no model |
+| 4 | Harness | Runs the 15 build trials in interleaved order | 4 to 7 hours | Measured: 16 to 28 min and $8.7 to $16.7 per trial, about $195 |
+| 5 | Harness | Runs the 15 change tasks in the same order | 2 to 4 hours | Measured in round 1: $5 to $17 per task, about $130 |
+| 6 | Operator | Scores build then change, with the security probes | about 2.5 hours | About 5 min per trial |
+| | | Total | 9 to 14 hours | about $325 |
+
+The run record is rewritten after every trial, so the operator can leave a
+round running overnight. A trial that was blocked is handled in
+[Resume a blocked run](resume-a-blocked-run.md).
+
+## Commands
 
 ```bash
 py tests/efficacy/harness.py --self-test
@@ -29,10 +43,6 @@ py tests/efficacy/harness.py --root <run root> --task change --arms none,inline,
 py tests/efficacy/score.py --root <run root>
 py tests/efficacy/score.py --root <run root> --task change
 ```
-
-The run record is rewritten after every trial, so the operator can leave a
-round running overnight. A trial that was blocked is handled in
-[Resume a blocked run](resume-a-blocked-run.md).
 
 ## Findings
 

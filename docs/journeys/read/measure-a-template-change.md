@@ -1,20 +1,30 @@
 # Measure a template change
 
 A fork's maintainer has trimmed the templates' chain to cut tokens and
-wants to know whether the trim is free. Target: a reading of every quality
-metric as held, with tokens down, or a named metric that is not.
+wants to know whether the trim is free.
 
-Assumptions: the fork is a git clone named with `--templates`. The trim is
-batched per file, since each iteration costs a full set of trials. Times
-and costs are estimated from [Run a round](../run/run-a-round.md).
+Target:
 
-| # | Step | Minutes | Cost | Notes |
-| - | ---- | ------- | ---- | ----- |
-| 1 | Registers the comparison: the upstream chain as baseline, the fork's as candidate | 30 | | Design [ch. 4.2](../../architecture/04-solution-strategy.md) |
-| 2 | Generates the candidate's arms from the fork's chain | 40 | | [Generate the arms](../prepare/generate-the-arms.md) |
-| 3 | Runs, scores, judges and archives, same K, model and spec | 9 to 14 hours | about $325 | |
-| 4 | Reads each quality metric: free only if every one held and tokens fell | 15 | | "No improvement shown" is not enough |
-| | Total | about 1.5 working days | | |
+- Every quality meter read as held, with tokens down, or a named meter
+  that is not ([ch. 4.2](../../architecture/04-solution-strategy.md))
+
+Assumptions:
+
+- The fork is a git clone named with `--templates`
+- The trim is batched per file, since each iteration costs a full set of
+  trials
+- Times and costs come from [Run a round](../run/run-a-round.md). All are
+  estimates
+
+## Steps
+
+| # | Who | Step | Time | Notes |
+| - | --- | ---- | ---- | ----- |
+| 1 | Maintainer | Registers the comparison: the upstream chain as baseline, the fork's as candidate | 30 min | [Ch. 4.2](../../architecture/04-solution-strategy.md) |
+| 2 | Maintainer | Generates the candidate's arms from the fork's chain | 40 min | [Generate the arms](../prepare/generate-the-arms.md) |
+| 3 | Maintainer | Runs, scores, judges and archives, same K, model and spec | 9 to 14 hours | About $325 |
+| 4 | Maintainer | Reads each quality meter: free only if every one held and tokens fell | 15 min | Undecided is not enough |
+| | | Total | about 1.5 working days | |
 
 ## Findings
 
