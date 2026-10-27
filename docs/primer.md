@@ -48,24 +48,26 @@ change on the meters has one cause.
 
 ![Five knobs the benchmark turns, each with its settings: the context file (none, inline, hybrid, reference, skills, with none selected), the specification (thin, normal, overspecified, pressure, conflict, broken, with normal selected), the builder model (Haiku 4.5, Sonnet 5, Opus 5.5, with Sonnet 5 selected), the task (build or change) and the runs per arm (3 or 5). Below them, what is held still in every run: the app, the bounds of $100 or two hours, the prompt, the ruler and the judge. Below that, the meters read on every run: hidden tests, attack probes, the judge's scores, conventions, size and cost](diagrams/knobs.png)
 
-| Knob | Settings | What turning it asks | Turned in |
-| ---- | -------- | -------------------- | --------- |
-| Context file, the **arm** | `none`, `inline`, `hybrid`, `reference`, `skills` | Does a file help, and which way of delivering the rules | Every round |
-| Specification | normal, thin, overspecified, pressure, conflict, broken | Does a file supply what a sparse spec leaves out, and hold or yield when the spec pushes against it | Thin in round 4. The rest planned, #23 |
-| Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a file help a weaker model more, and a stronger one less | Haiku in round 4. Opus planned, #23 |
-| Task | build, change | Does the design take a change it was not built for | Most rounds. Round 4's thin run only built |
-| Runs per arm, K | 3, at most 5 | How steady a result is | 5 only once, when owed |
+| Knob | Settings | What turning it asks |
+| ---- | -------- | -------------------- |
+| Context file, the **arm** | `none`, `inline`, `hybrid`, `reference`, `skills` | Does a file help, and which way of delivering the rules |
+| Specification | `thin`, `normal`, `overspecified`, `pressure`, `conflict`, `broken` | Does a file supply what the spec leaves out, and hold or yield when the spec pushes against it |
+| Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a file help a weaker model more, and a stronger one less |
+| Task | build, change | Does the design take a change it was not built for |
+| Runs per arm, K | 3, at most 5 | How steady a result is |
 
-The four new specs:
+The six specs:
 
 | Spec | What it does | What it tests |
 | ---- | ------------ | ------------- |
+| Thin | Keeps the contract the hidden tests drive, drops the good practices | Does a file supply the defences the spec leaves out |
+| Normal | The contract and the practices | The baseline every other spec is compared with |
 | Overspecified | Dictates the "how" too: layout, tools, password storage | Should show no effect. A file that still moves the meters points at the ruler |
 | Pressure | Asks for a bad practice, such as an export with no sign-in | Do the file's security rules hold |
 | Conflict | Contradicts the file, such as a flat layout where the file says `src/` | Does the project's own decision win, as it should |
 | Broken | Holds a planted fault, such as two rounding rules that clash, with the hidden tests asserting one | Does a file make the agent notice and report the fault, in its README or commit, instead of guessing |
 
-The five arms of round 5, which asks how the rules should reach the agent:
+The five arms:
 
 | Arm | What the agent gets | What it isolates |
 | --- | ------------------- | ---------------- |
@@ -75,11 +77,7 @@ The five arms of round 5, which asks how the rules should reach the agent:
 | `reference` | A file that only names the templates to read, with the templates beside it | Is pointing to the rules enough |
 | `skills` | A short root file plus one skill per kind of task, loaded when the task needs it | Does a root file with skills deliver what hybrid does |
 
-Rounds 1 to 4 ran `full`, the `inline` idea made through the templates'
-interview, and two arms now retired: `short`, the generated file cut to
-40 lines, and `hand`, 39 lines written by a person. `hand` asked whether
-the effect is the templates or merely having a file. Their findings are
-in section 8. The design's section 13 registers round 5.
+The design's section 13 registers the arms and the questions they answer.
 
 ## 4. One round, start to finish
 
@@ -151,16 +149,7 @@ manufacture one.
 | A meter that turns out to measure something else is withdrawn | A wrong number is worse than no number |
 | A tool that scanned nothing records "missing", never zero | Zero must mean "clean", not "not measured" |
 
-## 8. What the rounds have found
-
-| Round | Date | What was turned | What it found |
-| ----- | ---- | --------------- | ------------- |
-| 1 | 2026-09-17 | Arms `none`, `full`, `hand` | Only the hand-written file read as better |
-| 2 | 2026-09-18 | Added `short` and `hybrid` | `short` read worse, `hybrid` moved nothing |
-| 3 | 2026-09-27 | All five arms, a spec with sign-in and customers | No file made the code clearly better. Every file cost 32 to 122 % more. `hybrid` followed the conventions most: +21.6 points |
-| 4, thin spec | 2026-10-17 | The spec drops the security practices | Some files supplied missing defences, on a few meters |
-| 4, weaker model | 2026-10-17 | Haiku 4.5 builds | Every template file lowered the tests passed. Only `hand` did not |
-| 5 | Registered 2026-10-26 | How the rules are delivered | Not run yet |
+## 8. What the evidence says so far
 
 What the evidence supports today, in the words of the
 [assessment](design/efficacy-assessment.md):
