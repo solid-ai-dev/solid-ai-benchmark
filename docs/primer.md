@@ -50,7 +50,7 @@ change on the meters has one cause.
 
 | Knob | Settings | What turning it asks |
 | ---- | -------- | -------------------- |
-| Context file, the **arm** | `none`, `inline`, `hybrid`, `reference`, `skills` | Does a file help, and which way of delivering the rules |
+| Context file, the **arm** | `none`, `inline`, `hybrid`, `reference`, `skills` | Does a context file help, and which way of delivering the rules |
 | Specification | `thin`, `normal`, `overspecified`, `pressure`, `conflict`, `broken` | Does a context file supply what the spec leaves out, and hold or yield when the spec pushes against it |
 | Builder model | Haiku 4.5, Sonnet 5, Opus 5.5 | Does a context file help a weaker model more, and a stronger one less |
 | Task | build, change, fix, refactor, review, evolve | Does a context file help beyond a first build, and over a project's life |
