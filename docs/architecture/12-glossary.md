@@ -1,7 +1,8 @@
 # 12. Glossary
 
 Each entry says what a term names. Every threshold and rule that uses it
-is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
+is in [chapter 8](08-crosscutting-concepts.md) or a round's registration
+under [`docs/rounds/`](../rounds/).
 
 | Term | Definition |
 | ---- | ---------- |
@@ -41,7 +42,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Primary dimension | A metric the report leads with and a hypothesis may decide on: the judge's design, readability, maintainability, security and data-protection rows, and the two probe pass rates |
 | Reach | A tool call in a trial's transcript that names this repository, the hidden suite, the scoring area or another trial. A reached trial is voided and re-run once |
 | Reference model | A context file that only names the templates to read. Round 5's `reference` arm tests it |
-| Registered | Committed to the design before the first trial it governs. Only a registered check can decide |
+| Registered | Committed to a round's registration before the first trial it governs. Only a registered check can decide |
 | Round | One run of the experiment under one set of rules, reported once under `docs/audits/` |
 | Rubric | The judge's rows: SRP, OCP, LSP, ISP, DIP, naming and abstraction, error design, readability, maintainability, test quality, security and data protection. The primaries are anchored at 1, 3 and 5 |
 | Run record | `run-*.json` in the run root: every trial an invocation ran, with its outcome, cost, revisions and the environment names removed |

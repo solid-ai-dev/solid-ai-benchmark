@@ -68,3 +68,119 @@ harness and `reuse.py`.
 | `judge/` | Each blind bundle, its judgings and the unblinding map |
 | `archived.json` | The stamp a verified archive writes, with the hash of every file the report reads |
 | `<tool>.running` | A claim that one run of that tool is working here |
+
+## 5.5 Arms
+
+### 5.5.1 The five arms
+
+Every arm starts from an empty git repository holding `SPEC.md`. All but
+`none` add a `CLAUDE.md`.
+
+| Arm | Adds | Budget | Asks |
+|---|---|---|---|
+| `none` | nothing: the bare agent | — | the baseline every file is compared with |
+| `full` | the file the interview generates, inline | none | do the templates help as shipped |
+| `short` | the file the interview generates, inline, under a budget | ≤ 40 lines, ≤ 88 characters wide | does a short generated file help |
+| `hybrid` | the file the interview generates in its hybrid model, with the templates vendored into the workspace | none | does the model the owner's projects use help |
+| `hand` | a hand-written file | ≤ 40 lines | is the effect the templates, or merely having a file |
+
+The report prints each file's measured line count.
+
+### 5.5.2 Trial names
+
+A trial is `<arm>-<block>`: `short-2` is arm `short`'s trial in block 2,
+paired with `none-2`. Blocks run in order and arms interleave within each:
+`none-1`, `full-1`, `short-1`, `hybrid-1`, `hand-1`, `none-2`, and so on.
+
+Round 1 named its arms by letter. Reading its report, A is `none`, B is
+`full` and C is `hand`.
+
+### 5.5.3 How the generated files are made
+
+**One non-interactive invocation per generated arm, and no person answers
+questions.** `tests/efficacy/generate_arm.py` hands the generator:
+
+- `INTERVIEW.md` and the chain resolved at `v2.90.0`
+- the project brief, [`tests/efficacy/brief.txt`](../../tests/efficacy/brief.txt)
+- the arm's output model (inline or hybrid) and, for `short`, its budget
+
+A record of each generation is committed beside its file as
+`generation.json`: the release and the chain it resolved, the model, the
+CLI's result, both leak scans and the budget check.
+
+Why: a conversation would put the answerer's judgement into the file, and a
+re-run would produce a different arm.
+
+**The length rule.** A file's length is its count of newline-terminated
+lines.
+
+- `short`'s file must be at most 40 lines, none longer than 88 characters.
+- The generator refuses a result over either bound rather than trimming it.
+- The instruction asks the model to measure every line against the width
+  before answering. It adds no content, only the check.
+- `hybrid` has no budget. The interview's hybrid model fixes what it inlines
+  and what it refers to.
+- `short` and `hand` sit within a line of each other, so `short − hand`
+  compares content at a fixed length.
+
+Why: trimming by hand would put a person's judgement into the arm.
+
+**`hybrid` reads the templates from its own workspace.** Its workspace
+carries this repository's `templates/` directory at `v2.90.0` under
+`docs/solid-ai-templates/templates/`.
+
+- Only that directory is copied. The release also holds this design, and
+  the arm would read its brief.
+- The copy is kept out of the workspace's index and counts in no size or
+  scope metric.
+
+### 5.5.4 What the brief tells the interview
+
+The brief is what an adopter would type:
+
+- the domain in one line, naming discount rules, tax jurisdictions and
+  customers
+- the stack: Python 3.12, Flask 3, Jinja, HTMX, SQLite, uv, ruff, mypy
+  strict, pytest
+- personal data: customers are people with a name, email and address; the
+  GDPR applies, so a customer may ask for erasure or a copy of their data;
+  one administrator signs in
+- the system's boundaries and actors: the administrator in a browser and
+  another program; the pricing engine importable without the web app; a
+  local store; no network
+
+Why each part is there:
+
+- The two extension axes are named because an adopter building this app
+  would name them. A brief withholding them measures a product nobody uses.
+- The stack is named because the spec fixes it for every arm. An interview
+  left to choose might pick FastAPI and build a different app.
+- Personal data is named because an adopter storing customers would say
+  so, and it is what lets the interview reach for data-protection rules.
+- The boundaries are there because establishing a system's boundaries and
+  its interfaces is the interview's job.
+
+**What naming the axes affects.** The report states this beside the rows it
+touches:
+
+| Measure | Affected |
+|---|---|
+| Extension points for rule kinds and jurisdictions; the OCP rubric row for them; the change task | Yes. The generated arms' interview was told the axes exist. The other arms read the same axes in `SPEC.md` |
+| Extension point for a new export format | **No.** The brief names no export, so every arm meets this axis only through the spec |
+| Everything else: task success, cost, quality counts, layering, complexity, the other rubric rows | No |
+
+The export axis is therefore the untouched open-closed probe, and the report
+leads its OCP finding with it.
+
+**What the brief never states.** No rule semantics, rounding mode,
+precedence or stacking order, route path, API name, error hierarchy or
+fixture.
+
+**Checked before the first trial:** two scans guard the generated files.
+
+- The prompt scan is broad. A generation is never handed `SPEC.md`, so any
+  spec-only token in the prompt means the wiring is wrong.
+- The output scan is narrow. Once the prompt is clean, only data nobody
+  could derive, such as a seed SKU, a rule id or a worked figure, counts as
+  a leak.
+- A hit refuses the generation rather than warning.

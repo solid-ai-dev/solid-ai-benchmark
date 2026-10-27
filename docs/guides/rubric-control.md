@@ -16,7 +16,7 @@ The first application, from round 1, carries the six trees for `design`,
 `readability` and `maintainability`. It predates sign-in and customers, so the
 `security` and `data_protection` rows cannot move on it; their five trees are
 built from the second, one uncounted calibration trial on the extended
-specification (design §5.7).
+specification ([ch. 8.6.7](../architecture/08-crosscutting-concepts.md)).
 
 ## Running it
 
@@ -253,7 +253,7 @@ after 16 of 33 judgings, with `secured-1` not yet judged. What it had read
 put `base-2` at 3 on both rows, `insecure-1` and `leaky-1` at 1 on theirs,
 and `protected-1` at 5. The plan allows about thirty judgings a week and a
 round needs three times as many, so the rounds' judge became
-`claude-opus-5-5` (the design's §5.6).
+`claude-opus-5-5` ([ch. 8.6.6](../architecture/08-crosscutting-concepts.md)).
 
 A first run through the claude backend recorded effort `high` but never
 passed it, so the CLI ran at its own default. Its readings are not counted;

@@ -2,10 +2,8 @@
 
 This page explains what the benchmark does and how to read what it finds.
 It needs no programming. A word in **bold** on first use is defined in the
-[glossary](architecture/12-glossary.md). The full rules are in the design,
-[efficacy-benchmark.md](design/efficacy-benchmark.md), and the
-[architecture](architecture/01-introduction-and-goals.md) describes how the
-parts are built.
+[glossary](architecture/12-glossary.md). The full rules, and how the parts
+are built, are in the [architecture](architecture/01-introduction-and-goals.md).
 
 ## 1. The question
 
@@ -73,7 +71,8 @@ The five arms, the settings of the first knob:
 | `reference` | A context file that only names the templates to read, with the templates beside it | Is pointing to the rules enough |
 | `skills` | A short root file plus one skill per kind of task, loaded when the task needs it | Does a root file with skills deliver what hybrid does |
 
-The design's section 13 registers the arms and the questions they answer.
+[Round 5's registration](rounds/round-5.md) sets the arms and the questions
+they answer.
 
 ### 3.3 Specs
 
@@ -88,8 +87,8 @@ The design's section 13 registers the arms and the questions they answer.
 
 ### 3.4 Builder models
 
-Each round names its own set of builder models in the design before its
-first run. Two rules hold for every set:
+Each round names its own set of builder models in its registration before
+its first run. Two rules hold for every set:
 
 - Every model is pinned by its exact version, so the builder cannot change
   under a round
@@ -208,7 +207,7 @@ Each bar answers two questions:
 | Big loss ruled out? | Yes or no | Yes if the bar stays above the **margin**, a loss fixed in advance. For hidden tests it is 2 points |
 
 Undecided does not mean equal: some reruns would gain and some would lose.
-A yes, which the design calls **held**, is what a trim of the templates
+A yes, which the rules call **held**, is what a trim of the templates
 needs, or round 5's question whether skills deliver what hybrid does: proof
 that a change is not much worse.
 

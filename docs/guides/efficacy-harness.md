@@ -1,7 +1,8 @@
 # Efficacy benchmark
 
-Does a generated context file improve the result? The design, its rules and
-how a result is read live in `docs/design/efficacy-benchmark.md`. The
+Does a generated context file improve the result? The rules and how a
+result is read live in the [architecture](../architecture/08-crosscutting-concepts.md),
+and each round's registration under [`docs/rounds/`](../rounds/). The
 parts that run live in `tests/efficacy/`; the paths below are relative to it.
 
 | Path | What it is |
@@ -57,8 +58,8 @@ The suite then skips its browser flows, and the trial is flagged as partial.
 | `inline` | the templates' file, generated from `agents.md`, inline (round 5) |
 | `skills` | the emitted root file, with the task skills in `.claude/skills/` (round 5) |
 
-Rounds 1 to 4 ran `full`, `short` and `hand`, and a `hybrid` made through
-the interview; round 5 regenerated `hybrid` from `agents.md` (design §13).
+Rounds 1 to 4 ran `full`, `short` and `hand`, and a `hybrid` made through the interview;
+round 5 regenerated `hybrid` from `agents.md` ([round 5's registration](../rounds/round-5.md)).
 
 A trial is `<arm>-<block>`: `short-2` is arm `short`'s trial in block 2,
 paired with `none-2`. Every workspace, tarball, score, judging and `--from`
@@ -75,8 +76,9 @@ py tests/efficacy/generate_arm.py --arm inline --root <outside this repository> 
 py tests/efficacy/generate_arm.py --arm inline --root <outside this repository>
 ```
 
-**Each round-5 arm is made once, from one chain** (design §13.2): the
-templates at `harness.ROUND5_REF`, resolved for `harness.ROUND5_ROOTS`.
+**Each round-5 arm is made once, from one chain** ([round 5's registration,
+13.2](../rounds/round-5.md)): the templates at `harness.ROUND5_REF`, resolved for
+`harness.ROUND5_ROOTS`.
 
 | Arm | Made by |
 | --- | --- |
@@ -367,8 +369,9 @@ flowchart LR
     J1 & J2 & J3 --> E[Evidence check]
 ```
 
-**The judge reads each trial three times, and the report takes the mean.**
-One judging of a tree is not reproducible (the design's §5.6 and §11).
+**The judge reads each trial three times, and the report takes the mean.** One judging
+of a tree is not reproducible ([ch. 8.6.6](../architecture/08-crosscutting-concepts.md)
+and [ch. 10.6](../architecture/10-quality-requirements.md)).
 
 - `--repeat` tops a trial up to that count rather than adding to it.
 - A run cut short by the judge's usage limit resumes by being started
@@ -411,10 +414,10 @@ pinned applications, some damaged, some improved, each passing its
 application's tests. A primary row counts only if it falls on the damaged
 trees and rises on the improved ones. See `docs/guides/rubric-control.md`.
 
-The rounds' judge is `claude-opus-5-5` through the `claude` CLI, the
-default. The other vendor's judge, `gpt-6-astra`, runs with `--cli codex`
-in a root of its own and reads a sample of each round as a cross-check. Its
-scores are never averaged with the rounds' judge (the design's §5.6).
+The rounds' judge is `claude-opus-5-5` through the `claude` CLI, the default. The other
+vendor's judge, `gpt-6-astra`, runs with `--cli codex` in a root of its own and reads a
+sample of each round as a cross-check. Its scores are never averaged with the rounds'
+judge ([ch. 8.6.6](../architecture/08-crosscutting-concepts.md)).
 
 ```bash
 py tests/efficacy/archive.py --restore --from <the round's archive> --into <a fresh root>
@@ -437,11 +440,10 @@ one holding a judging by the rounds' own judge.
 
 ### Security
 
-`security.py` reads each scored trial with the eleven security and three
-data-protection probes of the design's §5.8. Each passes or fails, and the
-two pass rates are what a round reads. It seeds the application and signs in
-its administrator first; a trial that cannot sign in loses every probe that
-needs it.
+`security.py` reads each scored trial with the eleven security and three data-protection
+probes of [ch. 8.6.8](../architecture/08-crosscutting-concepts.md). Each passes or
+fails, and the two pass rates are what a round reads. It seeds the application and signs
+in its administrator first; a trial that cannot sign in loses every probe that needs it.
 
 Each trial is installed into a fresh environment under `security/` in the
 scoring area. The results go to `security-scores/`.
@@ -454,12 +456,13 @@ Seven of the probes were declared after round 1, so for rounds 1 and 2 the
 report prints their counts apart, with means and intervals and no verdict.
 A round whose readings carry the probes gets no such section: from round 3
 the two pass rates are primary dimensions, with the margins and thresholds
-of the design's §5.8.
+of [ch. 8.6.8](../architecture/08-crosscutting-concepts.md).
 
 ### Reporting
 
 The report aggregates the scores, judgings and security readings into
-`docs/audits/YYYY-MM-DD-efficacy.md`. The design's §6 says what it prints.
+`docs/audits/YYYY-MM-DD-efficacy.md`. The [ch.
+8.7](../architecture/08-crosscutting-concepts.md) says what it prints.
 
 **It computes the one escalation to K = 5**, so nobody decides it by eye.
 
@@ -476,7 +479,7 @@ revision. The report blanks its values, intervals and verdicts, and lists it
 under "Withdrawn measurements" with the reason. A run graded by any other
 revision keeps the metric.
 
-The self test runs the design's worked cases through the verdict rule,
+The self test runs the registered worked cases through the verdict rule,
 plants a row on each side of the escalation rule, and plants a run on each
 side of a withdrawal.
 
@@ -560,10 +563,10 @@ tool skips what is already there, unless given `--rescore`, `--rejudge` or
 ## What is not here
 
 **The hidden acceptance suite** lives in the private repository
-`braboj/tariff-hidden-suite`. The harness clones it at scoring time and never
-into a workspace. It holds a reference implementation that passes every
-check, and a mutation control that the suite catches in full. Its own README
-carries the live check count. The design's §11 records how it was validated.
+`braboj/tariff-hidden-suite`. The harness clones it at scoring time and never into a
+workspace. It holds a reference implementation that passes every check, and a mutation
+control that the suite catches in full. Its own README carries the live check count. The
+[ch. 10.6](../architecture/10-quality-requirements.md) records how it was validated.
 
 Why private: this repository is public, so a suite kept here would be
 reachable by any trial with web access.

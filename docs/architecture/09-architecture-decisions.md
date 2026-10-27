@@ -6,8 +6,8 @@ for meaning.
 
 An issue number refers to `solid-ai-dev/solid-ai-templates`, where the
 benchmark lived until the split. A dash marks a decision taken in this
-repository. A section sign, such as §9, points to a section of the
-[design](../design/efficacy-benchmark.md).
+repository. A chapter reference points to where that rule now lives. A row
+that mentions the design means the document these chapters replaced.
 
 ## 9.1 Decision log
 
@@ -19,9 +19,9 @@ repository. A section sign, such as §9, points to a section of the
 | 2026-09-12 | Generator `claude-sonnet-5` at effort `high`; judge `gpt-6-astra` through `codex exec`, effort set explicitly | What a typical adopter runs; a stronger model's ceiling would hide the effect; a different vendor judges | #1711 |
 | 2026-09-12 | The hidden suite lives in the private `braboj/tariff-hidden-suite` | This repository is public, so a suite here is one search away from a future trial | #1705 |
 | 2026-09-12 | Flask stays | Server-rendered Jinja with HTMX is its home ground | #1705 |
-| 2026-09-12 | The baseline runs against `v2.90.0`, before the v3.0 split moves any template | §9's comparison needs a baseline older than the move | #1705 |
-| 2026-09-12 | The hidden suite is written and validated before any trial | Written afterwards, it would be shaped by the first outputs (§11) | #1714, #1715 |
-| 2026-09-12 | The brief names the two extension axes | An adopter would; §3.4 states what that costs | #1713 |
+| 2026-09-12 | The baseline runs against `v2.90.0`, before the v3.0 split moves any template | [ch. 4.2](04-solution-strategy.md)'s comparison needs a baseline older than the move | #1705 |
+| 2026-09-12 | The hidden suite is written and validated before any trial | Written afterwards, it would be shaped by the first outputs ([ch. 10.6](10-quality-requirements.md)) | #1714, #1715 |
+| 2026-09-12 | The brief names the two extension axes | An adopter would; [ch. 5.5.4](05-building-block-view.md) states what that costs | #1713 |
 | 2026-09-12 | The change task adds a spend threshold and a capped rate, replacing a first draft of buy-one-get-one and a reduced rate | Both first-draft items were already expressible by configuration, so every arm would score zero churn | #1717 |
 | 2026-09-12 | Trials are bounded by `--max-budget-usd` and a timeout | The installed CLI (2.1.153) has no `--max-turns` | #1710 |
 | 2026-09-15 | HTML validity sets aside errors on `hx-*` attributes | The spec requires HTMX; otherwise the metric counts how much HTMX a trial uses | — |
@@ -31,12 +31,12 @@ repository. A section sign, such as §9, points to a section of the
 | 2026-09-17 | The report opens with a 1–10 score per contrast, replacing "no single headline number" | Asked for after reading round 1 | #1786 |
 | 2026-09-17 | The finding table opens the report | Asked for after reading the score table | #1789, #1791, #1796, #1798 |
 | 2026-09-17 | Round 1's change-task pass rate is withdrawn | Its grader built the new rule and rate through names the prompt never gave | #1772 |
-| 2026-09-17 | No human holdout | Scoring many implementations by hand cannot be sustained, and a person in the loop breaks §4.3 | #1774 |
+| 2026-09-17 | No human holdout | Scoring many implementations by hand cannot be sustained, and a person in the loop breaks [ch. 4.3](04-solution-strategy.md) | #1774 |
 | 2026-09-17 | Round 2 holds length fixed and adds the hybrid model | Owner's reading of round 1: the generated file is too long to add quality, and a short one can¹ | #1795 |
 | 2026-09-18 | The score table stays only for contrasts between two files | Beside the finding table it repeated itself | #1820 |
 | 2026-09-18 | A contrast crossing rounds gets no verdict | Round 2's `full` read Worse because `none` moved between rounds, not the file | #1826 |
 | 2026-09-19 | The primaries are anchored and checked by the control fixture | Unanchored, `design` and `maintainability` scored 3 on all 24 trials of rounds 1–2 | #1827, #1829, #1830 |
-| 2026-09-19 | Each tree is judged three times | Six judgings of one unchanged tree disagreed (§11) | #1830 |
+| 2026-09-19 | Each tree is judged three times | Six judgings of one unchanged tree disagreed ([ch. 10.6](10-quality-requirements.md)) | #1830 |
 | 2026-09-19 | A second judge, Claude, reads the control fixture only | A second vendor's reading of the same trees; never averaged with the rounds' judge | #1831 |
 | 2026-09-24 | Round 3 starts anew with all five arms and reuses no trial | The spec gained sign-in and customers, and the judge changed | #1767 |
 | 2026-09-24 | Eight contrasts, adding `short − full` | Does length matter | #1767 |
@@ -61,9 +61,9 @@ repository. A section sign, such as §9, points to a section of the
 | 2026-10-27 | Round 5 is judged by `gpt-6-astra` through `codex exec` at effort `high` alone, three times per trial, with no cross-check | The owner's OpenAI plan is raised to cover a round's judgings. With a judge from another vendor than every round-5 builder, the same-vendor concern the cross-check answered is gone, and a second judge could only withhold verdicts | — |
 | 2026-10-27 | Each round names its builder models in its registration, and none comes from the vendor of the rounds' judge | The models are a knob a round sets, not a fixed list. A builder from the judge's vendor would bring back the self-preference the cross-check once answered, which no longer runs | — |
 
-¹ This agrees with Anthropic's guidance on context engineering, which asks
-for the smallest set of high-signal tokens:
-[Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents).
+¹ This agrees with Anthropic's guidance on context engineering, which asks for the
+smallest set of high-signal tokens: [Effective context engineering for AI
+agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents).
 
 ## 9.2 Decisions about the templates
 

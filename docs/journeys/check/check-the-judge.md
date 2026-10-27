@@ -23,5 +23,5 @@ accepts their hashes. Minutes are estimated.
 | - | ------- | ------ |
 | 1 | The control guide says its self test runs in CI. This repository has no CI since the split from the templates | Open, #16 |
 | 2 | A mutation that silently did nothing would read as the judge holding. The builder refuses any mutation that did not land | Settled in the control guide |
-| 3 | The cross-check judge reads the same trees in a root of its own, never averaged with the rounds' judge | Settled in design §5.7 |
-| 4 | The security and data-protection rows cannot move on the first base, which has no sign-in. Their trees come from a second base, one uncounted calibration trial | Settled in design §5.7 |
+| 3 | The cross-check judge reads the same trees in a root of its own, never averaged with the rounds' judge | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |
+| 4 | The security and data-protection rows cannot move on the first base, which has no sign-in. Their trees come from a second base, one uncounted calibration trial | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |
