@@ -4,8 +4,15 @@ Measures whether a generated agent context file improves the code an agent
 writes, and how consistent the result is across runs and projects. One
 ruler for every templates source: upstream `solid-ai-templates` or a fork.
 
+New here? Start with the [primer](docs/primer.md): what the benchmark
+does and how to read its results, with no programming needed.
+
 | Path | What it is |
 |---|---|
+| `docs/primer.md` | The benchmark in plain words: the knobs, a round, a verdict |
+| `docs/architecture/` | How it is built, in arc42's twelve chapters |
+| `docs/journeys/` | A person walked through each task, with its findings |
+| `docs/diagrams/` | Every diagram, as draw.io source beside its PNG |
 | `docs/design/efficacy-benchmark.md` | The design: arms, metrics, verdict rules |
 | `docs/design/efficacy-assessment.md` | The assessment of the benchmark itself |
 | `docs/guides/efficacy-harness.md` | How to run the harness, scorer, judge and report; lists each part |
