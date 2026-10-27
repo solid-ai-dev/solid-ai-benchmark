@@ -48,7 +48,7 @@ What it is not:
 | 06 | Judge | Scores each trial blind, three times, on an anchored rubric, and checks every quoted line | §5.6, §5.7 |
 | 07 | Check the judge | Builds damaged and improved trees that a working judge must tell apart | §5.7 |
 | 08 | Report | Pairs trials, computes intervals and verdicts, owes or refuses the escalation, and prints the report | §1, §6 |
-| 09 | Archive | Copies a round's raw data to a private store, restores it and checks the figures match | §10 |
+| 09 | Archive | Copies a round's raw data to a private store, restores it and checks the figures match | Ch. 9 |
 | 10 | Reuse | Copies an earlier round's trials into a new run root, with their readings | §9 |
 
 ## 1.2 Quality goals
