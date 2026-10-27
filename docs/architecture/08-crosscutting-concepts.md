@@ -381,6 +381,91 @@ agent-written, like everything else the judge scores.
 The control fixture is read by both judges, each in a root of its own, and
 a primary counts only if it falls and rises under the rounds' judge.
 
+#### The control's trees
+
+The control lives in `tests/efficacy/control/`. Its builder prints one line per
+entity it claims to change, read back off the trees, and refuses when any
+mutation did not land: a mutation that silently did nothing would read as the
+judge holding when it was never exercised. Every built tree passes its
+application's tests.
+
+| Tree | What it is |
+|---|---|
+| `base-1` | the application as one trial generated it, unaltered |
+| `degraded-1` | the domain merged into one module, `from flask import current_app` used inside `price`, and the package's exceptions reparented off `TariffError` |
+| `obscured-1` | the pricing algorithm inlined into one long function with abbreviated names, and nothing else: the module boundaries, the error hierarchy and the dispatch are the base's |
+| `improved-1` | a rule contract and self-registering kind registry, dispatch on concrete type removed from pricing and persistence, the hardcoded kinds tuple replaced by the registry, a `__class__.__name__` ladder removed from a template, and two stray error classes folded into the package hierarchy |
+| `improved-2` | `improved-1`, and the store maps a rule's own terms onto its columns with a codec per column, so no module dispatches on a kind |
+| `improved-3` | `improved-2`, and each kind declares the fields it asks a form for, so the form-building code and the template are derived from the registry and no layer names a kind |
+
+The second application's trees:
+
+| Tree | What it is |
+|---|---|
+| `base-2` | the calibration trial's application, unaltered: one guard before every route but sign-in, a CSRF token on every form, a salted password hash, `next` followed only to a local path, a secret key generated into a file; erasure clears the customer's fields, and nothing is logged |
+| `insecure-1` | the secret key a literal, the password stored and compared as typed, the user lookup built from a string, and `next` followed wherever it points |
+| `secured-1` | the secret key read from the environment first, the session cookie marked `HttpOnly` and `SameSite`, three security headers on every answer, and the check on `next` a named function that also refuses a backslash |
+| `leaky-1` | the customer's name, email and address written to the log on creation and erasure, and erasure only raising the flag, leaving every field in the database |
+| `protected-1` | one tuple names the personal fields, which erasure clears and the export returns; one lookup answers None for an erased customer, so no view or template reads the flag for itself; SQLite overwrites what it deletes |
+
+The damage in `insecure-1` and `leaky-1` sits where the hidden suite does not
+look: it states that password storage, cookie flags and an off-site `next` are
+not graded, and it reads erasure through the pages.
+
+<!-- measured: 2026-09-25 -->
+Each tree's hidden-suite result is identical, test by test, to `base-2`'s,
+at suite revision `65bfb9a`: 293 of 534 pass. The
+calibration trial seeds only through its command, not when the application
+opens an empty database as the specification asks, so the suite's
+administrator does not exist and 240 checks behind sign-in fail on every tree
+alike. That comparison therefore covers the 293 that pass, the pricing and API
+checks among them.
+<!-- /measured -->
+
+#### Reading a control result
+
+A row is doing its job when it falls on the tree that damages what it
+measures and rises on the tree that improves it. Anything else is a finding
+about the instrument:
+
+- a row that does not fall cannot detect damage
+- a row that does not rise cannot detect improvement, so no arm can ever win
+  on it
+- a row that moves on neither is carrying no information at all
+
+Which tree tests which row matters. `degraded-1` damages structure and leaves
+every function body alone, so a flat `readability` there says nothing about
+the row — that is what `obscured-1` is for. Read each row against the tree
+built to move it, and treat the others as a check that it is not moving on
+noise.
+
+Re-run the control whenever the judge model, its effort, or the rubric prompt
+changes. Each of those silently invalidates every reading below.
+
+The measured results of every control run are in
+[ch. 10.7](10-quality-requirements.md).
+
+#### Why the bases are pinned archives
+
+`base.zip` and `base-2.zip` each hold one trial's output: the application its
+trees are built from. `base-2.zip` is `git archive` of the calibration trial's
+commit `f74c0cc`, which reproduces it byte for byte. Each is an input to this
+control, not an artifact of it: regenerating one would compare a later run
+against a different application, and every number above would silently stop
+meaning what it says.
+
+Two things hold them still. The builder refuses any archive whose sha256 is not
+the one recorded in `control.py`, so a changed base stops the control instead
+of quietly shifting what it measures. And every edit the builder makes is an
+exact-text swap that refuses when its target is absent, so a base that drifts
+stops the control rather than mutating less than it claims.
+
+It is an archive rather than a directory of files because this repository's
+own checks read committed Python as source to be brought into line — the
+comment-layout rule flags a trailing comment in the application's test suite.
+Reformatting the fixture would edit the thing the judge scores, which is the
+one change this control cannot survive.
+
 ### 8.6.8 Security and data protection
 
 **From round 3, security and data protection are primary dimensions.**

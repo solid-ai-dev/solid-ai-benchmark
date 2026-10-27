@@ -17,11 +17,20 @@ accepts their hashes. Minutes are estimated.
 | 5 | Reads each primary row: down on `degraded-1`, `obscured-1`, `insecure-1`, `leaky-1`, up on `improved-*`, `secured-1`, `protected-1` | 15 | A row that does not move cannot decide a round |
 | | Total | about 1.5 hours | |
 
+Commands:
+
+```bash
+py tests/efficacy/control/control.py --self-test
+py tests/efficacy/control/control.py --root C:/efficacy/control-<date>
+py -m pytest -q          # in each built tree; every tree passes
+py tests/efficacy/judge.py --root C:/efficacy/control-<date> --repeat 3
+```
+
 ## Findings
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | The control guide says its self test runs in CI. This repository has no CI since the split from the templates | Open, #16 |
-| 2 | A mutation that silently did nothing would read as the judge holding. The builder refuses any mutation that did not land | Settled in the control guide |
+| 1 | No CI runs the control's self test. This repository has had no CI since the split from the templates | Open, #6 |
+| 2 | A mutation that silently did nothing would read as the judge holding. The builder refuses any mutation that did not land | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |
 | 3 | The cross-check judge reads the same trees in a root of its own, never averaged with the rounds' judge | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |
 | 4 | The security and data-protection rows cannot move on the first base, which has no sign-in. Their trees come from a second base, one uncounted calibration trial | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |

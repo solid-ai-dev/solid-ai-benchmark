@@ -3,7 +3,7 @@
 How the building blocks of chapter 5 work together in the scenarios that
 shape the architecture: a build trial, a change task, scoring a trial, and
 judging, archiving and reporting a round. The commands are in the
-[harness guide](../guides/efficacy-harness.md).
+[journeys](../journeys/index.md).
 
 The diagrams are UML sequence diagrams. Each block has a lifeline. A solid
 line with a filled head is a call that waits for its answer, a dashed line
@@ -76,6 +76,38 @@ and the record says which bound ended the trial. The workspace is frozen as
 a tarball plus commit hash before scoring. The run record is rewritten after
 every trial, so a stopped run keeps every trial it finished.
 
+### 6.1.2 Running notes
+
+- **A dry run** prepares every workspace in `<root>-dry-run`, cleared first,
+  and records the command without calling a model. The root stays untouched.
+- **`--arms` is required,** for the change task as well, and the trials
+  interleave in that order, block by block.
+- **The templates' revision.** Each trial records the templates source's
+  remote, the round's ref and the commit it names. Vendoring reads that ref
+  with `git archive`, so the clone's HEAD may move during a run.
+- **Vendoring.** `hybrid` and `reference` get the templates' `templates/`
+  directory at the ref, under `docs/solid-ai-templates/templates/`, kept out
+  of the index through `.git/info/exclude`. For these arms the reach scan
+  counts the templates repository as reached only when a call names its
+  owner. The judge strips the copy with the context file.
+- **The credential file** in the scratch home is a hard link to the account's
+  live one, remade before every trial, because another client of the
+  account rotates the tokens and an earlier copy would be revoked.
+- **The temporary directory.** Git Bash maps `/tmp` to the machine's
+  temporary directory whatever `TEMP` says, so an entry that appeared there
+  during a trial and that a tool call names is moved into the trial's own.
+- **The file tools are fenced** by deny rules that hold under
+  `bypassPermissions`: a probe denied one file read the file beside it and
+  not the denied one, and read both without the rule.
+- **A blocked trial** stops the run unless it was started with
+  `--resume-after-block`. The harness then probes the generator every
+  `--probe-every` minutes and re-runs the trial in its place once it
+  answers. A second block of the same trial, or `--give-up-after` hours
+  without an answer, stops the run.
+- **`--from <trial>`** starts a new run at that trial in the interleaved
+  order. The run record is rewritten after every trial, so a stopped run
+  keeps what it finished.
+
 ## 6.2 A change task
 
 A copy of a frozen build gets a change it was not built for: a
@@ -127,6 +159,15 @@ the scoring area.
 | 10-12 | A probe the trial keeps from running is lost, not missing, so a trial cannot score higher for not signing in | [ch. 8.6.8](08-crosscutting-concepts.md) |
 | 13 | One JSON score per trial in `scores/` | [ch. 8.7.3](08-crosscutting-concepts.md) |
 
+### 6.3.1 Scoring notes
+
+- Scoring reads every run record in the root, so a run resumed with `--from`
+  scores whole. A trial offered by two records is refused rather than picked.
+- It reads the frozen tarball, never the directory the agent worked in.
+- A build scoring runs `security.py` on each trial it scored and on any trial
+  with no reading yet. Each trial's probe environment is under `security/` in
+  the scoring area. Run it alone only to read again, with `--reread`.
+
 ## 6.4 Judging, archiving and reporting
 
 Three blind readings per trial, then an archive that is verified by
@@ -141,6 +182,68 @@ restoring it, then the report.
 | 4 | Every quoted line is looked up in its bundle. A judge that never opened the code still returns plausible numbers | [ch. 8.6.7](08-crosscutting-concepts.md) |
 | 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | Ch. 9 |
 | 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, escalation, reach scan and lost trials are computed from both. Any difference fails | Ch. 9 |
-| 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and whether the one escalation to K = 5 is owed | [ch. 1.4](01-introduction-and-goals.md) |
+| 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and whether the one escalation to K = 5 is owed | [ch. 8.1](08-crosscutting-concepts.md) |
 | 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | Ch. 9 |
 | 10 | The finding table first, then the record behind every cell | [ch. 8.7.3](08-crosscutting-concepts.md) |
+
+### 6.4.1 Judging notes
+
+- `--repeat 3` tops a trial up to three readings rather than adding three.
+  A trial already holding them is left alone, and a run cut short by the
+  judge's usage limit resumes by being started again.
+- The bundle leaves out scoring's own output: tool caches, the complexity
+  report, coverage data and the install's egg-info, whose absolute paths
+  name the trial. The leak scan counts the trial's name between path
+  separators as a leak.
+- The judge's CLI is launched by its resolved path, gets its prompt on
+  standard input, and must report its version before any bundle is built.
+  A `.CMD` shim ends an argument at its first newline, so a prompt passed as
+  one would arrive cut short.
+- A CLI the model refused leaves its final message empty. A failed judging
+  records the tail of the CLI's output beside it.
+- Today `judge.py` defaults to `claude-opus-5-5`. Round 5 is registered to
+  use `gpt-6-astra` through `--cli codex`, and the default changes with #47.
+
+### 6.4.2 What an archive holds
+
+`archive.py --into` writes to a fresh directory in a clone of
+`braboj/tariff-runs`, and to its `-scoring` sibling there:
+
+- the run records, unchanged
+- each frozen tarball, without its virtual environments, found by
+  `pyvenv.cfg`, and without tool caches or bytecode, with the original's
+  hash recorded
+- the transcripts, and nothing else of the scratch home, which holds the
+  account's credentials
+- a marker per voided directory, whose name the report reads
+- the scores, change scores, security readings, judgings, the unblinding map
+  and the tool lock. The judge's bundles are rebuilt from the trees
+
+`ARCHIVE.json` beside them lists every file with its hash, the templates and
+hidden-suite revisions, and what was stripped from each tarball. A file over
+50 MB is refused, because a push would be. Commit and push the archive
+before the report's pull request.
+
+`--restore` makes a working root from an archive. The records' tarball and
+voided paths point at the restored copies, and each transcript gets back its
+original time, which the report reads to tell a re-run's sessions from those
+of the blocked attempt before it. Scoring and judging then run on it as on
+any root, which is how a later round re-reads an earlier one.
+
+### 6.4.3 The escalation in the report
+
+The report computes the one escalation to K = 5, so nobody decides it by eye.
+At K = 3 it names the rows that owe it and the `--k 5 --from none-4` run that
+settles it. At K = 5 it reads the first three blocks alone, prints their
+verdicts beside the K = 5 ones, and flags an escalation no row owed. The
+harness refuses `--k` above 5, and the report refuses a run past it.
+
+### 6.4.4 Reusing an earlier round's trials
+
+`reuse.py` copies what the report reads for each trial from an earlier root:
+its run record, tarball, transcripts, score, judgings and security reading,
+marked with where they came from. The earlier round's tool lock comes along,
+so both rounds are measured with one ruler. Nothing copied is measured again
+unless a tool is given `--rescore`, `--rejudge` or `--reread`. Round 2 reused
+round 1's `full` and `hand`. Later rounds reuse nothing, because the spec and
+the judge changed.

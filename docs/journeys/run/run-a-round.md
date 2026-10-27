@@ -4,10 +4,10 @@ The operator runs a round of five arms at K = 3 on the Windows
 workstation: build trials, change tasks, then scoring. Target: every trial
 built, changed and scored, with none lost to the setup.
 
-Assumptions: the arms' files exist, the prerequisites of the harness guide
-are installed, and 15 GB is free on the run root's drive. Times and costs
-per trial are measured in rounds 1 and 2 at `claude-sonnet-5`. Scoring
-times are estimated.
+Assumptions: the arms' files exist, the needs of [ch.
+7](../../architecture/07-deployment-view.md) are installed, and 15 GB is free on the run
+root's drive. Times and costs per trial are measured in rounds 1 and 2 at
+`claude-sonnet-5`. Scoring times are estimated.
 
 | # | Step | Minutes | Cost | Notes |
 | - | ---- | ------- | ---- | ----- |
@@ -19,6 +19,17 @@ times are estimated.
 | 6 | `score.py`, build then change, with the security probes | 150 | | Estimate: about 5 minutes per trial |
 | | Total | 9 to 14 hours | about $325 | Subscription quota, not invoice |
 
+Commands:
+
+```bash
+py tests/efficacy/harness.py --self-test
+py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 3 --model <exact id> --dry-run
+py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 3 --model <exact id>
+py tests/efficacy/harness.py --root <run root> --task change --arms none,inline,hybrid,reference,skills --resume-after-block
+py tests/efficacy/score.py --root <run root>
+py tests/efficacy/score.py --root <run root> --task change
+```
+
 The run record is rewritten after every trial, so the operator can leave a
 round running overnight. A trial that was blocked is handled in
 [Resume a blocked run](resume-a-blocked-run.md).
@@ -27,7 +38,7 @@ round running overnight. A trial that was blocked is handled in
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | The harness guide says to leave this checkout's HEAD alone because each trial records it as the templates revision. Since the templates moved out, the harness records the templates source's remote, ref and commit instead, so the advice predates the split | Open, #15 |
+| 1 | Each trial records the templates source's remote, ref and commit, and vendoring reads that ref with `git archive`, so the templates clone's HEAD may move during a run | Settled in [ch. 6.1.2](../../architecture/06-runtime-view.md) |
 | 2 | A stray process-stop command in a trial once stopped the harness itself. Such commands are now denied, and a trial whose harness died is voided by the next run | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-16 |
-| 3 | A full disk ends a trial with `No space left on device`, and that trial is not a result | Settled in the harness guide |
+| 3 | A full disk ends a trial with `No space left on device`, and that trial is not a result | Settled in [ch. 7.2](../../architecture/07-deployment-view.md) |
 | 4 | A trial that prints its result but does not exit is ended two minutes later | Settled in chapter 6.1 |

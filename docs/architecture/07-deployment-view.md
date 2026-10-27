@@ -10,17 +10,22 @@ with its protocol.
 
 ![The owner's Windows machine holds a Python 3.12 environment running the benchmark's scripts, the run root at C:/efficacy/round, the scoring area beside it, Java with the Playwright browser, the Claude Code CLI, the Codex CLI, gh, a clone of the runs archive and a clone of the templates source. The Claude Code CLI reaches Anthropic over HTTPS, the Codex CLI reaches OpenAI over HTTPS, and gh reaches the hidden suite on GitHub over HTTPS. The archive clone is pushed to tariff-runs, and the templates clone is a git working copy of the templates source. The scripts install packages from the Python package index over HTTPS](../diagrams/deployment.png)
 
-| Node or store | What it is | Needed for |
-| ------------- | ---------- | ---------- |
-| Python 3.12 | The interpreter the scripts run under, as `py -3.12` | Every scored trial's environment |
-| Claude Code CLI | `claude` on `PATH`, logged in | Every trial and every generation |
-| Codex CLI | `codex` on `PATH`, logged in | The rounds' judge, from round 5 |
-| `gh` | Logged in with access to the hidden suite | Scoring clones the suite |
-| Java and a Playwright browser | A Java runtime on `PATH`, and the browser scoring installs | HTML validity, the browser flows and the accessibility probe |
-| Run root | A directory outside this repository, such as `C:/efficacy/2026-10-27-round-5` | Every trial |
-| Scoring area | `<run root>-scoring`, beside the root | Every score, reading and judging |
-| Templates clone | A git working copy of `solid-ai-templates` or a fork | Generating arms, vendoring templates, writing reports |
-| Archive clone | A working copy of `braboj/tariff-runs` | Archiving a round before its report |
+| Node or store | What it is | Needed for | Without it |
+| ------------- | ---------- | ---------- | ---------- |
+| Python 3.12 | The interpreter the scripts run under, as `py -3.12` | Every scored trial's environment | Trials scored under another interpreter are measured with another ruler |
+| Claude Code CLI | `claude` on `PATH`, logged in | Every trial and every generation | The preflight refuses the run |
+| Codex CLI | `codex` on `PATH`, logged in | The rounds' judge, from round 5 | Each judging fails |
+| `gh` | Logged in with access to the hidden suite | Scoring clones the suite | Scoring refuses |
+| Java | A Java runtime on `PATH` | `html5validator`, the HTML validity metric | That metric is missing |
+| Playwright browser | The browser scoring installs | The suite's browser flows and the accessibility probe | Scoring installs one, and refuses the trial where it cannot |
+| Run root | A directory outside this repository, such as `C:/efficacy/2026-10-27-round-5` | Every trial | The harness refuses a root inside the repository |
+| Scoring area | `<run root>-scoring`, beside the root | Every score, reading and judging | |
+| Templates clone | A git working copy of `solid-ai-templates` or a fork, named by `--templates` | Generating arms, vendoring templates, writing reports | Every run refuses |
+| Archive clone | A working copy of `braboj/tariff-runs` | Archiving a round before its report | The report refuses to write under `docs/audits/` |
+
+A missing piece shows up as a refusal or a missing metric, not a crash.
+`score.py --no-web` skips both browser-side probes and installs no browser.
+The suite then skips its browser flows, and the trial is flagged as partial.
 
 ## 7.1 Where things must not be
 

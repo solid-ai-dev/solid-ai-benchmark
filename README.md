@@ -15,8 +15,6 @@ does and how to read its results, with no programming needed.
 | `docs/diagrams/` | Every diagram, as draw.io source beside its PNG |
 | `docs/rounds/` | Each round's registration, fixed before its first trial |
 | [The assessment](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy-assessment.md) | What rounds 1 to 3 showed, beside the reports in `solid-ai-templates` |
-| `docs/guides/efficacy-harness.md` | How to run the harness, scorer, judge and report; lists each part |
-| `docs/guides/rubric-control.md` | The rubric control that checks the judge |
 | `tests/efficacy/` | The harness, scorer, judge and report |
 | `tests/lib.py` | Shared helpers the harness imports |
 

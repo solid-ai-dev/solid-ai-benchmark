@@ -16,10 +16,16 @@ Assumptions: the limit lifts within a few hours. Minutes are estimated.
 | 6 | Scoring reads every run record in the root, so the resumed run scores whole | | A trial offered by two records is refused, not picked |
 | | Total | about 10 minutes of attention | |
 
+Commands:
+
+```bash
+py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --from reference-2 --resume-after-block
+```
+
 ## Findings
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | A run started without `--resume-after-block` stops at the first block and waits for the operator | Settled in the harness guide |
+| 1 | A run started without `--resume-after-block` stops at the first block and waits for the operator | Settled in [ch. 6.1.2](../../architecture/06-runtime-view.md) |
 | 2 | A reached trial is voided and re-run at once, with no wait. A second reach loses it, and the run goes on | Settled in chapter 6.1 |
-| 3 | The report reads each transcript's time to tell a re-run's session from the blocked attempt before it | Settled in the harness guide |
+| 3 | The report reads each transcript's time to tell a re-run's session from the blocked attempt before it | Settled in [ch. 6.4.2](../../architecture/06-runtime-view.md) |

@@ -18,6 +18,14 @@ model calls are estimated.
 | 5 | Commits the files and their records | 5 | An existing file is never overwritten without `--replace` |
 | | Total | about 40 minutes | |
 
+Commands:
+
+```bash
+py tests/efficacy/generate_arm.py --self-test
+py tests/efficacy/generate_arm.py --arm inline --root <outside this repository> --dry-run
+py tests/efficacy/generate_arm.py --arm inline --root <outside this repository>
+```
+
 ## Findings
 
 | # | Finding | Status |
