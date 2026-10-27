@@ -42,10 +42,12 @@ below. "No improvement shown" does not mean "no worse".
   breaking the app is not an improvement.
 - A trim is free only if every metric held.
 - The report shows every metric. Its summary score decides nothing.
+- Round 5 holds adherence within 8 pp, one checklist item of 13, as [its
+  registration](../rounds/round-5.md) states.
 
 This is a non-inferiority test, as used in drug trials to show a new
-treatment is no worse than the standard one by more than a set margin. With
-K = 3 it describes the result; it does not prove it.
+treatment is no worse than the standard one by more than a set margin. Below
+K = 6 it describes the result; it does not prove it.
 
 ### 8.1.3 Few trials, and the one escalation
 
@@ -60,7 +62,7 @@ K = 3 it describes the result; it does not prove it.
 - It is owed where a primary dimension's interval contains zero while its
   mean difference exceeds the smallest change that matters (section 8.1.2).
 - Any contrast can trigger it, and the effect counts in either direction.
-- One further block runs. The report prints the K = 3 and K = 5 results side
+- Two further blocks run. The report prints the K = 3 and K = 5 results side
   by side.
 - K never exceeds 5. A second inconclusive result is reported as
   inconclusive.
@@ -68,6 +70,14 @@ K = 3 it describes the result; it does not prove it.
 
 Why: sampling until an interval clears zero is the failure this bound
 prevents.
+
+**Or a round registers a larger K, with no escalation.**
+
+- K is sized before the first trial, from the per-trial noise of earlier
+  rounds.
+- No block is added once the results are seen. A run short of K is part-run,
+  and none of its verdicts is the round's.
+- Round 5 registers K = 15 ([its registration](../rounds/round-5.md), 13.5).
 
 ### 8.1.4 Failed and lost trials
 

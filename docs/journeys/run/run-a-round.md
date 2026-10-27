@@ -1,20 +1,20 @@
 # Run a round
 
-The operator runs a round of five arms at K = 3 on the Windows workstation:
-the build trials, the change tasks, then scoring.
+The operator runs round 5's block A on the Windows workstation: five arms at
+K = 15, the build task alone, then scoring.
 
 Target:
 
-- Every trial built, changed and scored, with none lost to the setup
+- Every trial built and scored, with none lost to the setup
   ([ch. 6.1](../../architecture/06-runtime-view.md))
 
 Assumptions:
 
 - The arms' files exist
-- The needs of [ch. 7](../../architecture/07-deployment-view.md) are installed, with 15
+- The needs of [ch. 7](../../architecture/07-deployment-view.md) are installed, with 40
   GB free on the run root's drive
-- Times and costs per trial are measured in rounds 1 and 2 at
-  `claude-sonnet-5`. Scoring times are estimates
+- Times and costs per trial are round 3's, measured at `claude-sonnet-5`.
+  Scoring times are estimates
 - The cost is subscription quota, not invoice
 
 ## Steps
@@ -24,24 +24,23 @@ Assumptions:
 | 1 | Operator | Checks `claude`, `gh`, Python 3.12, Java and free disk | 10 min | A missing piece shows as a refusal or a missing metric |
 | 2 | Operator | Runs the harness's self test | 5 min | Plants each thing the harness removes or catches |
 | 3 | Operator | Dry-runs the whole round | 5 min | Prepares every workspace in `<root>-dry-run`, calls no model |
-| 4 | Harness | Runs the 15 build trials in interleaved order | 4 to 7 hours | Measured: 16 to 28 min and $8.7 to $16.7 per trial, about $195 |
-| 5 | Harness | Runs the 15 change tasks in the same order | 2 to 4 hours | Measured in round 1: $5 to $17 per task, about $130 |
-| 6 | Operator | Scores build then change, with the security probes | about 2.5 hours | About 5 min per trial |
-| | | Total | 9 to 14 hours | about $325 |
+| 4 | Harness | Runs the 75 build trials, each block starting one arm later | about 21 hours | Measured in round 3: 10 to 29 min and $1.4 to $3.5 per trial, about $185 |
+| 5 | Operator | Scores every trial, with the security probes | about 6 hours | About 5 min per trial |
+| | | Total | about 27 hours, over several nights | about $185 |
 
 The run record is rewritten after every trial, so the operator can leave a
 round running overnight. A trial that was blocked is handled in
-[Resume a blocked run](resume-a-blocked-run.md).
+[Resume a blocked run](resume-a-blocked-run.md). A round with the change task
+runs it after the build trials with `--task change`, and scores it with
+`score.py --task change`.
 
 ## Commands
 
 ```bash
-py tests/efficacy/harness.py --self-test
-py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 3 --model <exact id> --dry-run
-py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 3 --model <exact id>
-py tests/efficacy/harness.py --root <run root> --task change --arms none,inline,hybrid,reference,skills --resume-after-block
+py tests/efficacy/harness.py --self-test --templates <the templates clone>
+py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 15 --model claude-sonnet-5 --dry-run
+py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 15 --model claude-sonnet-5
 py tests/efficacy/score.py --root <run root>
-py tests/efficacy/score.py --root <run root> --task change
 ```
 
 ## Findings

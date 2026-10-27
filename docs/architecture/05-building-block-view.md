@@ -88,9 +88,10 @@ The report prints each file's measured line count.
 
 ### 5.5.2 Trial names
 
-A trial is `<arm>-<block>`: `short-2` is arm `short`'s trial in block 2,
-paired with `none-2`. Blocks run in order and arms interleave within each:
-`none-1`, `full-1`, `short-1`, `hybrid-1`, `hand-1`, `none-2`, and so on.
+A trial is `<arm>-<block>`: `skills-2` is arm `skills`'s trial in block 2,
+paired with `none-2`. Blocks run in order and arms interleave within each,
+each block starting one arm later than the last: `none-1`, `inline-1`,
+`hybrid-1`, `reference-1`, `skills-1`, then `inline-2`, `hybrid-2`, and so on.
 
 Round 1 named its arms by letter. Reading its report, A is `none`, B is
 `full` and C is `hand`.

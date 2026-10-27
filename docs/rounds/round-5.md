@@ -1,8 +1,9 @@
 # Round 5 registration
 
 Registered in the design on 2026-10-26, before any round-5 trial ran, and
-amended once on 2026-10-27 to change the judge, still before any trial. Moved
-here unchanged but for its links.
+amended twice on 2026-10-27, still before any trial: once to change the judge,
+and once to size the round from the noise of rounds 3 and 4 (#38). Moved here
+unchanged but for its links.
 
 ## 13. Round 5: how the rules are delivered
 
@@ -15,22 +16,31 @@ whether ADR-052 is reopened (solid-ai-dev/solid-ai-templates#2379).
 Which way of delivering the templates gives an agent the best code, and the
 same code from one trial to the next?
 
-One factor varies inside a block, the arm. Each block changes one setting
-away from block A, so a result that holds in all three does not hang on the
-specification or the model.
+One factor varies inside a block, the arm. Round 5 runs one setting, block A,
+fifteen times:
 
 | Block | Specification | Model | Trials |
 | --- | --- | --- | --- |
-| A, main | `SPEC.md` | `claude-sonnet-5`, effort `high` | 5 arms × K = 3 |
-| B, thin | `SPEC-thin.md` | `claude-sonnet-5`, effort `high` | 5 arms × K = 3 |
-| C, weaker | `SPEC.md` | `claude-haiku-4-5-20251001`, effort `high` | 5 arms × K = 3 |
+| A, main | `SPEC.md` | `claude-sonnet-5`, effort `high` | 5 arms × K = 15 |
 
-Held in every block: the build task alone; the $100 cap and two-hour bound per trial of
+Blocks B (`SPEC-thin.md`) and C (`claude-haiku-4-5-20251001`) are deferred to a
+later round, sized from block A's measured noise. On the noise round 4 measured
+in those settings, they read a chance "worse" in 57 to 69 % of rounds at K = 3,
+and no K up to 20 lets them confirm block A.
+
+Held in every trial: the build task alone; the $100 cap and two-hour bound per trial of
 [ch. 6.1](../architecture/06-runtime-view.md); the scoring of [ch.
 8.6](../architecture/08-crosscutting-concepts.md); `gpt-6-astra` through `codex exec` at
 effort `high` as the only judge, three times per trial, with no cross-check. The budget
 is not a factor: every block records each trial's cost, which shows what a shorter file
 saves without a cap that ends trials early.
+
+The order and the count are fixed:
+
+- Block 1 runs `none, inline, hybrid, reference, skills`, and each block after it
+  starts one arm later. Over 15 blocks each arm runs three times in each place, so a
+  drift within a block lands on no arm in particular.
+- K is 15 and allows no escalation. No verdict is read before block 15 is in.
 
 ### 13.2 The arms
 
@@ -67,27 +77,34 @@ line and word count, and the report prints them.
 
 ### 13.3 Hypotheses
 
+A row is held against [ch. 8.1.2](../architecture/08-crosscutting-concepts.md)'s
+margins, but for adherence, which is held within 8 pp: one checklist item of 13. A
+pair's adherence differs by about one item from build to build, so no affordable K
+rules out a loss of less than one.
+
 **H1, ADR-058.** A root file with task skills delivers what hybrid delivers.
 
 | | |
 | --- | --- |
 | Contrast | `skills` minus `hybrid`, paired within the block |
 | Primary rows | adherence, the security and data-protection probe pass rates, and the judge's security and data-protection rows |
-| Supported | in block A, every primary row is held ([ch. 8.1.2](../architecture/08-crosscutting-concepts.md)'s margins) or better |
-| Refuted | in block A, any primary row is worse |
-| Otherwise | inconclusive; [ch. 8.1.3](../architecture/08-crosscutting-concepts.md)'s escalation applies |
+| Supported | every primary row is held or better |
+| Refuted | any primary row is worse |
+| Otherwise | inconclusive; round 5 allows no escalation |
 
 **H2, consistency.** Built by a tool, the root file makes an arm's trials
 agree with each other more than a generated hybrid file does.
 
 | | |
 | --- | --- |
-| Measure | conventions agreement, as [round 4's registration, 12.1](round-4.md) defines it, per arm and block |
-| Supported | `skills` agrees at least as much as `hybrid` in every block run |
-| Refuted | `skills` agrees less than `hybrid` by 0.15 or more in any block |
+| Measure | conventions agreement per arm: for each pair of the arm's trials, the share of the adherence items both measured on which the two agree, meaned over the pairs |
+| Supported | `skills` agrees at least as much as `hybrid` |
+| Refuted | `skills` agrees less than `hybrid` by 0.15 or more |
 
-With one agreement value per arm and block there is no interval; the result
-is descriptive.
+A mean over pairs keeps its expected value as trials are added. Round 4's
+measure, the share of items on which every trial agrees, falls with each trial,
+so its bar would mean something else at K = 15. With one agreement value per arm
+there is no interval; the result is descriptive.
 
 **H3, ADR-052.** A file that only names the templates delivers less than
 hybrid.
@@ -96,11 +113,8 @@ hybrid.
 | --- | --- |
 | Contrast | `reference` minus `hybrid`, paired within the block |
 | Primary rows | as H1 |
-| Supported | in block A, any primary row is worse |
-| Refuted | in block A, every primary row is held or better; ADR-052 is then reopened |
-
-**Blocks B and C** apply H1 to H3 again. They decide nothing on their own;
-the report states, per hypothesis, whether block A's verdict holds in each.
+| Supported | any primary row is worse |
+| Refuted | every primary row is held or better; ADR-052 is then reopened |
 
 **Secondary, no verdict:** every metric of [ch.
 8.6](../architecture/08-crosscutting-concepts.md) for every arm against `none`; `skills`
@@ -118,12 +132,41 @@ The harness gains, each with a self-test, before block A runs:
 - the skills placed in the workspace where Claude Code loads them, out of
   the workspace's index like the vendored templates
 - the contrasts `skills` − `hybrid` and `reference` − `hybrid`, and the
-  agreement measures per block, in the report
+  agreement measures, in the report
 - `judge.py` calling `gpt-6-astra` through `codex exec` at effort `high` by
   default
 - the control fixture read by that judge, three times per tree, with every primary
   falling on its damaged trees and rising on its improved ones ([ch.
   8.6.7](../architecture/08-crosscutting-concepts.md)), and the judgings it took
   recorded against the plan's weekly limit
+- K up to 15 for a run holding a round-5 arm, each block starting one arm later
+- `judge.py` reading each tree three times by default, and leaving unjudged a
+  build that did not install, whose judge rows the report records as missing
+- the report holding adherence within 8 pp, assessing no escalation, and reading
+  H2 as the mean over pairs
+- the report written into the templates source's `docs/audits/`, and refused
+  there until the round is archived
+
+### 13.5 How K was sized
+
+Sized on 2026-10-27 (#38), before any round-5 trial, from the per-trial values of
+round 3, block A's setting. Per pair, adherence differed by 8 pp and the judge's
+security row by 0.41 points; the probes and the judge's data-protection row sat at
+the top score. The report's own rules ran 600 times per cell on that noise, so
+each share is good to about two points:
+
+| K | Skills equal hybrid: H1 supported | No real difference, yet a row reads worse | A loss the size of the margin passes as held | A real loss is caught |
+| --- | --- | --- | --- | --- |
+| 3 | 29 % | 36 % | 46 % | 77 % |
+| 5 | 26 % | 21 % | 30 % | 71 % |
+| 10 | 55 % | 14 % | 7 % | 92 % |
+| 15 | 73 % | 12 % | 4 % | 98 % |
+| 20 | 87 % | 8 % | 5 % | 100 % |
+
+At K = 15 a margin-sized loss passing as held, and a real loss going unseen, stop
+getting rarer. Fifteen is also a multiple of five, so the rotated order puts every
+arm in every place equally often. In round 4, most of the judge's noise came
+from build to build rather than from re-reading one app, so more blocks, not more
+readings, buy the precision.
 
 Nothing in this section changes once a round-5 trial has run.

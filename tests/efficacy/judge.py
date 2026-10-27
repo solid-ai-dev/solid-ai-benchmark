@@ -77,6 +77,10 @@ DEFAULT_CLI = "codex"
 # inherited from this machine's configuration.
 JUDGE_EFFORT = "high"
 
+# How many times each tree is read. One reading is not reproducible, so the
+# report means several, and a round fixes their number before it starts.
+READINGS = 3
+
 # The five SOLID dimensions plus the rest of the rubric. `design` is asked for
 # directly because the report leads with it: an aggregate this module invented
 # from the five would be a score the judge never gave.
@@ -689,6 +693,22 @@ def trees(root):
     return found
 
 
+def failed_builds(root):
+    """The trials whose build did not install, by canonical trial name.
+
+    A trial that produced no installable workspace has its quality metrics
+    recorded as missing, never scored, so its tree is not judged.
+    """
+    failed = set()
+    pattern = os.path.join(score.scoring_area(root), "scores", "*.json")
+    for file in sorted(glob.glob(pattern)):
+        with io.open(file, encoding="utf-8") as handle:
+            record = json.load(handle)
+        if (record.get("install") or {}).get("value") is False:
+            failed.add(canonical(record["name"]))
+    return failed
+
+
 def judged(judging):
     """Every trial's completed judgings under `judging`, by canonical name.
 
@@ -759,6 +779,14 @@ def main(argv):
     if missing:
         print("no tree for %s" % ", ".join(missing))
         return 2
+
+    # The report reads no judge row of a build that did not install, so
+    # judging one would spend readings on a tree nothing counts.
+    failed = failed_builds(options.root)
+    for name in wanted:
+        if name in failed:
+            print("%s  not judged: its build did not install" % name)
+    wanted = [name for name in wanted if name not in failed]
 
     # A second run against the area takes the same next label as a live one,
     # and clears the bundle that run's judge is reading.
@@ -1259,7 +1287,24 @@ def default_checks(scratch):
         ("the codex command carries the model and the effort",
          argv[argv.index("--model") + 1:][:1] == ["gpt-6-astra"]
          and 'model_reasoning_effort="high"' in argv),
+        ("each tree is read three times by default", options.repeat == 3),
     ]
+
+
+def failed_checks(scratch):
+    """A build that did not install is left unjudged; one whose install
+    went unmeasured, or passed, is judged."""
+    root = os.path.join(scratch, "failed")
+    scores = os.path.join(score.scoring_area(root), "scores")
+    os.makedirs(scores)
+    for name, value in (("none-1", False), ("none-2", True),
+                        ("none-3", None)):
+        with io.open(os.path.join(scores, "%s.json" % name), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"name": name, "install": {"value": value}}, handle)
+    found = failed_builds(root)
+    return [("only a build that did not install goes unjudged",
+             found == {"none-1"})]
 
 
 def claim_checks(scratch):
@@ -1291,6 +1336,7 @@ def self_test():
     checks.extend(backend_checks(scratch))
     checks.extend(claim_checks(scratch))
     checks.extend(default_checks(scratch))
+    checks.extend(failed_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     shutil.rmtree(scratch, ignore_errors=True)
@@ -1317,10 +1363,11 @@ def parse_args(argv):
                              "rounds' judge; `claude` re-reads an earlier "
                              "round, and its readings are never meaned with "
                              "the other's.")
-    parser.add_argument("--repeat", type=int, default=1,
-                        help="judgings per trial; the report means them. A "
-                             "trial already holding this many is left alone, "
-                             "so an interrupted run resumes.")
+    parser.add_argument("--repeat", type=int, default=READINGS,
+                        help="judgings per trial (default %d); the report "
+                             "means them. A trial already holding this many "
+                             "is left alone, so an interrupted run resumes."
+                             % READINGS)
     parser.add_argument("--rejudge", action="store_true",
                         help="judge a trial already judged; by default such "
                              "a trial is skipped")

@@ -6,11 +6,12 @@ read against that metric's declared direction. Nothing here decides by eye,
 and nothing here decides a direction either: both the direction and the
 verdict rule were fixed before any trial ran.
 
-Two properties of K = 3 are carried into the output rather than hidden in it.
-Every interval is labelled descriptive, because no arrangement of three
-paired differences reaches conventional significance. And a metric whose
-bootstrap distribution is degenerate — three identical differences — reports
-the fallback it used instead of an interval it cannot compute.
+Two properties of a small K are carried into the output rather than hidden
+in it. Below six blocks every interval is labelled descriptive, because no
+arrangement of so few paired differences reaches conventional significance.
+And a metric whose bootstrap distribution is degenerate — every difference
+identical — reports the fallback it used instead of an interval it cannot
+compute.
 """
 
 import argparse
@@ -34,13 +35,24 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
-                     SCORABLE, VOIDING, canonical, reach,
-                     read_transcripts,
-                     scoring_area, split_name, trial_name)
+                     ROUND5_ARMS, ROUND5_K, SCORABLE, TEMPLATES_ENV, VOIDING,
+                     TrialError, canonical, k_ceiling, order, reach,
+                     read_transcripts, scoring_area, split_name,
+                     templates_root, trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-AUDITS = os.path.join(lib.ROOT, "docs", "audits")
+
+# A round's report is its record, kept beside the templates it measured:
+# under the templates source's docs/audits/. A report written to any such
+# directory needs the round archived as it stands; anywhere else it is a
+# draft.
+AUDITS = ("docs", "audits")
+
+# The fewest paired differences at which all of them pointing one way is
+# unlikely by luck at 5 %: 2 of 64 sign patterns. Below it, no interval is
+# more than a description.
+FEWEST_DECIDING = 6
 
 # Metrics withdrawn after grading, each for the grader revision found to
 # measure something other than the metric. Keyed by revision rather than by
@@ -106,6 +118,11 @@ MARGINS = {
 }
 MARGINS.update((key, ("10 % relative", 0.10, RELATIVE))
                for key in STATIC_PER_KLOC)
+
+# Round 5 holds adherence to one checklist item of thirteen rather than 5 pp.
+# A pair's adherence differs by about one item from build to build, so no K
+# a round can afford rules out a loss of less than one.
+ROUND5_MARGINS = dict(MARGINS, adherence=("8 pp", 0.08, ABSOLUTE))
 
 # The practical thresholds that can owe the one
 # escalation to K = 5. Only a primary dimension triggers it, so no other
@@ -177,7 +194,14 @@ def structure_count(trial, key):
 
 
 def readings(trial):
-    """Every completed judging of a trial, or its single judging."""
+    """Every completed judging of a trial, or its single judging; none for a
+    build that did not install."""
+
+    # A trial that produced no installable workspace has its quality metrics
+    # recorded as missing, never scored: a judge reading an empty tree gives
+    # it the lowest anchor on every row, which is a score of nothing.
+    if path(trial, "scores", "install", "value") is False:
+        return []
     several = trial.get("judgings")
     if several:
         return several
@@ -478,16 +502,17 @@ def verdict(interval, direction):
     return "better" if improving else "worse"
 
 
-def non_inferior(key, interval, direction, baseline_mean=None):
+def non_inferior(key, interval, direction, baseline_mean=None, margins=None):
     """Whether a metric can be claimed preserved, not merely not-shown-worse.
 
     An interval containing zero is absence of evidence. The claim that nothing
     got worse needs the whole degradation side of the interval inside the
-    margin fixed before the run.
+    margin fixed before the run: `margins`, by default the shared ones.
     """
-    if key not in MARGINS:
+    margins = MARGINS if margins is None else margins
+    if key not in margins:
         return None
-    label, margin, kind = MARGINS[key]
+    label, margin, kind = margins[key]
     low, high = interval.get("low"), interval.get("high")
     if low is None or high is None:
         return None
@@ -570,6 +595,40 @@ def ordered(names):
         else len(position), index_of(name)))
 
 
+def is_round5(trials):
+    """Whether the run holds a round-5 arm, so that round's registration,
+    its K and its margins, governs it."""
+    return any(arm_of(name) in ROUND5_ARMS for name in trials)
+
+
+def margins_of(trials):
+    """The margins a run's contrasts are held against."""
+    return ROUND5_MARGINS if is_round5(trials) else MARGINS
+
+
+def block_start(root, trials, block):
+    """The first trial of `block` in the order the harness runs it.
+
+    The harness starts each block one arm later than the last, from the
+    order `--arms` named. The run's records show that order in its first
+    block; a run without records is read in the arms' declared order.
+    """
+    named = []
+    for record in run_records(root) if root else []:
+        if record.get("task", "build") != "build":
+            continue
+        try:
+            arm, index = split_name(trial_of(record))
+        except (TrialError, KeyError, TypeError, ValueError):
+            continue
+        if index == 1 and arm not in named:
+            named.append(arm)
+    present = {arm_of(name) for name in trials}
+    arms = ([arm for arm in named if arm in present]
+            or [arm for arm in ARMS if arm in present])
+    return trial_name(*order(arms, block)[len(arms) * (block - 1)])
+
+
 def active_contrasts(trials):
     """The declared contrasts whose both arms the run holds, in the declared
     order."""
@@ -622,8 +681,9 @@ def collect(trials, metrics=METRICS):
     return table
 
 
-def contrasts(table, seed, crossed=()):
-    """The paired differences, their intervals and their verdicts.
+def contrasts(table, seed, crossed=(), margins=None):
+    """The paired differences, their intervals and their verdicts, with
+    each held against `margins`, by default the shared ones.
 
     A contrast in `crossed` pairs an arm judged in an earlier round with one
     judged in this one, so its difference carries the day as well as the arm.
@@ -661,7 +721,8 @@ def contrasts(table, seed, crossed=()):
                             else verdict(interval, entry["direction"])),
                 "non_inferior": None if across else non_inferior(
                     key, interval, entry["direction"],
-                    statistics.fmean(observed) if observed else None),
+                    statistics.fmean(observed) if observed else None,
+                    margins),
             }
         results[key] = per_contrast
     return results
@@ -857,21 +918,25 @@ def escalation_triggers(results):
     return triggers
 
 
-def assess_escalation(trials, results, seed, withdrawn=None):
+def assess_escalation(trials, results, seed, withdrawn=None, root=None):
     """Whether the escalation to K = 5 is owed, and whether it was run.
 
     A run past K = 3 is judged on its first three blocks alone, because that is
     the vector which had to owe the escalation. Their contrasts are kept, so
     the report prints the K = 3 vector beside the K = 5 one, with `withdrawn`
-    blanked from them as it is from `results`.
+    blanked from them as it is from `results`. A round-5 run registers its
+    own K and no escalation; `root` is read for the order its run took.
     """
     k = max((index_of(name) for name in trials), default=0)
+    if is_round5(trials):
+        return {"k": k, "state": "registered", "owed": None, "triggers": []}
     if k < K_PRIMARY:
         return {"k": k, "state": "not assessed", "owed": None, "triggers": []}
     if k == K_PRIMARY:
         triggers = escalation_triggers(results)
         return {"k": k, "state": "assessed", "owed": bool(triggers),
-                "triggers": triggers}
+                "triggers": triggers,
+                "from": block_start(root, trials, K_PRIMARY + 1)}
     first = {name: trial for name, trial in trials.items()
              if index_of(name) <= K_PRIMARY}
     earlier = contrasts(collect(first), seed)
@@ -1095,10 +1160,10 @@ def unrecorded_voids(root, sequence, recorded):
 
 
 def write_report(root, trials, table, results, seed, escalation,
-                 out_dir=AUDITS, posthoc=None, withdrawn=None, cross=None):
-    """The dated round report, under `docs/audits/`.
+                 out_dir, posthoc=None, withdrawn=None, cross=None):
+    """The dated round report, written to `out_dir`.
 
-    The directory is an argument so a shakedown of the writer can render into
+    The directory has no default so a shakedown of the writer renders into
     a scratch directory. A fabricated run must not be able to leave a file
     among the real audits, where its date alone would read as a result.
     `posthoc` is the table and contrasts of the checks declared after the
@@ -1122,10 +1187,14 @@ def write_report(root, trials, table, results, seed, escalation,
                  "fixed before any trial ran, in the "
                  "solid-ai-benchmark repository.")
     lines.append("")
-    lines.append("**Every interval below is descriptive.** At K = %d no "
-                 "arrangement of paired differences reaches conventional "
-                 "significance, which the registration states and this report "
-                 "repeats rather than footnotes." % k)
+    if k < FEWEST_DECIDING:
+        lines.append("**Every interval below is descriptive.** At K = %d no "
+                     "arrangement of paired differences reaches conventional "
+                     "significance, which the registration states and this "
+                     "report repeats rather than footnotes." % k)
+    else:
+        lines.append("Each interval below is a 95 %% bootstrap interval over "
+                     "the K = %d paired differences of its contrast." % k)
     lines.append("")
 
     lost = lost_trials(root)
@@ -1233,7 +1302,7 @@ def write_report(root, trials, table, results, seed, escalation,
         lines.extend(posthoc_section(*posthoc, active=active))
         lines.append("")
 
-    if any(arm_of(name) in ROUND5_ARMS for name in names):
+    if is_round5(trials):
         lines.extend(round5_section(trials, table, results))
         lines.append("")
 
@@ -1296,8 +1365,12 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.append("|---|---|---|")
     for name in names:
         judging = trials[name]["judge"]
-        if not judging:
-            lines.append("| %s | — | not judged |" % name)
+        if not readings(trials[name]):
+            failed = path(trials[name], "scores", "install",
+                          "value") is False
+            lines.append("| %s | — | %s |" % (
+                name, "its build did not install" if failed
+                else "not judged"))
             continue
         share = path(judging, "evidence", "share")
         lines.append("| %s | %s | %s |"
@@ -1446,12 +1519,10 @@ NOT_MEASURED = "not measured"
 SUITE_DIP = 0.05
 
 
-# Round 5's arms and hypotheses, as registered: the primary rows H1
-# and H3 read, and the contrast each reads them on. H1 is supported when
-# every row is held or better; H3 when any row is worse, and refuted, which
-# reopens the decision that hybrid is the delivery floor, when every row is
-# held or better.
-ROUND5_ARMS = ("reference", "inline", "skills")
+# Round 5's hypotheses, as registered: the primary rows H1 and H3 read, and
+# the contrast each reads them on. H1 is supported when every row is held or
+# better; H3 when any row is worse, and refuted, which reopens the decision
+# that hybrid is the delivery floor, when every row is held or better.
 ROUND5_ROWS = ("adherence",) + PROBE_RATES + ("judge_security",
                                               "judge_data_protection")
 ROUND5_HYPOTHESES = (
@@ -1461,21 +1532,26 @@ ROUND5_HYPOTHESES = (
 
 
 def conventions_agreement(trials, arm):
-    """The conventions agreement for one arm, and the items it
-    compares: of the adherence items measured in every one of the arm's
-    trials, the share on which all of them give the same verdict. None with
-    fewer than two trials or no item measured in all of them."""
+    """The conventions agreement for one arm, and the pairs it means: for
+    each pair of the arm's trials, the share of the adherence items both
+    measured on which the two give the same verdict. None with fewer than
+    two trials or no pair measuring an item in common."""
+
+    # A mean over pairs keeps its expected value as trials are added, so its
+    # bar means the same at any K. The share every trial agrees on can only
+    # fall with each trial added.
     sets = [path(trial, "scores", "adherence", "items") or {}
             for name, trial in trials.items() if arm_of(name) == arm]
-    if len(sets) < 2:
+    shares = []
+    for left, right in itertools.combinations(sets, 2):
+        common = [item for item in left if left[item] is not None
+                  and right.get(item) is not None]
+        if common:
+            shares.append(sum(1 for item in common
+                              if left[item] == right[item]) / len(common))
+    if not shares:
         return None, 0
-    common = [item for item in sets[0]
-              if all(found.get(item) is not None for found in sets)]
-    if not common:
-        return None, 0
-    same = sum(1 for item in common
-               if len({found[item] for found in sets}) == 1)
-    return round(same / len(common), 3), len(common)
+    return round(statistics.fmean(shares), 3), len(shares)
 
 
 def jaccard(left, right):
@@ -1562,19 +1638,20 @@ def context_words(arm):
 
 
 def round5_section(trials, table, results):
-    """Round 5's answer for this block: each arm's size, agreement and
-    worst trial, and each hypothesis's reading. Block A decides; the
-    report of another block says only whether it agrees."""
+    """Round 5's answer: each arm's size, agreement and worst trial, and
+    each hypothesis's reading."""
     present = {arm_of(name) for name in trials}
     arms = [arm for arm in ("none", "reference", "inline", "hybrid",
                             "skills") if arm in present]
     lines = ["## Round 5: how the rules are delivered", "",
-             "Agreement reads conventions over the adherence "
-             "items every trial measured; structure and security as the "
-             "mean Jaccard similarity over pairs of trials, of their Python "
-             "files and of the probes they fail. A dash is not computed.",
+             "Agreement is a mean over pairs of an arm's trials: conventions "
+             "as the share of the adherence items both measured on which "
+             "they agree, structure and security as the Jaccard similarity "
+             "of their Python files and of the probes they fail. A dash is "
+             "not computed. Adherence is held within %s, one checklist item."
+             % ROUND5_MARGINS["adherence"][0],
              "",
-             "| Arm | Words every turn | Conventions agreement (items) | "
+             "| Arm | Words every turn | Conventions agreement (pairs) | "
              "Structure agreement | Security agreement | Task success, "
              "worst | Task success, mean |",
              "| --- | --- | --- | --- | --- | --- | --- |"]
@@ -1609,22 +1686,31 @@ def round5_section(trials, table, results):
     else:
         h2 = "skills agrees less, by under 0.15"
     lines.append("- H2, consistency: %s" % h2)
-    lines.extend(["", "Block A decides each hypothesis; another block's "
-                  "report says whether it agrees."])
     return lines
 
 
 def round5_checks():
-    """Agreement counts only items every trial measured, and a hypothesis
+    """Agreement means pairs over the items both measured, adherence is
+    held within one item, the run owes no escalation, and a hypothesis
     reads supported, refuted or inconclusive by its registered rule."""
     def trial(items):
         return {"scores": {"adherence": {"value": 1, "items": items}}}
     trials = {"skills-1": trial({"a": True, "b": True, "c": None}),
               "skills-2": trial({"a": True, "b": False, "c": True}),
               "skills-3": trial({"a": True, "b": True, "c": True})}
-    share, items = conventions_agreement(trials, "skills")
-    checks = [("agreement counts only items every trial measured",
-               (share, items) == (0.5, 2), (share, items))]
+
+    # The pairs agree on 1 of a, b; on both of a, b; and on 2 of a, b, c.
+    share, pairs = conventions_agreement(trials, "skills")
+    checks = [("conventions agreement means the pairs over the items both "
+               "measured", (share, pairs) == (round(13 / 18, 3), 3),
+               (share, pairs))]
+
+    # A loss of 7 pp in adherence is held within one item, not within 5 pp.
+    loss = {"low": -0.07, "high": 0.02}
+    got = (non_inferior("adherence", loss, UP, None, ROUND5_MARGINS),
+           non_inferior("adherence", loss, UP))
+    checks.append(("round 5 holds adherence within one item, 8 pp",
+                   got[0]["within"] and not got[1]["within"], got))
 
     # Structure: {a, b}, {a, b} and {a, c} pair as 1, 1/3 and 1/3.
     for name, files in (("skills-1", ["a.py", "b.py"]),
@@ -1688,10 +1774,80 @@ def round5_checks():
                    "security agreement for every arm",
                    "Structure agreement | Security agreement" in section
                    and all("| %s |" % arm in section and
-                           "1.00 (1) | 1.00 | 1.00 |" in section
+                           "1.00 (3) | 1.00 | 1.00 |" in section
                            for arm in ("none", "reference", "inline",
                                        "hybrid", "skills")),
                    section[:600]))
+
+    # Round 5 registers its K, so a run short of it is part-run and no run
+    # of it owes the escalation of a K = 3 round.
+    state = assess_escalation(run, {}, 0)["state"]
+    runs = text[text.find("## Runs per arm"):][:400]
+    checks.append(("a round-5 run owes no escalation and names the blocks "
+                   "still owed", state == "registered"
+                   and "## The escalation" not in text
+                   and "blocks %d to %d" % (K_PRIMARY + 1, ROUND5_K) in runs,
+                   (state, runs)))
+
+    # From six blocks a run's intervals are no longer only descriptions.
+    longer = {trial_name(arm, index): dict(run[trial_name(arm, 1)])
+              for arm in ("none", "reference", "inline", "hybrid", "skills")
+              for index in range(1, FEWEST_DECIDING + 1)}
+    _, _, text = rendered(longer, 0, {})
+    head = text.split("\n## ")[0]
+    checks.append(("from six blocks no interval is called descriptive",
+                   "descriptive" not in head
+                   and "95 % bootstrap interval" in head, head[-300:]))
+    return checks
+
+
+def failed_build_checks():
+    """A build that did not install reads no judge row; one that did reads
+    its judgings."""
+    judging = {"answer": {"rubric": {"security": {"score": 1}}}}
+    failed = {"scores": {"install": {"value": False}}, "judge": judging,
+              "judgings": [judging]}
+    built = {"scores": {"install": {"value": True}}, "judge": judging,
+             "judgings": [judging]}
+    got = (judge_score(failed, "security"), judge_score(built, "security"))
+    return [("a build that did not install has its judge rows missing",
+             got == (None, 1), got)]
+
+
+def record_checks():
+    """A report into any docs/audits/ needs the round archived, and one with
+    neither a templates source nor --out-dir is refused."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-record-")
+    audits = os.path.join(scratch, "templates", *AUDITS)
+    checks = [("any docs/audits directory is a round's record",
+               is_record(audits) and not is_record(scratch), audits)]
+    root = os.path.join(scratch, "run")
+    scores = os.path.join(scoring_area(root), "scores")
+    os.makedirs(scores)
+    with io.open(os.path.join(scores, "none-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"name": "none-1"}, handle)
+
+    def quietly(argv):
+        saved, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            return main(argv), sys.stdout.getvalue()
+        finally:
+            sys.stdout = saved
+    code, printed = quietly(["--root", root, "--out-dir", audits])
+    checks.append(("a report into a templates source's docs/audits needs "
+                   "the stamp", code == 2 and "not been archived" in printed
+                   and not os.path.exists(audits), printed[:200]))
+    source = os.environ.pop(TEMPLATES_ENV, None)
+    try:
+        code, printed = quietly(["--root", root])
+    finally:
+        if source is not None:
+            os.environ[TEMPLATES_ENV] = source
+    checks.append(("with no templates source and no --out-dir it refuses",
+                   code == 2 and "no templates source" in printed,
+                   printed[:200]))
+    shutil.rmtree(scratch, ignore_errors=True)
     return checks
 
 
@@ -2077,9 +2233,14 @@ def caveats_line(trials, escalation, withdrawn, lost, scans):
     for scan in scans:
         if scan["hits"] and scan["name"] not in reached:
             reached.append(scan["name"])
+    if escalation["state"] == "registered":
+        runs = ("K = %d of the %d round 5 registers, with no escalation"
+                % (escalation["k"], ROUND5_K))
+    else:
+        runs = "escalation to K = %d %s" % (K_CEILING,
+                                            escalation_phrase(escalation))
     caveats = ["%d trials, %d judged" % (len(trials), len(judged)),
-               "escalation to K = %d %s" % (K_CEILING,
-                                            escalation_phrase(escalation)),
+               runs,
                "withdrawn: %s" % ("; ".join(labels.get(key, key)
                                             for key in sorted(withdrawn))
                                   or "nothing"),
@@ -2147,8 +2308,24 @@ def thresholds():
 
 
 def escalation_section(escalation):
-    """The report's lines on the one escalation to K = 5 allowed."""
+    """The report's lines on the one escalation to K = 5 allowed, or on the
+    K round 5 registers in its place."""
     k = escalation["k"]
+    if escalation["state"] == "registered":
+        lines = ["## Runs per arm",
+                 "",
+                 "Fixed before the run: round 5 runs K = %d blocks, sized "
+                 "from the noise of the rounds before it, and allows no "
+                 "escalation." % ROUND5_K,
+                 ""]
+        if k < ROUND5_K:
+            lines.append("**Part-run.** The run holds K = %d, so blocks %d "
+                         "to %d are still owed before any verdict below is "
+                         "the round's." % (k, k + 1, ROUND5_K))
+        else:
+            lines.append("**Complete.** The run holds all %d blocks."
+                         % ROUND5_K)
+        return lines
     lines = ["## The escalation to K = %d" % K_CEILING,
              "",
              "Fixed before the run: one escalation is owed where a primary "
@@ -2166,7 +2343,7 @@ def escalation_section(escalation):
                      "then report again. A row still containing zero at K = "
                      "%d is reported as no improvement shown."
                      % (K_PRIMARY + 1, K_CEILING, K_CEILING,
-                        trial_name(BARE, K_PRIMARY + 1), K_CEILING))
+                        escalation["from"], K_CEILING))
     elif state == "assessed":
         lines.append("**Not owed.** No primary dimension's row meets the "
                      "rule, so K stays %d." % K_PRIMARY)
@@ -2276,9 +2453,15 @@ def parse_args(argv):
     parser.add_argument("--root", help="the harness's run root")
     parser.add_argument("--seed", type=int, default=20260912,
                         help="bootstrap seed, recorded in the report")
-    parser.add_argument("--out-dir", default=AUDITS,
-                        help="where the report is written; default is "
-                             "docs/audits/")
+    parser.add_argument("--out-dir",
+                        help="where the report is written; default is the "
+                             "templates source's docs/audits/. Any "
+                             "docs/audits/ takes only a round archived as it "
+                             "stands; elsewhere the report is a draft")
+    parser.add_argument("--templates",
+                        help="a git clone of the templates repository, "
+                             "upstream or a fork; overrides %s"
+                             % TEMPLATES_ENV)
     parser.add_argument("--cross-check",
                         help="a root whose scoring area holds the other "
                              "vendor's judgings of this round's trees")
@@ -2468,11 +2651,29 @@ def escalation_checks(seed):
 
     # An owed escalation names the first trial of block four the way the
     # harness spells it, so the printed command runs as written.
-    owed = "\n".join(escalation_section({"k": K_PRIMARY, "state": "assessed",
-                                         "owed": True, "triggers": []}))
+    three = {trial_name(arm, 1): {} for arm in ("none", "full", "hand")}
+    owed = "\n".join(escalation_section({
+        "k": K_PRIMARY, "state": "assessed", "owed": True, "triggers": [],
+        "from": block_start(None, three, K_PRIMARY + 1)}))
     checks.append(("an owed escalation's command names a trial the harness "
-                   "takes", "--from %s" % trial_name(BARE, K_PRIMARY + 1)
-                   in owed and "--from A" not in owed, owed))
+                   "takes", "--from none-4" in owed and "--from A" not in owed,
+                   owed))
+
+    # Block four starts one arm later per block after block one: read off
+    # the run's own first block where its records show it, and off the arms'
+    # declared order where none do.
+    five = {trial_name(arm, 1): {}
+            for arm in ("none", "inline", "hybrid", "reference", "skills")}
+    root = tempfile.mkdtemp(prefix="efficacy-report-block-start-")
+    with io.open(os.path.join(root, "run-2026-10-27T00-00-00.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": [{"arm": arm, "trial": 1} for arm in (
+            "none", "inline", "hybrid", "reference", "skills")]}, handle)
+    got = (block_start(root, five, K_PRIMARY + 1),
+           block_start(None, five, K_PRIMARY + 1))
+    shutil.rmtree(root, ignore_errors=True)
+    checks.append(("block four starts where the run's own order puts it",
+                   got == ("reference-4", "inline-4"), got))
 
     # Five blocks of judged trials. The first three alone must decide the
     # escalation, and the report must print their vector beside the fifth's.
@@ -3145,6 +3346,8 @@ def self_test(seed):
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
+    checks.extend(failed_build_checks())
+    checks.extend(record_checks())
     checks.extend((label, ok, ok) for label, ok in reach_checks())
     checks.extend((label, ok, ok) for label, ok in lost_checks())
     checks.extend((label, ok, ok) for label, ok in rescan_checks())
@@ -3157,8 +3360,21 @@ def self_test(seed):
     return 0 if passed == len(checks) else 1
 
 
+def audits_dir():
+    """The templates source's docs/audits/, where a round's report lands."""
+    return os.path.join(templates_root(), *AUDITS)
+
+
+def is_record(out_dir):
+    """Whether a report written to `out_dir` is a round's record."""
+    parts = os.path.normcase(os.path.abspath(out_dir)).split(os.sep)
+    return parts[-len(AUDITS):] == list(AUDITS)
+
+
 def main(argv):
     options = parse_args(argv)
+    if options.templates:
+        os.environ[TEMPLATES_ENV] = options.templates
     if options.self_test:
         return self_test(options.seed)
     if not options.root:
@@ -3171,9 +3387,17 @@ def main(argv):
               % scoring_area(options.root))
         return 2
 
+    out_dir = options.out_dir
+    if out_dir is None:
+        try:
+            out_dir = audits_dir()
+        except TrialError as error:
+            print("refused: %s, or name --out-dir for a draft" % error)
+            return 2
+
     # A report under docs/audits/ is the round's record, so it is written only
     # from a round archived as it stands; anywhere else it is a draft.
-    if os.path.abspath(options.out_dir) == os.path.abspath(AUDITS):
+    if is_record(out_dir):
         problem = archive.stamp_problem(options.root)
         if problem:
             print("refused: %s" % problem)
@@ -3188,15 +3412,18 @@ def main(argv):
         print("no trial is left to report once the reached ones are out")
         return 2
 
-    # The design escalates once, to K = 5, and never further, so a run past
-    # the ceiling is refused rather than reported as though the bound held.
+    # A round escalates once, to K = 5, or registers its own K, and goes no
+    # further, so a run past its ceiling is refused rather than reported as
+    # though the bound held.
     k = max(index_of(name) for name in trials)
-    if k > K_CEILING:
+    ceiling = k_ceiling({arm_of(name) for name in trials})
+    if k > ceiling:
         print("refused: the run holds K = %d, past the ceiling of "
-              "K = %d" % (k, K_CEILING))
+              "K = %d" % (k, ceiling))
         return 2
+    margins = margins_of(trials)
     table = collect(trials)
-    results = contrasts(table, options.seed, crossed_labels(trials))
+    results = contrasts(table, options.seed, crossed_labels(trials), margins)
     withdrawn = withdrawals(trials)
     withdraw(withdrawn, table, results)
 
@@ -3221,15 +3448,15 @@ def main(argv):
             return 2
         check = cross_check(trials, other, options.seed)
         disagree(results, check)
-    escalation = assess_escalation(trials, results, options.seed, withdrawn)
+    escalation = assess_escalation(trials, results, options.seed, withdrawn,
+                                   options.root)
     posthoc = None
     if posthoc_owed(trials):
         posthoc_table = collect(trials, POSTHOC)
         posthoc = (posthoc_table, contrasts(posthoc_table, options.seed,
-                                            crossed_labels(trials)))
+                                            crossed_labels(trials), margins))
     target = write_report(options.root, trials, table, results, options.seed,
-                          escalation, options.out_dir, posthoc,
-                          withdrawn, check)
+                          escalation, out_dir, posthoc, withdrawn, check)
 
     with io.open(os.path.join(scoring_area(options.root), "aggregate.json"),
                  "w", encoding="utf-8") as handle:
