@@ -195,41 +195,21 @@ gets sharper with every delta, as section 5.3 explains.
 
 ![Four example ranges of the hidden-test delta, each answering two questions against a margin of 2 points: which way did it move, and has a big loss been ruled out. Plus 1 to plus 4: better, and yes. Minus 1 to plus 3: undecided, because the bar covers zero, but yes, because it stays right of the margin. Minus 5 to plus 3: undecided, and no, because it reaches past the margin. Minus 4 to minus 1: worse, and no](diagrams/verdict.png)
 
-The bar is the luck check of the round-flow diagram. Its range is the
-**likely range**, which statisticians call a bootstrap interval: where the
-average difference would land if the runs were redone. The benchmark finds
-it by resampling the differences thousands of times.
+The bar is the luck check's **likely range**: where the average delta
+would land if the runs were redone. Statisticians call it a bootstrap
+interval.
 
-The verdicts answer two different questions.
+Each bar answers two questions:
 
-**Which way did it move?**
+| Question | Answer | Read from the bar |
+| -------- | ------ | ----------------- |
+| Which way did it move? | Better, worse or **undecided** | Better if the bar lies wholly above zero, worse if wholly below, undecided if it covers zero |
+| Big loss ruled out? | Yes or no | Yes if the bar stays above the **margin**, a loss fixed in advance. For hidden tests it is 2 points |
 
-| Verdict | Means | Does not mean |
-| ------- | ----- | ------------- |
-| **Better** | The whole range is a gain | That the gain is large |
-| **Worse** | The whole range is a loss | That the context file is useless |
-| **Undecided** | The range covers zero: some reruns would gain, some would lose | That the two are equal |
-
-**Big loss ruled out?** A big loss is one larger than the **margin** fixed
-in advance.
-
-| Answer | Means | Does not mean |
-| ------ | ----- | ------------- |
-| **Yes**, held | Even the worst end of the range is within the margin | That it improved |
-| **No** | The worst end could lose more than the margin | That it got worse |
-
-Undecided says there is no proof it is better. Held says there is proof it
-is not much worse. For hidden tests the margin is 2 points:
-
-| Likely range | Which way did it move? | Big loss ruled out? |
-| ------------ | ---------------------- | ----------------- |
-| +1 to +4 points | Better | Yes |
-| −1 to +3 points | Undecided | Yes: at worst 1 point lost, within the 2 tolerated |
-| −5 to +3 points | Undecided | No: a 5-point loss is still possible |
-
-Held is what a trim of the templates, or round 5's question whether skills
-deliver what hybrid does, needs: a way to show two things are as good as
-each other, which an undecided verdict alone can never give.
+Undecided does not mean equal: some reruns would gain and some would lose.
+A yes, which the design calls **held**, is what a trim of the templates
+needs, or round 5's question whether skills deliver what hybrid does: proof
+that a change is not much worse.
 
 ### 5.3 Three runs are a signal
 
