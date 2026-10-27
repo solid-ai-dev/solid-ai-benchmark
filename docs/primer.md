@@ -222,8 +222,10 @@ stronger the claim:
 | 6 | The fewest where every pair pointing one way counts as proof |
 | about 10 | Enough to catch an effect as big as the run-to-run noise |
 
-A close result may get one step up in runs, once. Running until a result
-appears would manufacture one.
+If a result is close, the rules allow adding runs once, for example from 3
+to 5. They forbid adding runs again and again until the answer comes out as
+hoped: with enough tries, luck alone would produce it, like flipping a coin
+until it lands heads.
 
 ## 6. The rules that keep it honest
 
