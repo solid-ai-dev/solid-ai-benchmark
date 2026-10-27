@@ -29,7 +29,8 @@ import sys
 import tempfile
 import time
 
-from harness import (ROUND5_REF, ROUND5_ROOTS,  # noqa: E402
+from harness import (ROUND5_DECLINED, ROUND5_REF,  # noqa: E402
+                     ROUND5_ROOTS,
                      TEMPLATES_ENV, VENDORED, TrialError, source_record,
                      templates_root, agent_environment, agent_executable,
                      assert_authenticated, assert_outside_repository,
@@ -309,17 +310,22 @@ def emit_arm(tree, roots):
     """The `skills` arm, built by the templates' emitter: the root file with
     its facts filled, and {kind: SKILL.md text}."""
     out = tempfile.mkdtemp(prefix="efficacy-emit-")
+    declined = os.path.join(out, "declined.txt")
+    with io.open(declined, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("".join(entry + "\n" for entry in ROUND5_DECLINED))
     try:
         proc = subprocess.run(
-            [sys.executable, "tools/resolve_chain.py", "--emit", out] + roots,
+            [sys.executable, "tools/resolve_chain.py", "--emit",
+             os.path.join(out, "emitted"), "--declined", declined] + roots,
             cwd=tree, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
             raise TrialError("the emitter failed: %s"
                              % (proc.stdout + proc.stderr).strip())
-        with io.open(os.path.join(out, "AGENTS.md"), encoding="utf-8") as h:
+        with io.open(os.path.join(out, "emitted", "AGENTS.md"),
+                     encoding="utf-8") as h:
             root = fill_facts(h.read())
         skills = {}
-        base = os.path.join(out, ".agents", "skills")
+        base = os.path.join(out, "emitted", ".agents", "skills")
         for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
             with io.open(os.path.join(base, kind, "SKILL.md"),
                          encoding="utf-8") as h:
@@ -476,6 +482,7 @@ def main(argv):
             document = reference_text(files)
         elif entry["kind"] == "emit":
             document, skills = emit_arm(tree, ROUND5_ROOTS)
+            record["declined"] = ROUND5_DECLINED
         else:
             prompt = build_prompt(tree, arm, files)
     finally:

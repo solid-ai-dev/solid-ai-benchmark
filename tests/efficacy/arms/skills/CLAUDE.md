@@ -955,14 +955,6 @@ failures, and server-side request forgery.
 - Retain security logs for a defined period; compliance may require 90
   days to 7 years
 
-#### CORS
-
-- Restrict `Access-Control-Allow-Origin` to specific known origins; never
-  use `*` for authenticated endpoints
-- Do not reflect the `Origin` header back as `Access-Control-Allow-Origin`
-  without validation
-- Restrict allowed methods and headers to what the API actually needs
-
 #### Deserialization and data integrity
 
 - Never deserialize untrusted data with a format that can instantiate
@@ -975,43 +967,6 @@ failures, and server-side request forgery.
   upstream registries blindly
 - Use pinned, verified steps and images in CI/CD pipelines (MUST)
 - Never pull `latest` tags in production CI/CD pipelines
-
-#### Server-Side Request Forgery (SSRF)
-
-- Never pass user-supplied URLs directly to server-side HTTP clients;
-  validate and sanitize first
-- Allowlist permitted destination hosts and schemes; reject anything not
-  on the list
-- Block a request whose resolved address is not public, in IPv4 and IPv6
-  alike: loopback, private, link-local, unique-local, shared, unspecified,
-  multicast and reserved ranges
-- Unwrap an IPv4-mapped IPv6 address (`::ffff:127.0.0.1`) to its IPv4
-  form before classifying it
-- Classify with an address library, never a hand-kept CIDR list
-- Use the standard library's address module where the runtime has one,
-  and a maintained external library where it has none
-- Test each excluded category by its own predicate; a library's single
-  "is public" test can still admit multicast
-- Resolve the hostname once, validate the IP, and connect only to that
-  address; a client that resolves the name again can be rebound by DNS
-- Keep TLS verifying the certificate against the original hostname when
-  the connection is pinned to the validated address
-- Disable HTTP redirects in server-side HTTP clients, or resolve and
-  validate each redirect's destination the same way
-- Limit response size and timeout for outbound requests to prevent
-  resource exhaustion
-
-#### File uploads
-
-- Validate file type by content (magic bytes), not by extension or MIME
-  type; both are trivially spoofed
-- Enforce maximum file size at the boundary
-- Store uploads outside the web root; never serve user uploads from the
-  same domain without sanitization
-- Generate random filenames; do not use the original filename (path
-  traversal risk)
-- Scan uploaded files for malware if the application serves them to other
-  users
 
 #### Agent secrets handling
 
@@ -1084,14 +1039,6 @@ Extends `security/security.md`, "Authentication" (`security-authn`) and
   user's data
 - Never trust client-supplied IDs for ownership checks — always verify that
   the authenticated user owns or has access to the requested resource
-
-#### API keys (service-to-service)
-
-- Issue API keys with the minimum required scope
-- Hash API keys before storing — treat them like passwords
-- Rotate API keys on a schedule and immediately on suspected compromise
-- Log every API key usage with the key ID (not the key value) and the
-  calling service identity
 
 #### Observability
 

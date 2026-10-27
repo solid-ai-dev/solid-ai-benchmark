@@ -92,6 +92,16 @@ ROUND5_REF = "9086e0ff"
 ROUND5_ROOTS = ["backend-api", "backend-auth", "backend-database",
                 "frontend-ux", "base-security", "base-data-governance"]
 
+# The sections the brief rules out for tariff, which the `skills` arm's
+# emitter leaves out as a project's declined list would (design, section
+# 13.2). Fixed once, from the brief alone, for every trial of the round.
+ROUND5_DECLINED = [
+    "templates/security/security.md#Server-Side Request Forgery (SSRF)",
+    "templates/security/security.md#File uploads",
+    "templates/security/security.md#CORS",
+    "templates/backend/auth.md#API keys (service-to-service)",
+]
+
 # Where the `skills` arm's skills go in the workspace: the folder Claude
 # Code loads skills from on demand.
 SKILLS_INTO = ".claude/skills"
