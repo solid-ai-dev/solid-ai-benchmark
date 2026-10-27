@@ -597,6 +597,9 @@ Security and data protection join them from round 3 (§5.8).
   of each round, and the report states how often the two agree. The two are
   never averaged.
 
+From round 5, `gpt-6-astra` judges every trial and no cross-check runs
+(section 13.1).
+
 **The cross-check's rule**, registered before the first round it covers:
 
 - **Sample:** whole blocks, so every contrast it reads is paired. It reads
@@ -940,6 +943,7 @@ Two limits:
 | 2026-10-15 | A trial is both fenced and excluded: its file tools are denied every path it may not reach, and a trial whose transcript still reaches one, through the shell, is voided and re-run once; a second reach loses it without stopping the run | A deny rule matches a shell command's prefix, not its paths, so the shell cannot be fenced; a trial that read the hidden suite measures the suite, so counting it was never an option, and deciding after its scores were seen would be | #1907 |
 | 2026-10-15 | The cross-check reads whole blocks, reports agreement per judge row, and withholds a verdict only where the two judges read opposite directions | A shared vendor could favour the templates' style in every arm; opposite signs is the disagreement a verdict cannot survive, and a missed confirmation is what the interval already weighs | #1903 |
 | 2026-10-16 | A trial may not stop processes by name: the commands are denied, one that ran voids the trial, and a trial whose harness died under it is voided before the next run re-runs it `--from` that trial | Round 4's thin run ended after one trial when an agent stopped its dev server with `Get-Process -Name python \| Stop-Process`, which stopped the harness too; a probe showed a deny rule's glob matches anywhere in a command, chained ones included, and lets a stop by PID through | #1928 |
+| 2026-10-27 | Round 5 is judged by `gpt-6-astra` through `codex exec` at effort `high` alone, three times per trial, with no cross-check | The owner's OpenAI plan is raised to cover a round's judgings. With a judge from another vendor than every round-5 builder, the same-vendor concern the cross-check answered is gone, and a second judge could only withhold verdicts | — |
 
 ¹ This agrees with Anthropic's guidance on context engineering, which asks
 for the smallest set of high-signal tokens:
@@ -1132,8 +1136,9 @@ specification or the model.
 | C, weaker | `SPEC.md` | `claude-haiku-4-5-20251001`, effort `high` | 5 arms × K = 3 |
 
 Held in every block: the build task alone; the $100 cap and two-hour bound
-per trial of section 4.1; the scoring of section 5; `claude-opus-5-5` as the
-only judge, three times per trial, as in round 4. The budget is not a
+per trial of section 4.1; the scoring of section 5; `gpt-6-astra` through
+`codex exec` at effort `high` as the only judge, three times per trial, with
+no cross-check. The budget is not a
 factor: every block records each trial's cost, which shows what a shorter
 file saves without a cap that ends trials early.
 
@@ -1211,5 +1216,11 @@ The harness gains, each with a self-test, before block A runs:
   the workspace's index like the vendored templates
 - the contrasts `skills` − `hybrid` and `reference` − `hybrid`, and the
   agreement measures per block, in the report
+- `judge.py` calling `gpt-6-astra` through `codex exec` at effort `high` by
+  default
+- the control fixture read by that judge, three times per tree, with every
+  primary falling on its damaged trees and rising on its improved ones
+  (section 5.7), and the judgings it took recorded against the plan's
+  weekly limit
 
 Nothing in this section changes once a round-5 trial has run.

@@ -10,7 +10,7 @@ Each risk names what holds it today.
 | 1 | Three trials cannot reach significance: 27 distinct resamples, a minimum two-sided p of 0.25 | Every interval is printed as descriptive. One escalation to K = 5 | Round 4's escalations are owed and not run. Round 3's cannot run, its raw data lost |
 | 2 | One app: every effect may be `tariff`'s | `ledger` stays sealed for the final claim | No second app has run |
 | 3 | One builder agent | | Another agent reading `AGENTS.md` is untested |
-| 4 | The judge shares a vendor with the builder and may favour the templates' own style | A cross-check judge from another vendor reads a sample | Round 4 ran without the cross-check |
+| 4 | A judge that shares a vendor with the builder may favour the templates' own style | From round 5 the judge is `gpt-6-astra`, another vendor's model than every builder | |
 | 5 | A judge row is an opinion | Anchors, three readings, the evidence check, the control fixture | |
 | 6 | The spec states what a file would add, so nothing is left to improve | Round 4's thin spec | Vague, pressure and conflict specs are untested |
 | 7 | A missing setting measures the setting, not the code: round 4's hybrid app refused to start without a secret key the spec never named | Both specs now name `TARIFF_SECRET_KEY`, and scoring supplies it | |

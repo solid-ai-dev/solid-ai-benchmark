@@ -12,7 +12,7 @@ setting, not a choice the design made. Chapter 9 records the choices.
 | 3 | Rounds run on a Windows machine | The CLI is a `.CMD` shim. Prompts go on standard input, and a timeout ends the whole process tree, not the shim |
 | 4 | Every trial installs packages | The shell keeps its network. Only the web tools are disallowed, so reach past the workspace is caught by a transcript scan, not prevented |
 | 5 | A deny rule matches a command's prefix, not the paths inside it | The file tools can be fenced, the shell cannot |
-| 6 | The builder and the judge bill against subscriptions | A round's budget is quota, not invoice. The cross-check judge's weekly limit sets its sample |
+| 6 | The builder and the judge bill against subscriptions | A round's budget is quota, not invoice. The judge's weekly plan limit sets how fast a round is judged |
 | 7 | This repository is public | The hidden suite and the raw runs live in private repositories, `braboj/tariff-hidden-suite` and `braboj/tariff-runs` |
 | 8 | Scoring runs Python 3.12 | Every trial's environment is made by the scorer's own interpreter, so a round is scored under one version |
 | 9 | A K = 3 round needs about 15 GB free | Each scored trial's environment is about 290 MB |

@@ -19,7 +19,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Context file | A `CLAUDE.md` the agent reads at the start of a session: project facts and house rules |
 | Contrast | Two arms compared within each block, such as `full − none`. K paired differences, one interval, one verdict per metric |
 | Control fixture | Trees built from two pinned applications, each damaged or improved on one judge row and each passing the same tests. A primary row counts only if it falls on the damaged trees and rises on the improved |
-| Cross-check judge | `gpt-6-astra` through `codex exec`, reading a sample of whole blocks. Its scores are never averaged with the rounds' judge. It withholds a verdict only where the two read opposite directions |
+| Cross-check judge | `gpt-6-astra` through `codex exec`, reading a sample of whole blocks. Its scores are never averaged with the rounds' judge. It withholds a verdict only where the two read opposite directions. Dropped from round 5 |
 | Data-protection probes | Three checks on personal data: a customer's email in the logs, an erased customer still in the database file, one customer's export carrying another's data |
 | Escalation | The one step from K = 3 to K = 5, owed when a primary's interval contains zero while its mean exceeds the smallest change that matters |
 | Evidence check | Each line the judge quotes, looked up in the bundle it was quoted from. The report prints the share found |
@@ -29,7 +29,7 @@ is in the design, [efficacy-benchmark.md](../design/efficacy-benchmark.md).
 | Hidden suite | The acceptance tests in the private `braboj/tariff-hidden-suite`, cloned only at scoring |
 | Hybrid model | A context file that copies in the rules whose breaking is silent and no tool enforces, and names the rest, with the templates vendored beside it |
 | Inline model | A context file that copies every adopted rule in |
-| Judge | The model that scores a blind bundle 1 to 5 per rubric row, with a quoted line as evidence. The rounds' judge is `claude-opus-5-5` |
+| Judge | The model that scores a blind bundle 1 to 5 per rubric row, with a quoted line as evidence. From round 5 it is `gpt-6-astra` through `codex exec` at effort `high`. Rounds 3 and 4 used `claude-opus-5-5` |
 | K | The number of blocks, so the trials per arm: 3, at most 5 |
 | Lost probe | A probe the trial kept from running, such as one that needs a sign-in the app refuses. It fails, never drops out of the rate |
 | Lost trial | A trial the provider ended rather than the agent, recorded as blocked. Re-run once in its place. A second loss stops the run |
