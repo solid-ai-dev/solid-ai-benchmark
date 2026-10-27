@@ -505,6 +505,15 @@ def main(argv):
               "specification supplies: %r" % leak["hits"])
         return write_record(options.root, record, started_at) or 1
 
+    # A dry run of any arm stops here: it writes nothing under `arms/`,
+    # so it never replaces a committed file or its record.
+    if options.dry_run:
+        record["outcome"] = "dry-run"
+        print("dry run: %s would be %d words%s; nothing written under arms/"
+              % (output, len(document.split()),
+                 ", with %d skills" % len(skills) if skills else ""))
+        return write_record(options.root, record, started_at)
+
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with io.open(output, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(document.rstrip() + "\n")

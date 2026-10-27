@@ -207,9 +207,18 @@ REACH_TERMS = ("solid-ai-templates", "hidden-suite")
 REPOSITORY_TERMS = ("solid-ai-dev/solid-ai-templates",
                     "braboj/solid-ai-templates")
 
-# No user, project or local settings, and no MCP server the harness did not
-# pass -- which is none. Both flags are isolation, not preference.
-SETTING_SOURCES = ""
+# The workspace's own project settings and nothing else: no user or local
+# settings, and no MCP server the harness did not pass -- which is none.
+# The project source is what makes Claude Code discover the skills arm's
+# `.claude/skills/`; every arm gets it, so the arms differ only in what
+# their workspace holds. The deny rules come from the harness's own
+# settings file, passed apart from the sources.
+SETTING_SOURCES = "project"
+
+# What the skills probe asks: the names the agent sees, and nothing else.
+SKILLS_PROMPT = ("Without using any tool, list the names of the skills "
+                 "available to you, one per line, and nothing else. If there "
+                 "are none, reply NONE.")
 
 # A minimal settings file, so `--settings` names something real rather than
 # falling back to whatever the machine carries.
@@ -617,6 +626,47 @@ def assert_authenticated(home, env_builder, executable):
         raise TrialError("the CLI is not usable in the isolated home: %s"
                          % payload.get("result", "")[:200])
     return payload.get("result", "").strip()
+
+
+def missing_skills(listed, kinds):
+    """The kinds an agent's list of its skills leaves out."""
+    names = {line.strip().strip("-*` ").lower()
+             for line in (listed or "").splitlines()}
+    return [kind for kind in kinds if kind.lower() not in names]
+
+
+def assert_skills_discovered(home, env_builder, executable, source):
+    """Refuse a run whose agent would not see the skills arm's skills.
+
+    Placing the files proves nothing: Claude Code discovers project skills
+    only under the project setting source. One cheap call from a scratch
+    workspace holding the arm's real skills, under the trial's own flags,
+    asks for the names it sees; every kind must be among them.
+    """
+    kinds = sorted(os.listdir(source))
+    workspace = tempfile.mkdtemp(prefix="efficacy-skills-probe-")
+    try:
+        git(workspace, "init", "-q")
+        place_skills(workspace, source)
+        proc = subprocess.run(
+            [executable, "-p", "--output-format", "json",
+             "--setting-sources", SETTING_SOURCES, "--settings",
+             os.path.join(home, "settings.json"), "--strict-mcp-config"],
+            input=SKILLS_PROMPT, cwd=workspace, env=env_builder(home),
+            capture_output=True, text=True, encoding="utf-8", timeout=180)
+    finally:
+        remove_tree(workspace)
+    try:
+        payload = json.loads(proc.stdout)
+    except ValueError:
+        raise TrialError("the skills probe returned no JSON: %s"
+                         % (proc.stdout or proc.stderr)[:400])
+    listed = payload.get("result", "")
+    missing = missing_skills(listed, kinds)
+    if payload.get("is_error") or missing:
+        raise TrialError("the agent does not see the skills arm's skills: "
+                         "missing %s" % ", ".join(missing or ["all"]))
+    return kinds
 
 
 # A trial inherits this machine, not the process that launched it. Each group
@@ -2824,6 +2874,17 @@ def round5_checks():
     kinds = place_skills(workspace, os.path.dirname(source))
     placed = os.path.join(workspace, *SKILLS_INTO.split("/"), "review",
                           "SKILL.md")
+    argv = agent_command(scratch, "model", "high", None)
+    checks.append(("a trial reads the workspace's project settings and no "
+                   "other source",
+                   argv[argv.index("--setting-sources") + 1] == "project"))
+    listed = "review\n- write-tests\n`add-check`\ndataviz"
+    checks.append(("the skills probe finds a listed kind and names a missing "
+                   "one",
+                   missing_skills(listed, ["add-check", "review",
+                                           "write-tests"]) == []
+                   and missing_skills(listed, ["review", "regenerate"])
+                   == ["regenerate"]))
     checks.append(("the skills land where Claude Code loads them, out of "
                    "the index",
                    kinds == ["review"] and os.path.isfile(placed)
@@ -2986,6 +3047,19 @@ def main(argv):
             lib.print_verdict(False, "0 trial(s), 0 done, 1 refused")
             return 1
         print("generator ready: %s" % ready)
+
+        # Files in `.claude/skills/` are not skills an agent sees until the
+        # CLI discovers them, so a run with the skills arm proves it first.
+        if "skills" in arms:
+            try:
+                seen = assert_skills_discovered(
+                    home, agent_environment, agent_executable(),
+                    os.path.join(ARMS_DIR, ARMS["skills"]["skills"]))
+            except (TrialError, subprocess.TimeoutExpired) as error:
+                print("refused: %s" % error)
+                lib.print_verdict(False, "0 trial(s), 0 done, 1 refused")
+                return 1
+            print("the agent sees the skills arm's %d skills" % len(seen))
 
     started_at = datetime.datetime.now()
     run_file = os.path.join(
