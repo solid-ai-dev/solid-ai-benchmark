@@ -344,6 +344,7 @@ Every arm gets one prompt, identical for all:
 | Your global `CLAUDE.md`, hooks, memory, MCP | A scratch home and a minimal settings file |
 | The launching session's environment | Its variables, editor, active interpreter and credentials are removed; the names removed are recorded |
 | The model | Pinned by exact id; effort fixed |
+| The builder's vendor | Never the judge's: each round names its builder models in its registration, none from the vendor of the rounds' judge |
 | The web | Web tools disallowed. The shell keeps its network, because every trial installs packages |
 | The templates repository | Not mounted |
 | Git's stored credentials | Cleared |
@@ -842,7 +843,7 @@ result cannot say which produced it. A control is what rules it out.
 | `hybrid` legitimately carries the templates | Its reads of its own vendored copy are not a reach; naming the repository by URL or owner still is |
 | The model changes between trials | Exact id pinned; trials interleaved |
 | The agent sees the acceptance tests | The hidden suite stays outside the workspace until scoring |
-| The judge favours its own family or longer output | Every arm has the same generator; another vendor's judge reads a sample, and the agreement is reported; blind; shuffled; length reported |
+| The judge favours its own family or longer output | Every arm has the same generator; no builder comes from the judge's vendor; blind; shuffled; length reported |
 | The judge sees which arm it reads | Context files, the vendored templates and condition markers are stripped; a bundle still naming its arm is refused |
 | The judge's score is noise | Three judgings per tree, averaged |
 | The judge's scale cannot move | Anchored primaries, validated by the control fixture (§5.7) |
@@ -944,6 +945,7 @@ Two limits:
 | 2026-10-15 | The cross-check reads whole blocks, reports agreement per judge row, and withholds a verdict only where the two judges read opposite directions | A shared vendor could favour the templates' style in every arm; opposite signs is the disagreement a verdict cannot survive, and a missed confirmation is what the interval already weighs | #1903 |
 | 2026-10-16 | A trial may not stop processes by name: the commands are denied, one that ran voids the trial, and a trial whose harness died under it is voided before the next run re-runs it `--from` that trial | Round 4's thin run ended after one trial when an agent stopped its dev server with `Get-Process -Name python \| Stop-Process`, which stopped the harness too; a probe showed a deny rule's glob matches anywhere in a command, chained ones included, and lets a stop by PID through | #1928 |
 | 2026-10-27 | Round 5 is judged by `gpt-6-astra` through `codex exec` at effort `high` alone, three times per trial, with no cross-check | The owner's OpenAI plan is raised to cover a round's judgings. With a judge from another vendor than every round-5 builder, the same-vendor concern the cross-check answered is gone, and a second judge could only withhold verdicts | — |
+| 2026-10-27 | Each round names its builder models in its registration, and none comes from the vendor of the rounds' judge | The models are a knob a round sets, not a fixed list. A builder from the judge's vendor would bring back the self-preference the cross-check once answered, which no longer runs | — |
 
 ¹ This agrees with Anthropic's guidance on context engineering, which asks
 for the smallest set of high-signal tokens:
