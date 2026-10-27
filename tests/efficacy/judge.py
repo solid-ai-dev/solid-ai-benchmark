@@ -63,15 +63,14 @@ SECRET_KEY_PARAGRAPH = (
     b"variable `TARIFF_SECRET_KEY`, which is set and non-empty wherever the\n"
     b"application runs.\n")
 
-# The model each CLI judges with. The rounds' judge is Claude: it shares a
-# vendor with the generator, which a judge from another vendor would not, but
-# that one's plan allows about thirty judgings a week and a round needs three
-# times as many. The other vendor's model reads a sample of each round as a
-# cross-check, and its readings are never meaned with the rounds' judge's.
+# The model each CLI judges with. The rounds' judge comes from another
+# vendor than every builder, so it never scores its own vendor's code. The
+# other CLI stays available to re-read an earlier round, whose readings are
+# never meaned with the rounds' judge's.
 JUDGE_MODELS = {"claude": "claude-opus-5-5", "codex": "gpt-6-astra"}
 
 # The CLI that drives the rounds' judge.
-DEFAULT_CLI = "claude"
+DEFAULT_CLI = "codex"
 
 # The local default is low, and the rubric is a reasoning task over long
 # code, so the effort is set on the command and recorded rather than
@@ -1243,6 +1242,26 @@ def backend_checks(scratch):
     ]
 
 
+def default_checks(scratch):
+    """The rounds' judge is the default: GPT-6 Astra through Codex at high
+    effort, and the command carries both, so a reading records what ran."""
+    options = parse_args(["--root", scratch])
+    bundle = os.path.join(scratch, "default", "T1")
+    plant(bundle, {"SPEC.md": "# spec\n"})
+    options.executable = "codex"
+    options.dry_run = True
+    argv = judge_bundle(bundle, options,
+                        os.path.join(scratch, "default.json"))["argv"]
+    return [
+        ("the default judge is gpt-6-astra through codex",
+         options.cli == "codex" and options.model == "gpt-6-astra"),
+        ("the default effort is high", options.effort == "high"),
+        ("the codex command carries the model and the effort",
+         argv[argv.index("--model") + 1:][:1] == ["gpt-6-astra"]
+         and 'model_reasoning_effort="high"' in argv),
+    ]
+
+
 def claim_checks(scratch):
     """A judge run refuses while another holds the area, and builds nothing.
 
@@ -1271,6 +1290,7 @@ def self_test():
     checks.extend(launch_checks(scratch))
     checks.extend(backend_checks(scratch))
     checks.extend(claim_checks(scratch))
+    checks.extend(default_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     shutil.rmtree(scratch, ignore_errors=True)
@@ -1293,10 +1313,10 @@ def parse_args(argv):
                         help="judge only this trial, as none-1; repeatable")
     parser.add_argument("--cli", default=DEFAULT_CLI,
                         choices=("codex", "claude"),
-                        help="which CLI drives the judge. `claude` is the "
-                             "rounds' judge; `codex` is the other vendor's, "
-                             "reading a sample as a cross-check, and its "
-                             "readings are never meaned with the other's.")
+                        help="which CLI drives the judge. `codex` is the "
+                             "rounds' judge; `claude` re-reads an earlier "
+                             "round, and its readings are never meaned with "
+                             "the other's.")
     parser.add_argument("--repeat", type=int, default=1,
                         help="judgings per trial; the report means them. A "
                              "trial already holding this many is left alone, "
