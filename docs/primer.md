@@ -126,11 +126,11 @@ Fixed in every run, so only the knobs can move the meters:
   every run. An agent cannot score cleaner by loosening its own lint rules
 - **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
   each app three times
-- **Runs per arm:** 3, or 5 once when a result is close
+- **Runs per arm:** fixed by each round before it starts, 3 today
 
 ## 4. One round, start to finish
 
-![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, checks whether the difference would hold if the runs were redone, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
+![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, checks whether the difference would hold if the runs were redone, and gives one verdict per meter: better, worse or undecided. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
 
 ### 4.1 Before the round
 
@@ -163,10 +163,11 @@ own, in any order.
 ### 4.4 Reading the result
 
 1. **Compare with the bare run.** Each run with a context file is compared
-   with the run of the same block that had none: `inline-1` minus `none-1`.
+   with the run of the same block, see 5.1, that had none: `inline-1` minus
+   `none-1`.
 2. **Luck check.** The differences are checked for whether they would hold
    if the runs were redone.
-3. **Verdict.** Each meter gets one: better, worse or not shown.
+3. **Verdict.** Each meter gets one: better, worse or undecided.
 4. **Consistency.** The runs of one arm are also compared with each other.
    How alike they came out is the arm's **consistency**, read in %.
 
@@ -189,52 +190,43 @@ out, and those three decide.
 Three blocks are the smallest useful set, not a limit. The same pattern
 extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
 give 20. Each extra block adds one more run per arm, and the luck check
-gets sharper with every delta, as section 5.3 explains.
+gets sharper with every delta, as section 5.3 shows.
 
-### 5.2 The four verdicts
+### 5.2 Reading the bar
 
-![Five example rows, each with three dots for three pairs and a bar for the interval they allow. Two rows read Better: the bar lies wholly right of zero, once with the pairs nearly equal and once spread out. Not shown: the pairs disagree and the bar covers zero. Held: the same pairs, whose bar stays clear of the shaded loss past the margin. Worse: every pair got worse, and the bar lies wholly left of zero](diagrams/verdict.png)
+![Four example ranges of the hidden-test delta, each answering two questions against a margin of 2 points: which way did it move, and has a big loss been ruled out. Plus 1 to plus 4: better, and yes. Minus 1 to plus 3: undecided, because the bar covers zero, but yes, because it stays right of the margin. Minus 5 to plus 3: undecided, and no, because it reaches past the margin. Minus 4 to minus 1: worse, and no](diagrams/verdict.png)
 
-The bar is the luck check of the round-flow diagram. Its range is the
-**likely range**, which statisticians call a bootstrap interval: where the
-average difference would land if the runs were redone. The benchmark finds
-it by resampling the differences thousands of times.
+The bar is the luck check's **likely range**: where the average delta
+would land if the runs were redone. Statisticians call it a bootstrap
+interval.
 
-The verdicts answer two different questions.
+Each bar answers two questions:
 
-**Did the context file change the result?**
+| Question | Answer | Read from the bar |
+| -------- | ------ | ----------------- |
+| Which way did it move? | Better, worse or **undecided** | Better if the bar lies wholly above zero, worse if wholly below, undecided if it covers zero |
+| Big loss ruled out? | Yes or no | Yes if the bar stays above the **margin**, a loss fixed in advance. For hidden tests it is 2 points |
 
-| Verdict | Means | Does not mean |
-| ------- | ----- | ------------- |
-| **Better** | The whole range is a gain | That the gain is large |
-| **Worse** | The whole range is a loss | That the context file is useless |
-| **Not shown** | The range covers zero: some reruns would gain, some would lose | That the two are equal. It is undecided |
+Undecided does not mean equal: some reruns would gain and some would lose.
+A yes, which the design calls **held**, is what a trim of the templates
+needs, or round 5's question whether skills deliver what hybrid does: proof
+that a change is not much worse.
 
-**Is it at least as good?**
+### 5.3 How many runs it takes
 
-| Verdict | Means | Does not mean |
-| ------- | ----- | ------------- |
-| **Held** | Even the worst end of the range is a small loss, within a **margin** fixed in advance | That it improved |
+Each round fixes K, the runs per arm, before it starts. The more runs, the
+stronger the claim:
 
-Not shown says there is no proof it is better. Held says there is proof it
-is not much worse. For hidden tests the margin is 2 points:
+| Runs per arm | What a result can claim |
+| ------------ | ----------------------- |
+| 3 | A signal. Every report says so beside every number |
+| 6 | The fewest where every pair pointing one way counts as proof |
+| about 10 | Enough to catch an effect as big as the run-to-run noise |
 
-| Likely range | Changed the result? | At least as good? |
-| ------------ | ------------------- | ----------------- |
-| +1 to +4 points | Better | Held |
-| −1 to +3 points | Not shown | Held: at worst 1 point lost, within the 2 tolerated |
-| −5 to +3 points | Not shown | Not held: up to 5 points could be lost |
-
-Held is what a trim of the templates, or round 5's question whether skills
-deliver what hybrid does, needs: a way to show two things are as good as
-each other, which not shown alone can never do.
-
-### 5.3 Three runs are a signal
-
-Three runs describe a result. They do not prove it. Every report says so
-beside every number. When a result is close, the rules allow one step up
-to five runs, once, and never more. Running until a result appears would
-manufacture one.
+If a result is close, the rules allow adding runs once, for example from 3
+to 5. They forbid adding runs again and again until the answer comes out as
+hoped: with enough tries, luck alone would produce it, like flipping a coin
+until it lands heads.
 
 ## 6. The rules that keep it honest
 
@@ -249,36 +241,3 @@ manufacture one.
 | A run the provider cut off is re-run once | The provider cut it, not the agent |
 | A meter that turns out to measure something else is withdrawn | A wrong number is worse than no number |
 | A tool that scanned nothing records "missing", never zero | Zero must mean "clean", not "not measured" |
-
-## 7. What the evidence says so far
-
-What the evidence supports today, in the words of the
-[assessment](design/efficacy-assessment.md):
-
-- **Supported, as a signal:** a context file's conventions get followed more.
-- **Supported:** a context file does not break software that already works.
-- **Not supported:** a context file makes a strong model write better code.
-- **Contradicted:** using the templates costs little. The files made the
-  app up to 180 % bigger and most builds dearer.
-- **Contradicted:** a longer file is better. Length tracked cost, not
-  quality.
-
-## 8. What it cannot tell you yet
-
-- **One app.** Everything so far is `tariff`. A second app, `ledger`, is
-  kept sealed for the final claim.
-- **Three runs.** Every result is a signal, not proof.
-- **One agent.** Every build is Claude Code. Another agent reading
-  `AGENTS.md` is untested.
-- **One sitting.** No run yet follows a project over months, which is
-  where the templates claim to matter most.
-
-## 9. Where to go next
-
-| To | Read |
-| -- | ---- |
-| See every rule and threshold | [The design](design/efficacy-benchmark.md) |
-| See what the evidence means for the templates | [The assessment](design/efficacy-assessment.md) |
-| Understand how the parts fit together | [The architecture](architecture/01-introduction-and-goals.md) |
-| Follow a person through a task | [User journeys](journeys/index.md) |
-| Run it | [The harness guide](guides/efficacy-harness.md) |
