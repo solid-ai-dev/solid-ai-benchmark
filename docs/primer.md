@@ -130,7 +130,7 @@ Fixed in every run, so only the knobs can move the meters:
 
 ## 4. One round, start to finish
 
-![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result pairs each run with the run of the same block that had no file, takes an interval over the K differences, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
+![One round in four stages. Before the round, the project brief goes to the generator, which makes each arm's context file once with no person answering. In each run, a workspace holding SPEC.md and the arm's file goes to the AI agent, which builds the app in one session, and the app is frozen as it was left. Scoring reads six meters on each frozen app, each on its own and in any order: hidden tests, attack probes, the judge's scores, conventions, size and cost. Reading the result compares each run with the bare run of the same block, takes an interval over the K differences, and gives one verdict per meter: better, worse or not shown. Consistency compares an arm's runs with each other](diagrams/round-flow.png)
 
 1. **Make the files.** A generator turns a short project brief into each
    arm's context file, once, with nobody answering its questions. A person
@@ -152,8 +152,9 @@ Fixed in every run, so only the knobs can move the meters:
      types and test coverage
    - **size**: the lines and files the agent wrote
    - **cost**: the dollars, turns and minutes the run took
-5. **Compare.** Each run with a context file is compared with its no-file
-   partner, and the differences give one verdict per meter. The runs of one
+5. **Compare.** Each run with a context file is compared with the bare run,
+   the one with no file, from the same block: `inline-1` minus `none-1`.
+   The differences give one verdict per meter. The runs of one
    arm are also compared with each other: how alike they came out is the
    arm's **consistency**.
 
