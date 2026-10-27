@@ -91,7 +91,7 @@ The design's section 13 registers the arms and the questions they answer.
 | Model | What it is | What it tests |
 | ----- | ---------- | ------------- |
 | Haiku 4.5 | The smallest and cheapest | Does a context file make up for what a weaker model does not know |
-| Sonnet 5 | The main builder, what a typical adopter runs | The baseline every other model is compared with |
+| Sonnet 5 | The middle model, and the benchmark's main builder | The baseline every other model is compared with |
 | Opus 5.5 | The strongest | Does a context file still help a model that knows most of it already |
 
 ### 3.5 Tasks
