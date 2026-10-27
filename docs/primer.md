@@ -88,6 +88,16 @@ The design's section 13 registers the arms and the questions they answer.
 
 ### 3.4 Builder models
 
+Each round names its own set of builder models in the design before its
+first run. Two rules hold for every set:
+
+- Every model is pinned by its exact version, so the builder cannot change
+  under a round
+- No builder comes from the judge's vendor, so the judge never scores its
+  own vendor's code
+
+The models on the knob span weak to strong:
+
 | Model | What it is | What it tests |
 | ----- | ---------- | ------------- |
 | Haiku 4.5 | The smallest and cheapest | Does a context file make up for what a weaker model does not know |
