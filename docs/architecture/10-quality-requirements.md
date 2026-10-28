@@ -306,10 +306,12 @@ tree.
 | security | 3.00 (333) | **1.00** (111) | **5.00** (555) | 3.00 (333) | 3.00 (333) |
 | data_protection | 3.00 (333) | 3.00 (333) | 3.00 (333) | **1.00** (111) | **5.00** (555) |
 
-Every primary falls on the tree built to damage it and rises on one built to
-improve it. No tree is built to improve `readability`, so its check is the
-fall on `obscured-1`. The second application's rows hold still on the trees
-built to move another.
+Four primaries fall on the tree built to damage them and rise on one built
+to improve them. `readability` falls on `obscured-1` but reads 3 on every
+improved tree, and none of them was built to improve it, so its rise is not
+yet shown. Until a tree built for that rise is judged, the control check
+round 5 registers is not met. The second application's rows hold still on
+the trees built to move another.
 
 The re-anchored rubric reads the same under gpt-6-astra as under
 claude-opus-5-5, with sharper steps: `design` reaches 4 from `improved-1`, and
