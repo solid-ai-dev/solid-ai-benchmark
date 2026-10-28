@@ -33,6 +33,21 @@ generation and vendoring record states the source's remote, ref and commit.
 A run with no source refuses, because it could not deny the agent the
 templates.
 
+## The private repositories
+
+Running a round needs two private repositories besides the templates. Ask
+the owner for access to either.
+
+| Repository | What it holds | Read by |
+| --- | --- | --- |
+| `braboj/tariff-hidden-suite` | The suite every trial is graded by | The scorer only |
+| `braboj/tariff-runs` | Each round's frozen trees and scores | The owner |
+
+The scorer clones the hidden suite with `gh` at scoring time, shallow and
+fresh for every scoring, into the scoring area beside the run root. It never
+lands in a trial's workspace, and each score records the suite's commit. So
+`gh` must be logged in with access to it, or scoring refuses.
+
 ## Status
 
 Moved here with its history from `Imbra-Ltd/imbra-ai-templates`
