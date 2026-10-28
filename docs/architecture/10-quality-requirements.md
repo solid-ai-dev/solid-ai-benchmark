@@ -308,10 +308,22 @@ tree.
 
 Four primaries fall on the tree built to damage them and rise on one built
 to improve them. `readability` falls on `obscured-1` but reads 3 on every
-improved tree, and none of them was built to improve it, so its rise is not
-yet shown. Until a tree built for that rise is judged, the control check
-round 5 registers is not met. The second application's rows hold still on
-the trees built to move another.
+improved tree, none of which was built to improve it. So `clarified-1`, the
+mirror of `obscured-1`, was added to the control and judged in the same root,
+three times:
+
+| Dimension | base-1 | clarified-1 |
+|---|---|---|
+| design | 3.00 (333) | 3.00 (333) |
+| readability | 3.00 (333) | **3.67** (434) |
+| maintainability | 3.00 (333) | 3.00 (333) |
+
+`readability` rises on the tree built to improve it, and the other two rows
+hold still there. With that, every primary falls on the tree built to damage
+it and rises on one built to improve it. The rise is the smallest in the
+run: one of the three judgings read 3, so a single judging would have missed
+it. The second application's rows hold still on the trees built to move
+another.
 
 The re-anchored rubric reads the same under gpt-6-astra as under
 claude-opus-5-5, with sharper steps: `design` reaches 4 from `improved-1`, and
@@ -322,6 +334,7 @@ move it. There its triples spread from 2 to 4, a one-point flip between
 judgings of the same bundle, which the three judgings per trial are there to
 absorb.
 
-The 33 judgings took 70 minutes and used about 11 % of the OpenAI plan's
-weekly limit: it read 3 % used before and 14 % after. A block of 75 trials
-at three judgings each would take about 75 %.
+The first 33 judgings took 70 minutes and used about 11 % of the OpenAI
+plan's weekly limit: it read 3 % used before and 14 % after. A block of 75
+trials at three judgings each would take about 75 %. The three judgings of
+`clarified-1` came after.
