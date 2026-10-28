@@ -172,6 +172,8 @@ own, in any order.
 
 Section 5 explains the comparison and the verdicts.
 
+Every round's report is listed in [the rounds index](rounds/README.md#reports).
+
 ## 5. The verdicts, explained
 
 ### 5.1 Pairs, not averages
