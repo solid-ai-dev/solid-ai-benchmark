@@ -286,3 +286,40 @@ Every primary falls on the tree built to damage it and rises on one built to
 improve it, and each row of the second application holds still on the trees
 built to move another. The 33 judgings used about 1 % of the owner's weekly
 plan.
+
+### gpt-6-astra as round 5 registers it, 2026-10-28
+
+The judge round 5 registers: `gpt-6-astra` through `codex exec` at effort
+`high`, three judgings per tree, under the rubric as it stands. All 33
+judgings took, with evidence found 100 % on every one. Each cell is the mean,
+followed by the three scores; a bold cell differs from its application's base
+tree.
+
+| Dimension | base-1 | degraded-1 | obscured-1 | improved-1 | improved-2 | improved-3 |
+|---|---|---|---|---|---|---|
+| design | 3.00 (333) | **1.00** (111) | 3.00 (333) | **4.00** (444) | **4.00** (444) | **4.00** (444) |
+| readability | 3.00 (333) | 3.00 (333) | **1.00** (111) | 3.00 (333) | 3.00 (333) | 3.00 (333) |
+| maintainability | 3.00 (333) | **1.33** (121) | 3.00 (333) | 3.33 (433) | 3.67 (434) | **4.00** (444) |
+
+| Dimension | base-2 | insecure-1 | secured-1 | leaky-1 | protected-1 |
+|---|---|---|---|---|---|
+| security | 3.00 (333) | **1.00** (111) | **5.00** (555) | 3.00 (333) | 3.00 (333) |
+| data_protection | 3.00 (333) | 3.00 (333) | 3.00 (333) | **1.00** (111) | **5.00** (555) |
+
+Every primary falls on the tree built to damage it and rises on one built to
+improve it. No tree is built to improve `readability`, so its check is the
+fall on `obscured-1`. The second application's rows hold still on the trees
+built to move another.
+
+The re-anchored rubric reads the same under gpt-6-astra as under
+claude-opus-5-5, with sharper steps: `design` reaches 4 from `improved-1`, and
+the four rows of the second application read 1 or 5 on all three judgings.
+
+`security` is also read on the first application, where no tree is built to
+move it. There its triples spread from 2 to 4, a one-point flip between
+judgings of the same bundle, which the three judgings per trial are there to
+absorb.
+
+The 33 judgings took 70 minutes and used about 11 % of the OpenAI plan's
+weekly limit: it read 3 % used before and 14 % after. A block of 75 trials
+at three judgings each would take about 75 %.
