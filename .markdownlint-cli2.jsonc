@@ -1,0 +1,11 @@
+{
+  // The rules live in .markdownlint.json. The arm files are the generator's
+  // verbatim output, measured as they came out, and the specifications are
+  // registered by the hash of their text, so neither is linted or reflowed.
+  "ignores": [
+    "tests/efficacy/arms/**",
+    "tests/efficacy/SPEC*.md"
+  ],
+  // What git ignores, such as the self-test reports, is not the repository's.
+  "gitignore": true
+}
