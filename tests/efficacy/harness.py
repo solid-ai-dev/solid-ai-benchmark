@@ -77,8 +77,8 @@ ROUND5_ARMS = ("inline", "reference", "skills")
 ROUND5_K = 15
 
 # The release every generated arm is produced from, and the one the hybrid
-# arm's vendored templates are taken at. The design fixes it: the last 2.x,
-# before the v3.0 split moves any template.
+# arm's vendored templates are taken at, fixed before the first round: the
+# last 2.x, before the v3.0 split moves any template.
 RELEASE = "v2.90.0"
 
 # The templates every arm is generated from and the hybrid arm vendors: a
@@ -100,8 +100,8 @@ ROUND5_ROOTS = ["backend-api", "backend-auth", "backend-database",
                 "frontend-ux", "base-security", "base-data-governance"]
 
 # The sections the brief rules out for tariff, which the `skills` arm's
-# emitter leaves out as a project's declined list would (design, section
-# 13.2). Fixed once, from the brief alone, for every trial of the round.
+# emitter leaves out as a project's declined list would. Fixed once, from the
+# brief alone, for every trial of the round.
 ROUND5_DECLINED = [
     "templates/security/security.md#Server-Side Request Forgery (SSRF)",
     "templates/security/security.md#File uploads",
@@ -382,9 +382,9 @@ def assert_outside_repository(root):
 
     A workspace under the templates lets the agent walk up and read the very
     templates arm `none` is defined not to have, and one under the benchmark
-    lets it read the hidden specification. The design lists both as
-    confounds and controls them by not mounting either repository, so the
-    mount is refused here rather than trusted to the caller.
+    lets it read the hidden specification. Both are confounds, controlled
+    by not mounting either repository, so the mount is refused here rather
+    than trusted to the caller.
     """
     root = os.path.abspath(root)
     for label, repo in (("benchmark", repository_root()),

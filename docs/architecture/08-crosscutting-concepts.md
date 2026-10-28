@@ -172,10 +172,10 @@ The rest of the backbone:
     requires and the HTML standard lacks
   - an XSS probe and a CSRF probe
   - the invoice builder's response size and request count
-- **Adherence:** the share of a fixed checklist passed.
-  - Tools: `ruff` clean, `mypy --strict` clean, coverage ≥ 80 %, cognitive
-    complexity ≤ 15.
-  - Structure: a `src/` layout, an error-contract test, a `NullHandler`.
+- **Adherence:** the share of a fixed checklist of 13 items passed.
+  - Tools: `ruff` clean, `ruff format` clean, `mypy --strict` clean,
+    coverage ≥ 80 %, cognitive complexity ≤ 15.
+  - Structure: a `src/` layout, one error hierarchy, a `NullHandler`.
   - Hygiene: no `print` in library code, no citations.
   - Packaging: complete metadata, a README with install and usage,
     discoverable tests.
@@ -552,28 +552,21 @@ nothing (section 8.7.4). Fixed here before round 3, they decide it.
 
 ### 8.7.1 Contrasts
 
-Each metric is reported per arm and for eight paired contrasts:
+Each metric is reported per arm and for the paired contrasts a round
+registers. Round 5's:
 
 | Contrast | Asks |
 |---|---|
-| `full − none` | do the templates help as shipped |
-| `short − none` | does a short generated file help |
+| `inline − none` | does every rule, copied in, help |
 | `hybrid − none` | does the hybrid model help |
-| `hand − none` | does any file help |
-| `full − hand` | do the templates beat forty hand-written lines |
-| `short − hand` | at equal length, can the templates pick the right forty lines |
-| `hybrid − full` | does the hybrid model beat the same content inline |
-| `short − full` | does length matter |
+| `reference − none` | does naming the templates help |
+| `skills − none` | do a root file and task skills help |
+| `skills − hybrid` | H1: do skills deliver what hybrid does |
+| `reference − hybrid` | H3: does naming the templates alone deliver less |
+| `skills − inline` | the same rules, with and without the split into skills |
 
-`full − hand` is the question an adopter asks. A large `full − none` beside
-an equally large `hand − none` is not a result for the templates.
-
-**Reading `short − hand`:**
-
-- `short` ≈ `hand` (no improvement shown, every quality metric held): the
-  templates' content is sound, and the interview emits too much.
-- `short` worse than `hand` on a primary dimension: the content itself is
-  the defect.
+Earlier rounds' contrasts stay declared in `report.py`, so an earlier round
+re-reads as it was reported.
 
 **A contrast pairing trials from different rounds gets no verdict.** It keeps
 its mean and interval and counts as neither a win nor a fail.
