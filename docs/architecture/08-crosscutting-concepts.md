@@ -577,6 +577,10 @@ registers. Round 5's:
 | `reference − hybrid` | H3: does naming the templates alone deliver less |
 | `skills − inline` | the same rules, with and without the split into skills |
 
+A round that measures a template change registers one contrast,
+`candidate − baseline`, with both arms run in that round
+([ch. 4.2](04-solution-strategy.md)).
+
 Earlier rounds' contrasts stay declared in `report.py`, so an earlier round
 re-reads as it was reported.
 

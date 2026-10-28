@@ -43,12 +43,7 @@ from, or estimated.
 
 ## Open findings
 
-| Finding | Journey | Issue |
-| ------- | ------- | ----- |
-| Nothing checks that a hypothesis was committed before its round's first trial | [Register a hypothesis](prepare/register-a-hypothesis.md) | #14 |
-| No CI runs the self tests | [Check the judge](check/check-the-judge.md) | #6 |
-| No index of reports in this repository | [Read a report](read/read-a-report.md) | #17 |
-| A candidate compared with an earlier round's baseline gets no verdict | [Measure a template change](read/measure-a-template-change.md) | #18 |
+None. A finding that needs work gets an issue and a row here.
 
 ## Adding a journey
 

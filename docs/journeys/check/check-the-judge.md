@@ -39,7 +39,7 @@ py tests/efficacy/judge.py --root C:/efficacy/control-<date> --repeat 3
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | No CI runs the control's self test. This repository has had no CI since the split from the templates | Open, #6 |
+| 1 | No CI ran the control's self test after the split from the templates. The self-tests workflow now runs it on every push and pull request | Settled in `.github/workflows/self-tests.yml` |
 | 2 | A mutation that silently did nothing would read as the judge holding. The builder refuses any mutation that did not land | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |
 | 3 | The cross-check judge reads the same trees in a root of its own, never averaged with the rounds' judge | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |
 | 4 | The security and data-protection rows cannot move on the first base, which has no sign-in. Their trees come from a second base, one uncounted calibration trial | Settled in [ch. 8.6.7](../../architecture/08-crosscutting-concepts.md) |

@@ -68,7 +68,7 @@ gives each its scenarios.
 | Role | Wants from the benchmark |
 | ---- | ------------------------ |
 | Owner of the templates | Evidence for or against each design choice, such as ADR-052 and ADR-058 in `solid-ai-templates` |
-| Maintainer of a fork | A way to measure a trimmed or rewritten chain against the upstream baseline ([ch. 4.2](04-solution-strategy.md)) |
+| Maintainer of a fork | A way to measure a trimmed or rewritten chain against the upstream baseline, head to head in one round ([ch. 4.2](04-solution-strategy.md)) |
 | Adopter of the templates | A plain answer: will a generated file make my agent's code better, and what will it cost |
 | Operator of a round | Commands that refuse a bad run before it costs money, and resume after an interruption |
 | Reader of a report | Verdicts that say what they rest on, with their caveats beside them |
