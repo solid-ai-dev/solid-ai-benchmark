@@ -601,6 +601,34 @@ def is_round5(trials):
     return any(arm_of(name) in ROUND5_ARMS for name in trials)
 
 
+# The arms round 5 registers. A block is complete only when every one of
+# them has its trial, so a run that lost a trial or an arm is part-run.
+ROUND5_RUN = ("none", "inline", "hybrid", "reference", "skills")
+
+
+def owed_blocks(trials):
+    """The blocks of round 5's K that still miss a registered arm's trial,
+    in order."""
+    return [block for block in range(1, ROUND5_K + 1)
+            if any(trial_name(arm, block) not in trials
+                   for arm in ROUND5_RUN)]
+
+
+def blocks_named(blocks):
+    """Block numbers in words, runs joined: blocks 2, 7 and 9 to 15."""
+    spans = []
+    for block in blocks:
+        if spans and block == spans[-1][1] + 1:
+            spans[-1][1] = block
+        else:
+            spans.append([block, block])
+    parts = ["%d" % low if low == high else "%d to %d" % (low, high)
+             for low, high in spans]
+    words = parts[0] if len(parts) == 1 else "%s and %s" % (
+        ", ".join(parts[:-1]), parts[-1])
+    return ("block %s" if len(blocks) == 1 else "blocks %s") % words
+
+
 def margins_of(trials):
     """The margins a run's contrasts are held against."""
     return ROUND5_MARGINS if is_round5(trials) else MARGINS
@@ -929,7 +957,8 @@ def assess_escalation(trials, results, seed, withdrawn=None, root=None):
     """
     k = max((index_of(name) for name in trials), default=0)
     if is_round5(trials):
-        return {"k": k, "state": "registered", "owed": None, "triggers": []}
+        return {"k": k, "state": "registered", "owed": None, "triggers": [],
+                "owed_blocks": owed_blocks(trials)}
     if k < K_PRIMARY:
         return {"k": k, "state": "not assessed", "owed": None, "triggers": []}
     if k == K_PRIMARY:
@@ -1782,7 +1811,7 @@ def round5_checks():
     # Round 5 registers its K, so a run short of it is part-run and no run
     # of it owes the escalation of a K = 3 round.
     state = assess_escalation(run, {}, 0)["state"]
-    runs = text[text.find("## Runs per arm"):][:400]
+    runs = " ".join(text[text.find("## Runs per arm"):][:400].split())
     checks.append(("a round-5 run owes no escalation and names the blocks "
                    "still owed", state == "registered"
                    and "## The escalation" not in text
@@ -1798,6 +1827,31 @@ def round5_checks():
     checks.append(("from six blocks no interval is called descriptive",
                    "descriptive" not in head
                    and "95 % bootstrap interval" in head, head[-300:]))
+
+    # Fourteen whole blocks and one trial of the fifteenth are not the
+    # round: completeness is every registered arm in every block.
+    almost = {trial_name(arm, index): {} for arm in ROUND5_RUN
+              for index in range(1, ROUND5_K)}
+    almost[trial_name("none", ROUND5_K)] = {}
+    gap = dict(almost)
+    del gap[trial_name("skills", 7)]
+    whole = dict(almost, **{trial_name(arm, ROUND5_K): {}
+                            for arm in ROUND5_RUN})
+    got = [owed_blocks(run) for run in (almost, gap, whole)]
+    named = escalation_section(assess_escalation(almost, {}, 0))
+    checks.append(("one trial of the last block leaves the round part-run",
+                   got == [[ROUND5_K], [7, ROUND5_K], []]
+                   and "block %d still misses" % ROUND5_K in "\n".join(named)
+                   and blocks_named([2, 7, 9, 10, 11]) ==
+                   "blocks 2, 7 and 9 to 11", (got, named)))
+
+    # Fifteen runs with one under the bare arm's mean are counted in digits.
+    values = {"none": {index: 1.0 for index in range(1, ROUND5_K + 1)},
+              "skills": {index: 1.0 for index in range(1, ROUND5_K + 1)}}
+    values["skills"][3] = 0.5
+    got = suite_cell({"task_success": {"values": values}}, "skills-none")
+    checks.append(("a dip among fifteen runs is named without a crash",
+                   got == "97 %%, one run of %d at 50 %%" % ROUND5_K, got))
     return checks
 
 
@@ -1919,7 +1973,7 @@ def suite_cell(table, name):
     dipped = [value for value in left if value < right - SUITE_DIP]
     if dipped:
         text += ", %s run of %s at %d %%" % (
-            COUNTED[len(dipped)], COUNTED[len(left)], round(100 * min(dipped)))
+            counted(len(dipped)), counted(len(left)), round(100 * min(dipped)))
     return text
 
 
@@ -2234,8 +2288,9 @@ def caveats_line(trials, escalation, withdrawn, lost, scans):
         if scan["hits"] and scan["name"] not in reached:
             reached.append(scan["name"])
     if escalation["state"] == "registered":
-        runs = ("K = %d of the %d round 5 registers, with no escalation"
-                % (escalation["k"], ROUND5_K))
+        runs = ("%d of the %d blocks round 5 registers complete, with no "
+                "escalation" % (ROUND5_K - len(escalation["owed_blocks"]),
+                                ROUND5_K))
     else:
         runs = "escalation to K = %d %s" % (K_CEILING,
                                             escalation_phrase(escalation))
@@ -2318,13 +2373,16 @@ def escalation_section(escalation):
                  "from the noise of the rounds before it, and allows no "
                  "escalation." % ROUND5_K,
                  ""]
-        if k < ROUND5_K:
-            lines.append("**Part-run.** The run holds K = %d, so blocks %d "
-                         "to %d are still owed before any verdict below is "
-                         "the round's." % (k, k + 1, ROUND5_K))
+        owed = escalation["owed_blocks"]
+        if owed:
+            lines.append("**Part-run.** A block is complete when every "
+                         "registered arm has its trial in it; %s still %s a "
+                         "trial before any verdict below is the round's."
+                         % (blocks_named(owed),
+                            "misses" if len(owed) == 1 else "miss"))
         else:
-            lines.append("**Complete.** The run holds all %d blocks."
-                         % ROUND5_K)
+            lines.append("**Complete.** Every registered arm has its trial "
+                         "in all %d blocks." % ROUND5_K)
         return lines
     lines = ["## The escalation to K = %d" % K_CEILING,
              "",
@@ -3352,7 +3410,8 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in lost_checks())
     checks.extend((label, ok, ok) for label, ok in rescan_checks())
     for label, ok, got in checks:
-        print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r" % got))
+        print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
+                              % (got,)))
     passed = sum(1 for _, ok, _ in checks if ok)
     lib.print_verdict(passed == len(checks),
                       "%d/%d self-test checks passed"

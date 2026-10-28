@@ -258,8 +258,11 @@ def reach_denials(root, workspace):
     """
     root = os.path.abspath(root)
     own = os.path.basename(os.path.abspath(workspace))
-    names = {trial_name(arm, trial)
-             for arm in ARMS for trial in range(1, K_CEILING + 1)}
+
+    # Every block any run may hold, so no trial of a long round is left
+    # readable by the trials of its other blocks.
+    names = {trial_name(arm, trial) for arm in ARMS
+             for trial in range(1, max(K_CEILING, ROUND5_K) + 1)}
     names |= {"change-" + name for name in names}
     targets = [repository_root(), scoring_area(root),
                os.path.join(root, "home"), os.path.join(root, "void")]
@@ -2736,6 +2739,9 @@ def denial_checks():
          all(denied(os.path.join(root, entry))
              for entry in ("full-1", "none-2", "change-none-1",
                            "change-hand-5", "home", "void"))),
+        ("a round-5 run's last block is denied too",
+         all(denied(os.path.join(root, trial_name(arm, ROUND5_K)))
+             for arm in ROUND5_ARMS)),
         ("tarballs and run records are denied",
          "Read(%s/*.tar)" % spelled in rules
          and "Read(%s/run-*.json)" % spelled in rules),
