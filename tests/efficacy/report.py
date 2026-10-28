@@ -45,9 +45,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 
 # Round 5's registration, relative to this repository. Its hypotheses bind
-# only if they were committed before its first trial ran and left unchanged
-# after, so a registration last committed later reads the results first.
+# only if they landed on the main branch before its first trial ran and stayed
+# unchanged after, so a registration that landed later read the results first.
 ROUND5_REGISTRATION = "docs/rounds/round-5.md"
+
+# A registration counts once it is on this branch, not on a branch of its own.
+REGISTRATION_BRANCH = "main"
 
 # A round's report is its record, kept beside the templates it measured:
 # under the templates source's docs/audits/. A report written to any such
@@ -1046,26 +1049,46 @@ def started(record):
 
 def registration_problem(root, registration, repository=REPOSITORY):
     """Why the round's registration does not predate its first trial, or
-    None when it was committed before that trial and not changed since."""
-    first = min(filter(None, map(started, run_records(root))), default=None)
-    if first is None:
+    None when it landed on the main branch before that trial and is
+    unchanged since."""
+    moments = []
+    for record in run_records(root):
+        try:
+            moment = datetime.datetime.fromisoformat(record["started_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+
+        # A harness from before offsets were recorded wrote local time with no
+        # zone, which no machine can order against a commit's date for sure.
+        if moment.tzinfo is None:
+            return ("trial %s started at %s, which carries no UTC offset, so "
+                    "it cannot be ordered against %s"
+                    % (trial_of(record), record["started_at"], registration))
+        moments.append(moment)
+    if not moments:
         return "no run record under %s says when the first trial ran" % root
+    first = min(moments)
     if git(repository, "status", "--porcelain", "--", registration):
         return "%s has changes that are not committed" % registration
-    committed = git(repository, "log", "-1", "--format=%cI", "--",
-                    registration)
-    if not committed:
-        return "%s is not committed" % registration
+    if git(repository, "diff", "--name-only", REGISTRATION_BRANCH, "--",
+           registration):
+        return ("%s differs from %s's copy, so it has not landed; merge it "
+                "or pull %s" % (registration, REGISTRATION_BRANCH,
+                                REGISTRATION_BRANCH))
 
-    # The committer date, not the author date: a registration counts from when
-    # it landed, so one written before the first trial but landed after it is
-    # refused.
-    landed = datetime.datetime.fromisoformat(committed)
-    if landed.timestamp() > first:
-        return ("%s was last committed at %s, after the first trial started "
-                "at %s" % (registration, committed,
-                           datetime.datetime.fromtimestamp(first)
-                           .isoformat(timespec="seconds")))
+    # The first-parent line is the main branch's own history, so a merge that
+    # brought the registration in is read at the merge, not at the branch
+    # commit beneath it. GitHub's squash and rebase merges stamp the commit
+    # with the merge time; a fast-forward pushed from a clone keeps the
+    # branch commit's date, which this cannot see past.
+    landed = git(repository, "log", REGISTRATION_BRANCH, "--first-parent",
+                 "-1", "--format=%cI", "--", registration)
+    if not landed:
+        return "%s is not on %s" % (registration, REGISTRATION_BRANCH)
+    if datetime.datetime.fromisoformat(landed) > first:
+        return ("%s landed on %s at %s, after the first trial started at %s"
+                % (registration, REGISTRATION_BRANCH, landed,
+                   first.isoformat()))
     return None
 
 
@@ -2656,8 +2679,9 @@ def lost_checks():
 
 
 def registration_checks():
-    """A round is refused when its registration was committed after its
-    first trial, changed and not committed, or never committed."""
+    """A round is refused when its registration landed on the main branch
+    after its first trial, has not landed, is changed and not committed, or
+    when a trial's start carries no UTC offset."""
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-registration-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
@@ -2665,7 +2689,16 @@ def registration_checks():
     os.makedirs(os.path.join(repository, "docs"))
     registration = "docs/round.md"
     path = os.path.join(repository, *registration.split("/"))
-    git(repository, "init", "-q")
+    identity = ("-c", "user.name=self-test",
+                "-c", "user.email=self-test@example.invalid")
+
+    def commit(when, *args):
+        env = dict(os.environ, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+        git(repository, *(identity + args), env=env)
+
+    def write(text):
+        with io.open(path, "a", encoding="utf-8") as handle:
+            handle.write(text)
 
     def plant_run(name, moment):
         root = os.path.join(scratch, name)
@@ -2674,40 +2707,52 @@ def registration_checks():
                      encoding="utf-8") as handle:
             json.dump({"trials": [{"arm": "none", "trial": 1,
                                    "outcome": "completed",
-                                   "started_at": moment.isoformat(
-                                       timespec="seconds")}]}, handle)
+                                   "started_at": moment}]}, handle)
         return root
 
     def problem(root):
         return registration_problem(root, registration, repository)
 
-    # One run that started an hour before the commit, one an hour after it.
-    now = datetime.datetime.now()
-    before = plant_run("before", now - datetime.timedelta(hours=1))
-    after = plant_run("after", now + datetime.timedelta(hours=1))
-    with io.open(path, "w", encoding="utf-8") as handle:
-        handle.write("# Round\n")
-    uncommitted = problem(after)
+    # The registration lands at 10:00 UTC, written in a +02:00 zone. A trial
+    # at 10:30 UTC follows it, though its clock reads earlier than 12:00.
+    git(repository, "init", "-q", "-b", REGISTRATION_BRANCH)
+    write("# Round\n")
     git(repository, "add", registration)
-    git(repository, "-c", "user.name=self-test",
-        "-c", "user.email=self-test@example.invalid",
-        "commit", "-q", "-m", "register the round")
-    late, early = problem(before), problem(after)
-    with io.open(path, "a", encoding="utf-8") as handle:
-        handle.write("A hypothesis added after the first trial.\n")
+    commit("2026-10-01T12:00:00+02:00", "commit", "-q", "-m", "register")
+    after = plant_run("after", "2026-10-01T10:30:00+00:00")
+    before = plant_run("before", "2026-10-01T09:30:00+00:00")
+    naive = plant_run("naive", "2026-10-01T10:30:00")
+    early, late, zoneless = problem(after), problem(before), problem(naive)
+    unrecorded = problem(repository)
+
+    # An amendment committed on a branch at 11:00, before a trial at 12:00,
+    # and merged into the main branch at 13:00, after it.
+    merged = plant_run("merged", "2026-10-01T12:00:00+00:00")
+    git(repository, "switch", "-q", "-c", "amend")
+    write("A hypothesis.\n")
+    commit("2026-10-01T11:00:00+00:00", "commit", "-q", "-am", "amend")
+    unlanded = problem(merged)
+    git(repository, "switch", "-q", REGISTRATION_BRANCH)
+    commit("2026-10-01T13:00:00+00:00", "merge", "-q", "--no-ff", "amend",
+           "-m", "merge the amendment")
+    merged_late = problem(merged)
+    write("A hypothesis added after the first trial.\n")
     changed = problem(after)
-    unrecorded = problem(os.path.join(scratch, "repository"))
     shutil.rmtree(scratch, ignore_errors=True)
-    return [("a registration committed before the first trial passes",
-             early is None),
-            ("one committed after the first trial is refused",
+    return [("a registration landed before the first trial passes, across "
+             "zones", early is None),
+            ("one landed after the first trial is refused",
              late is not None and "after the first trial" in late),
-            ("one never committed is refused",
-             uncommitted is not None and "not committed" in uncommitted),
-            ("one changed and not committed is refused",
-             changed is not None and "not committed" in changed),
+            ("a trial start with no UTC offset is refused",
+             zoneless is not None and "no UTC offset" in zoneless),
             ("a root with no run record is refused",
-             unrecorded is not None and "no run record" in unrecorded)]
+             unrecorded is not None and "no run record" in unrecorded),
+            ("an amendment on a branch of its own is refused",
+             unlanded is not None and "has not landed" in unlanded),
+            ("one merged after the first trial is read at the merge",
+             merged_late is not None and "T13:00:00" in merged_late),
+            ("one changed and not committed is refused",
+             changed is not None and "not committed" in changed)]
 
 
 def rescan_checks():

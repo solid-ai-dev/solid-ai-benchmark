@@ -25,9 +25,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 from harness import (ARMS, PROMPT, TrialError, arm_name,  # noqa: E402
-                     assert_outside_repository, canonical, project_folder,
-                     remove_tree, scorable_trials, scoring_area, spellings,
-                     write_run)
+                     assert_outside_repository, canonical, now,
+                     project_folder, remove_tree, scorable_trials,
+                     scoring_area, spellings, write_run)
 
 # The scoring area's per-trial readings, each a JSON file named for the
 # trial, that a reused trial brings with it.
@@ -206,7 +206,7 @@ def reuse(source, target, arms):
     if labels:
         write_map(scoring_area(target), mapping)
 
-    started_at = datetime.datetime.now()
+    started_at = now()
     os.makedirs(target, exist_ok=True)
     run_file = os.path.join(target, "run-%s-reused.json"
                             % started_at.strftime("%Y-%m-%dT%H-%M-%S"))

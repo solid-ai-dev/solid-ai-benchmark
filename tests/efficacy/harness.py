@@ -441,10 +441,20 @@ def assert_no_ambient_context(workspace, home):
             % ", ".join(found))
 
 
-def git(workspace, *args):
+def now():
+    """The time now, with this machine's UTC offset."""
+
+    # A record is read on whatever machine writes the report, so a time
+    # without its offset would be read in that machine's zone, and could
+    # order wrongly against a commit's date.
+    return datetime.datetime.now().astimezone()
+
+
+def git(workspace, *args, env=None):
     """Run git in the workspace, raising on a non-zero status."""
     proc = subprocess.run(["git", "-C", workspace] + list(args),
-                          capture_output=True, text=True, encoding="utf-8")
+                          capture_output=True, text=True, encoding="utf-8",
+                          env=env)
     if proc.returncode != 0:
         raise TrialError("git %s failed in %s: %s"
                          % (" ".join(args), workspace, proc.stderr.strip()))
@@ -1511,7 +1521,7 @@ def run_agent(workspace, name, prompt, record, root, home, options):
         "environment_removed": {"names": inherited_names(os.environ),
                                 "path": interpreter_directories(os.environ)},
         "templates_tree": lib.tree_id(),
-        "started_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "started_at": now().isoformat(timespec="seconds"),
     })
     if options.dry_run:
         record["outcome"] = "dry-run"
@@ -1707,7 +1717,7 @@ def in_flight(arm, trial):
     when."""
     return {"arm": arm, "trial": trial, "outcome": "running",
             "harness_pid": os.getpid(),
-            "started_at": datetime.datetime.now().isoformat(timespec="seconds")}
+            "started_at": now().isoformat(timespec="seconds")}
 
 
 def harness_alive(pid, table):
@@ -3112,7 +3122,7 @@ def main(argv):
                 return 1
             print("the agent sees the skills arm's %d skills" % len(seen))
 
-    started_at = datetime.datetime.now()
+    started_at = now()
     run_file = os.path.join(
         work, "run-%s.json" % started_at.strftime("%Y-%m-%dT%H-%M-%S"))
     records = []

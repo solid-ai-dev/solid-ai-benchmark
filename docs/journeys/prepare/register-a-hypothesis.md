@@ -32,7 +32,7 @@ Assumptions:
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | Nothing in the code checked that a round's hypothesis was committed before its first trial. The report now refuses a round whose registration was last committed after its first trial started, or has uncommitted changes | Settled in [ch. 8.1.1](../../architecture/08-crosscutting-concepts.md) |
+| 1 | Nothing in the code checked that a round's hypothesis was committed before its first trial. The report now refuses a round whose registration landed on `main` after its first trial started, or differs from `main`'s copy | Settled in [ch. 8.1.1](../../architecture/08-crosscutting-concepts.md) |
 | 2 | A hypothesis decides a record in another repository, such as ADR-058 in `solid-ai-templates`. The registration names it, and the record cites the report | Settled in [round 5's registration](../../rounds/round-5.md) |
 | 3 | A hypothesis on agreement across trials has one value per arm, so no interval. Its result is descriptive | Settled in [round 4's registration, 12.1](../../rounds/round-4.md) |
 | 4 | Once a round's trial has run, its section may not change | Settled in [round 5's registration, 13.4](../../rounds/round-5.md) |

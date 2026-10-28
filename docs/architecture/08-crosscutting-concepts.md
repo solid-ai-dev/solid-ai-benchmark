@@ -14,10 +14,17 @@ The question, the metrics and the rule for reading a result are written down
 before any trial runs. Nobody can then pick the metric or the threshold that
 makes the templates look good after seeing the numbers.
 
-From round 5 on, the report holds a round to that order. It refuses a
-round whose registration under `docs/rounds/` was last committed after the
-round's first trial started, by the committer date, or has changes not yet
-committed.
+From round 5 on, the report holds a round to that order. It refuses a round
+whose registration under `docs/rounds/`:
+
+- landed on `main` after the round's first trial started, read on `main`'s
+  first-parent line so a merge counts at the merge
+- differs from `main`'s copy, or has changes not yet committed
+
+Trials record their start with its UTC offset, so the order holds on any
+machine; a start with no offset is refused rather than guessed. A
+fast-forward pushed from a clone keeps its branch commit's date, so
+registrations land through a pull request's squash or rebase merge.
 
 | Setting | Value | Why |
 |---|---|---|
