@@ -1,0 +1,64 @@
+name: Self-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  self-tests:
+    # The owner runs on Windows and the self-tests take both the Windows and the
+    # POSIX paths, so each is proved on its own runner.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      BENCHMARK_TEMPLATES: ${{ github.workspace }}/solid-ai-templates
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: solid-ai-benchmark
+
+      # The benchmark carries no templates, so every self-test names a clone of
+      # them. A self-test makes no model call, so it needs no secret.
+      - uses: actions/checkout@v4
+        with:
+          repository: solid-ai-dev/solid-ai-templates
+          path: solid-ai-templates
+
+      # The interpreter every scored trial runs under.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The self-tests commit in scratch workspaces, which needs an identity.
+      - name: Configure git
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+
+      - name: Install pyflakes
+        run: python -m pip install --disable-pip-version-check pyflakes
+
+      - name: Run every self-test
+        working-directory: solid-ai-benchmark
+        run: |
+          set -e
+          for module in harness generate_arm score judge report archive reuse \
+              security control/control; do
+            echo "::group::$module"
+            python "tests/efficacy/$module.py" --self-test
+            echo "::endgroup::"
+          done
+
+      - name: Pyflakes
+        working-directory: solid-ai-benchmark
+        run: python -m pyflakes tests
