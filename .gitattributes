@@ -1,0 +1,7 @@
+# Text files are stored and checked out with LF on every platform, so a Windows
+# checkout matches the index and a tracked file hashes the same everywhere.
+* text=auto eol=lf
+
+# Images and the control's pinned bases are never converted.
+*.png binary
+*.zip binary
