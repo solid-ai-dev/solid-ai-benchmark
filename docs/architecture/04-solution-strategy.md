@@ -33,8 +33,16 @@ The same harness measures a template change. The **baseline** is the current
 templates; the **candidate** is the trimmed or rewritten version. Same
 paired design, same rules.
 
-Round 3 is that baseline for v3.0: v3.0's evidence phase re-runs this
-harness with the fork's chain and compares against it.
+**Both run in the candidate's own round, head to head.** The round holds two
+arms, the baseline's and the candidate's, each generated from its own chain
+and interleaved by block. It registers one contrast,
+`candidate − baseline`, and no `none` arm, since the question is the
+candidate against the baseline, not either against no file.
+
+Why: a contrast pairing trials from different rounds gets no verdict ([ch.
+8.7.1](08-crosscutting-concepts.md)), so a baseline from an earlier round
+could only describe. Paired by block, the two arms meet the same model on
+the same day. Round 3 stays a reference for v3.0, read without a verdict.
 
 **A trim is a free win only where every quality metric held ([ch.
 8.1.2](08-crosscutting-concepts.md)) and tokens fell.**

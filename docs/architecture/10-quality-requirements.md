@@ -49,7 +49,7 @@ checks it.
 | Q5-1 | The run root is deleted after a round | The archive restores it, and scoring and judging run on the restored root | `archive.py --restore` |
 | Q5-2 | A reading changes after the archive was verified | The report refuses to write under `docs/audits/` | `archive.py`, `report.py` |
 | Q5-3 | A run stops part way | The run record holds every trial it finished, and `--from` resumes at the next | `harness.py` |
-| Q5-4 | A later template revision is to be measured | The same harness runs it as a candidate against the recorded baseline | Design [ch. 4.2](04-solution-strategy.md) |
+| Q5-4 | A later template revision is to be measured | The same harness runs it as a candidate against the baseline, both in one round | Design [ch. 4.2](04-solution-strategy.md) |
 | Q5-5 | A report is aimed at any `docs/audits/` before the round is archived | Refused, in the templates source as anywhere else | `report.py --self-test` |
 
 ## 10.6 The numbers behind the rules
