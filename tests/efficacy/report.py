@@ -133,6 +133,23 @@ MARGINS.update((key, ("10 % relative", 0.10, RELATIVE))
 # a round can afford rules out a loss of less than one.
 ROUND5_MARGINS = dict(MARGINS, adherence=("8 pp", 0.08, ABSOLUTE))
 
+# Round 5 reads app code's size against a band rather than zero. A better
+# solution is often a little bigger, with layering and error handling, so a
+# rise inside the margin reads as held and only one wholly past it as worse.
+ROUND5_MARGINS.update((key, ("20 % relative", 0.20, RELATIVE))
+                      for key in ("app_lines", "app_files"))
+BANDED = ("app_lines", "app_files")
+
+# The size rows round 5 replaces with app code. Source lines miss templates
+# and count tests kept in the package; files count docs and configuration.
+# They are still printed, without a verdict, so nothing reads them twice.
+SUPERSEDED_IN_ROUND5 = ("source_lines", "tracked_files")
+
+# The app-code rows decide from round 5 on. An earlier round rescored by the
+# current scorer carries them too, but was registered on source lines and
+# files, so it prints them without a verdict and reads as it was reported.
+FROM_ROUND5 = ("app_lines", "app_files")
+
 # The practical thresholds that can owe the one
 # escalation to K = 5. Only a primary dimension triggers it, so no other
 # metric's threshold is carried here, where something could come to read it.
@@ -365,6 +382,12 @@ METRICS = (
      lambda t: metric_value(t, "scope", "source_lines")),
     ("tracked_files", "Files", DOWN,
      lambda t: metric_value(t, "scope", "tracked_files")),
+    ("app_lines", "App code, lines", DOWN,
+     lambda t: metric_value(t, "scope", "app_lines")),
+    ("app_files", "App code, files", DOWN,
+     lambda t: metric_value(t, "scope", "app_files")),
+    ("test_lines", "Test code, lines", NEUTRAL,
+     lambda t: metric_value(t, "scope", "test_lines")),
     ("unasked_artifacts", "Artifacts nobody asked for", DOWN,
      lambda t: metric_value(t, "scope", "unasked_artifacts")),
 
@@ -496,6 +519,22 @@ CROSSING_VERDICT = "no verdict: the arms were judged in different rounds"
 # What a judge-row contrast reads as when the other vendor's judge reads it in
 # the opposite direction. Like the crossing verdict, it counts nowhere.
 DISAGREE_VERDICT = "no verdict: the two judges disagree on its direction"
+
+
+def banded_verdict(interval, direction, margin):
+    """Better, worse, held or no improvement shown, where a loss inside
+    `margin`, in the metric's own units, reads as held rather than worse."""
+    low, high = interval.get("low"), interval.get("high")
+    if low is None or high is None:
+        return "not computed"
+    loss_low, loss_high = (-high, -low) if direction == UP else (low, high)
+    if loss_high < 0:
+        return "better"
+    if loss_low > margin:
+        return "worse"
+    if loss_high <= margin:
+        return "held"
+    return "no improvement shown"
 
 
 def verdict(interval, direction):
@@ -705,8 +744,11 @@ def crossed_labels(trials):
 
 def collect(trials, metrics=METRICS):
     """Metric values by metric, arm and trial index."""
+    superseded = SUPERSEDED_IN_ROUND5 if is_round5(trials) else FROM_ROUND5
     table = {}
     for key, label, direction, accessor in metrics:
+        if key in superseded:
+            direction = NEUTRAL
         row = {}
         for name, trial in sorted(trials.items()):
             try:
@@ -750,12 +792,18 @@ def contrasts(table, seed, crossed=(), margins=None):
             interval = bca_interval(pairs, seed)
             observed = [value for value in right.values() if value is not None]
             across = label in crossed
+            read = verdict(interval, entry["direction"])
+            band = (margins or MARGINS).get(key)
+            if key in BANDED and band and observed and statistics.fmean(
+                    observed):
+                read = banded_verdict(interval, entry["direction"],
+                                      band[1] * abs(statistics.fmean(
+                                          observed)))
             per_contrast[label] = {
                 "pairs": pairs,
                 "mean": round(statistics.fmean(pairs), 4),
                 "interval": interval,
-                "verdict": (CROSSING_VERDICT if across
-                            else verdict(interval, entry["direction"])),
+                "verdict": CROSSING_VERDICT if across else read,
                 "non_inferior": None if across else non_inferior(
                     key, interval, entry["direction"],
                     statistics.fmean(observed) if observed else None,
@@ -1592,7 +1640,12 @@ FILES = {"full": "Templates' inline file",
 
 # The arm every file arm is read against: the bare agent.
 BARE = "none"
-SIZE = (("lines", "source_lines"), ("files", "tracked_files"))
+
+# Code size, by the rows earlier rounds read and the app-code rows round 5
+# reads. A run gives a verdict on one pair only: round 5 reports the earlier
+# rows without one, and earlier rounds have no app-code scores.
+SIZE = (("lines", "source_lines"), ("files", "tracked_files"),
+        ("lines", "app_lines"), ("files", "app_files"))
 COUNTED = ("no", "one", "two", "three", "four", "five")
 NOT_MEASURED = "not measured"
 
@@ -2048,6 +2101,8 @@ def size_cell(table, results, name):
     only the ones the interval separated."""
     parts, measured = [], False
     for word, key in SIZE:
+        if key not in results:
+            continue
         cell = share_cell(table, results, key, name, None)
         measured = measured or cell != NOT_MEASURED
         if cell not in (None, NOT_MEASURED):
@@ -2061,7 +2116,7 @@ def reads_cell(answered, results, name):
     """One phrase from the answer and the size and cost verdicts."""
     if answered == "Not measured":
         return NOT_MEASURED
-    bulk = any(results[key][name]["verdict"] == "worse" for _, key in SIZE)
+    bulk = any(read_as(results, name, key, "worse") for _, key in SIZE)
     if answered == "Yes":
         return "quality, %s bulk" % ("with" if bulk else "no")
     added = (["bulk"] if bulk else []) + (
@@ -2093,6 +2148,7 @@ def reading(answers, lengths):
 # the follow-up change's churn, and what the judge read — each phrase said
 # only where its metric was read better or worse.
 STRUCTURE = (("more files", "tracked_files"), ("more code", "source_lines"),
+             ("more files", "app_files"), ("more code", "app_lines"),
              ("more public names beyond the spec", "surface_extra"))
 EFFORT = (("turns", "turns"), ("tokens", "output_tokens"),
           ("time", "wall_seconds"), ("cost", "cost_usd"))
@@ -2110,7 +2166,7 @@ SHORT_FILE = 60
 
 
 def read_as(results, name, key, verdict):
-    return results[key][name]["verdict"] == verdict
+    return results.get(key, {}).get(name, {}).get("verdict") == verdict
 
 
 def counted(n):
@@ -2513,7 +2569,9 @@ def contrast_cell(contrast, verdicts=True):
         return body
     verdict_text = contrast["verdict"]
     inferiority = contrast.get("non_inferior")
-    if inferiority and verdict_text == "no improvement shown":
+    if inferiority and verdict_text == "held":
+        verdict_text += " within %s" % inferiority["margin"]
+    elif inferiority and verdict_text == "no improvement shown":
         verdict_text += (", preserved within %s" % inferiority["margin"]
                          if inferiority["within"] else
                          ", not preserved within %s" % inferiority["margin"])
@@ -2676,6 +2734,57 @@ def lost_checks():
             ("an unrecorded void says no run record holds it",
              len(unrecorded_row) == 1
              and "no run record" in unrecorded_row[0]["reason"])]
+
+
+def band_checks(seed):
+    """App code's size reads against a band: a rise inside the margin is
+    held, only one wholly past it worse; round 5 reports the rows it
+    supersedes without a verdict, and an earlier round keeps them."""
+
+    # A margin of 20 lines: the loss side of each interval, for a metric that
+    # improves downward, placed against it.
+    checks = [(label, banded_verdict({"low": low, "high": high}, DOWN, 20)
+               == expected, banded_verdict({"low": low, "high": high},
+                                           DOWN, 20))
+              for label, low, high, expected in (
+                  ("a rise inside the band is held", 5, 15, "held"),
+                  ("a band that holds zero is held", -5, 10, "held"),
+                  ("a fall wholly below zero is better", -10, -2, "better"),
+                  ("a rise wholly past the band is worse", 25, 40, "worse"),
+                  ("one that straddles the band is undecided", 10, 30,
+                   "no improvement shown"))]
+
+    # Skills writes 10 % more app code than none in every block, and twice the
+    # files of a tree that also holds docs.
+    def trial(app, files):
+        return {"scores": {"scope": {"value": {
+            "app_lines": app, "app_files": 10, "source_lines": app,
+            "tracked_files": files}}}}
+    trials = {}
+    for index in (1, 2, 3, 4, 5, 6):
+        trials["none-%d" % index] = trial(1000 + index, 20)
+        trials["skills-%d" % index] = trial(1100 + index + index % 2, 40)
+    results = contrasts(collect(trials), seed, (), ROUND5_MARGINS)
+    app = results["app_lines"]["skills-none"]["verdict"]
+    files = results["tracked_files"]["skills-none"]["verdict"]
+    earlier = {name.replace("skills", "full"): value
+               for name, value in trials.items()}
+    reread = contrasts(collect(earlier), seed)
+    kept = reread["tracked_files"]["full-none"]
+    later = reread["app_lines"]["full-none"]["verdict"]
+    shares = size_cell(collect(earlier), reread, "full-none")
+    checks.extend([
+        ("an earlier round rescored prints app code without a verdict",
+         later == "reported without a verdict", later),
+        ("and names each size share once",
+         shares == "lines +10 %, files +100 %",
+         shares),
+        ("round 5 reads a 10 % rise in app code as held", app == "held", app),
+        ("round 5 reports the files it supersedes without a verdict",
+         files == "reported without a verdict", files),
+        ("an earlier round still reads its files row", kept["verdict"]
+         == "worse", kept["verdict"])])
+    return checks
 
 
 def registration_checks():
@@ -3531,6 +3640,7 @@ def self_test(seed):
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
+    checks.extend(band_checks(seed))
     checks.extend(failed_build_checks())
     checks.extend(record_checks())
     checks.extend((label, ok, ok) for label, ok in reach_checks())
