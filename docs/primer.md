@@ -156,7 +156,7 @@ own, in any order.
 | **Attack probes** | 11 security attacks and 3 personal-data checks, each set read as its own pass rate | passed, of 11 and of 3 |
 | **Judge's scores** | The blind judge reads the code three times and scores design, readability, maintainability, security and data protection | 1 to 5 |
 | **Conventions** | Code tools check a 13-item checklist, such as lint, types and test coverage | met, of 13 |
-| **Size** | The lines and files the agent wrote | lines |
+| **Size** | The lines and files of app code the agent wrote, tests counted apart. A small rise reads as held | lines |
 | **Cost** | The dollars, turns and minutes the run took | $ |
 
 ### 4.4 Reading the result

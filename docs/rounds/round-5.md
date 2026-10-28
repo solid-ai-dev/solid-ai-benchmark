@@ -3,7 +3,8 @@
 Registered in the design on 2026-10-26, before any round-5 trial ran, and
 amended twice on 2026-10-27, still before any trial: once to change the judge,
 and once to size the round from the noise of rounds 3 and 4 (#38). Moved here
-unchanged but for its links.
+unchanged but for its links, and amended on 2026-10-28, still before any trial,
+to read code size as app code and test code (#39).
 
 ## 13. Round 5: how the rules are delivered
 
@@ -170,3 +171,26 @@ from build to build rather than from re-reading one app, so more blocks, not mor
 readings, buy the precision.
 
 Nothing in this section changes once a round-5 trial has run.
+
+### 13.6 Code size
+
+Amended on 2026-10-28 (#39), before any round-5 trial. Round 5 reads size as app
+code and test code, against a band, in place of source lines and files:
+
+| Row | What it counts | Direction | Margin | Smallest change that matters |
+| --- | --- | --- | --- | --- |
+| App code, lines | The app's Python outside its tests, with its templates, styles and scripts | down | 20 % relative | 40 % |
+| App code, files | The same files | down | 20 % relative | 40 % |
+| Test code, lines | Python under a `tests` directory or named `test_*.py`, `*_test.py` or `conftest.py` | none | — | — |
+
+- An app-code row is **held** where the whole interval sits below the margin,
+  even above zero, and **worse** only where it sits wholly past it.
+- Docs and configuration count toward no size.
+- Committed bytecode, caches, databases and coverage data count as artifacts
+  nobody asked for.
+- Source lines and files are still printed, without a verdict.
+
+Why: a better solution is often a little bigger, with tests, error handling and
+layering, so a small rise should not read as worse. In round 4's trees, tests
+were 10 to 40 % of the Python lines, and docs, templates and config outnumbered
+the app's modules, so the old rows measured neither code nor bulk cleanly.

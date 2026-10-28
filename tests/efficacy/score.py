@@ -20,6 +20,7 @@ layout and reports a clean trial.
 
 import argparse
 import datetime
+import fnmatch
 import glob
 import io
 import json
@@ -73,6 +74,24 @@ SECRET_KEY = secrets.token_hex(32)
 # metric the report shows rather than a fault it punishes.
 UNASKED = ("CHANGELOG", "ADR", "DECISIONS", "PLAYBOOK", "ONBOARDING",
            "JOURNAL", "ROADMAP", "CONTRIBUTING")
+
+# Files a trial committed that running the code wrote, not the agent: caches,
+# bytecode, environments, build output, databases and coverage data. Each is
+# matched against every part of a tracked path, and each counts as an artifact
+# nobody asked for.
+GENERATED = ("__pycache__", "*.pyc", "*.pyo", ".pytest_cache", ".ruff_cache",
+             ".mypy_cache", "venv", ".venv", "node_modules", "build", "dist",
+             "*.egg-info", "*.sqlite", "*.sqlite3", "*.db", ".coverage",
+             ".coverage.*", "coverage.xml", "htmlcov")
+
+# App code is what the application runs or serves: its Python, templates,
+# styles and scripts. Docs and configuration are not code a change has to
+# move through, so they count toward no size.
+APP_SUFFIXES = (".py", ".html", ".jinja", ".jinja2", ".j2", ".css", ".js")
+
+# Test code is a Python file under a tests directory, or named as pytest
+# collects it, wherever it sits.
+TEST_DIRECTORIES = ("tests", "test")
 
 TOOL_TIMEOUT = 900
 
@@ -961,8 +980,26 @@ def adherence(workspace, scores):
                     total_items=len(items))
 
 
+def kind_of(name):
+    """A tracked path's kind: "generated", "test", "app", or None for docs
+    and configuration."""
+    parts = name.split("/")
+    base = parts[-1]
+    if any(fnmatch.fnmatch(part, pattern) for part in parts
+           for pattern in GENERATED):
+        return "generated"
+    if base.endswith(".py") and (
+            any(part in TEST_DIRECTORIES for part in parts[:-1])
+            or base.startswith("test_") or base.endswith("_test.py")
+            or base == "conftest.py"):
+        return "test"
+    if base.endswith(APP_SUFFIXES):
+        return "app"
+    return None
+
+
 def scope(workspace, roots):
-    """Files, lines, and artifacts nobody asked for."""
+    """Files, lines, app and test code, and artifacts nobody asked for."""
     tracked = run(["git", "-C", workspace, "ls-files"], timeout=120)
     if tracked["failed"] or tracked["status"] != 0:
         return absent("the workspace is not a readable git checkout: %s"
@@ -971,10 +1008,24 @@ def scope(workspace, roots):
     unasked = [name for name in files
                if any(token in os.path.basename(name).upper()
                       for token in UNASKED)]
+    kinds = {"app": [], "test": [], "generated": []}
+    for name in files:
+        kind = kind_of(name)
+        if kind:
+            kinds[kind].append(name)
+    unasked = sorted(set(unasked) | set(kinds["generated"]))
+
+    def lines(names):
+        return count_source([os.path.join(workspace, *name.split("/"))
+                             for name in names])["lines"]
+
     source = count_source(roots)
     return measured({"tracked_files": len(files),
                      "source_files": source["files"],
                      "source_lines": source["lines"],
+                     "app_files": len(kinds["app"]),
+                     "app_lines": lines(kinds["app"]),
+                     "test_lines": lines(kinds["test"]),
                      "unasked_artifacts": len(unasked)},
                     unasked=unasked)
 
@@ -1626,6 +1677,42 @@ def coverage_checks(scratch):
     ]
 
 
+def scope_checks(scratch):
+    """Size splits a tree's tracked files into app code, test code and
+    generated files, and leaves docs and configuration out."""
+    tree = os.path.join(scratch, "scope", "tree")
+    planted = {"src/tariff/app.py": "a\nb\nc\n",
+               "src/tariff/templates/invoice.html": "<p>\n</p>\n",
+               "src/tariff/test_rules.py": "t\n",
+               "tests/conftest.py": "c\n",
+               "tests/test_app.py": "x\ny\nz\n",
+               "src/tariff/__pycache__/app.cpython-312.pyc": "b\n",
+               "tariff.db": "rows\n",
+               "CHANGELOG.md": "notes\n",
+               "README.md": "read\nme\n",
+               "pyproject.toml": "[project]\n"}
+    for name, text in planted.items():
+        target = os.path.join(tree, *name.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with io.open(target, "w", encoding="utf-8") as handle:
+            handle.write(text)
+    run(["git", "-C", tree, "init", "-q"], timeout=60)
+    run(["git", "-C", tree, "add", "-f", "."], timeout=60)
+    value = scope(tree, [os.path.join(tree, "src", "tariff")])["value"] or {}
+    return [
+        ("app code is the app's Python and templates, not its tests",
+         (value.get("app_files"), value.get("app_lines")) == (2, 5)),
+        ("test code is a tests directory or a pytest name, anywhere",
+         value.get("test_lines") == 5),
+        ("committed bytecode and a database are artifacts nobody asked for",
+         value.get("unasked_artifacts") == 3),
+        ("docs and configuration count toward no size",
+         value.get("tracked_files") == 10
+         and kind_of("README.md") is None
+         and kind_of("pyproject.toml") is None),
+    ]
+
+
 def python_files_checks(scratch):
     """The trial's Python files are what its Git state would commit, and a
     listing that fails is missing rather than empty."""
@@ -1672,7 +1759,8 @@ def self_test():
               + lock_checks() + html_checks() + readonly_checks(scratch)
               + lock_source_checks(scratch) + unrun_checks(scratch)
               + claim_checks(scratch) + security_checks(scratch)
-              + coverage_checks(scratch) + python_files_checks(scratch))
+              + coverage_checks(scratch) + python_files_checks(scratch)
+              + scope_checks(scratch))
     venv = create_venv(os.path.join(scratch, "venv"))
     checks += boot_checks(scratch, venv)
 

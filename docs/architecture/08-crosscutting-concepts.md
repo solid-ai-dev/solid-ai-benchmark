@@ -49,6 +49,7 @@ below. "No improvement shown" does not mean "no worse".
 | Change-task churn, files and lines | relative % | 15 | 30 |
 | Security probe pass rate (from round 3) | percentage points | 2 | 9 |
 | Data-protection probe pass rate (from round 3) | percentage points | 10 | 30 |
+| App code, lines and files (from round 5) | relative % | 20 | 40 |
 
 - An adherence gain counts only if pass rate held. Following rules while
   breaking the app is not an improvement.
@@ -591,8 +592,12 @@ its mean and interval and counts as neither a win nor a fail.
 - **Better downward:** every static-analysis count, cognitive and cyclomatic
   complexity, tokens, turns, wall time, cost, files, lines, artifacts nobody
   asked for, change-task churn, axe violations, HTML errors.
+- **Better downward, against a band:** from round 5, app code's lines and
+  files. A rise whose whole interval stays inside the margin of section 8.1.2
+  reads as held; only one wholly past it reads as worse.
 - **Neutral, reported without a verdict:** maintainability index,
-  instability.
+  instability, test code's lines, and from round 5 the source lines and files
+  that app code replaces.
 
 ### 8.7.3 What the report prints
 
