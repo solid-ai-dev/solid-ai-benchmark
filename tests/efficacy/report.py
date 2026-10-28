@@ -164,9 +164,9 @@ def per_kloc(trial, *keys):
 def task_success(trial):
     """The hidden suite's pass rate, and zero where nothing installed.
 
-    The design fixes this: a trial whose agent produced no installable
-    workspace scores zero on task success rather than missing, because that is
-    an outcome of the run and not a gap in the measurement.
+    A trial whose agent produced no installable workspace scores zero on
+    task success rather than missing, because that is an outcome of the run
+    and not a gap in the measurement.
     """
     rate = metric_value(trial, "hidden_suite")
     if rate is not None:
@@ -2152,10 +2152,7 @@ def executive_section(trials, table, results, escalation=None,
     file on why it scored so, the reading, the contrasts between files
     scored, and the caveats.
 
-    The owner asked for it on 2026-09-17, after round 1's summary table, and
-    for this table the same day; the summary's score and caveats were folded
-    under it on 2026-09-18. Like the score, it digests the verdict vector and
-    decides nothing.
+    Like the score, it digests the verdict vector and decides nothing.
     """
     active = active_contrasts(trials)
     lines = finding_lines(trials, table, results, active)
@@ -2250,10 +2247,9 @@ def between_files(results, active):
     """One line scoring the contrasts between two files, 1 to 10 with the
     wins and the fails, or None where the run holds none.
 
-    The score was declared after round 1's results were seen (#1786) and
-    the finding table took over its work the same day; it stays for the
-    pairings the table has no column for, folded under it on 2026-09-18
-    (#1820). It digests the verdict vector and decides nothing.
+    The score was declared after round 1's results were seen, and stays
+    for the pairings the finding table has no column for. It digests the
+    verdict vector and decides nothing.
     """
     parts = []
     for treatment, baseline in active:

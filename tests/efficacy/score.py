@@ -980,8 +980,8 @@ def scope(workspace, roots):
 
 def python_files(workspace):
     """The Python files the trial's own Git state would commit: tracked,
-    plus untracked files its `.gitignore` does not exclude (design, section
-    12.1, structure agreement).
+    plus untracked files its `.gitignore` does not exclude: the lists
+    structure agreement compares between an arm's trials.
 
     Taken straight after extraction, before installing or testing adds a
     build directory or a cache. Either listing failing makes the metric

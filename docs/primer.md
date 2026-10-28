@@ -153,7 +153,7 @@ own, in any order.
 | Meter | What it reads | Reads in |
 | ----- | ------------- | -------- |
 | **Hidden tests** | Does the app do what the spec says? Written before any run, and kept where no agent can see them | % passed |
-| **Attack probes** | 11 security attacks and 3 personal-data checks | passed, of 14 |
+| **Attack probes** | 11 security attacks and 3 personal-data checks, each set read as its own pass rate | passed, of 11 and of 3 |
 | **Judge's scores** | The blind judge reads the code three times and scores design, readability, maintainability, security and data protection | 1 to 5 |
 | **Conventions** | Code tools check a 13-item checklist, such as lint, types and test coverage | met, of 13 |
 | **Size** | The lines and files the agent wrote | lines |
