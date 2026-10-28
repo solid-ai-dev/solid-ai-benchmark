@@ -30,7 +30,7 @@ Think of a cooking contest built to be fair:
 | One cook, who never changes | The **builder model**, such as Claude Sonnet 5 |
 | A note on the fridge: none, a short one, a long one | The context file: the only thing that changes |
 | The same kitchen, the same time limit | The same tools, at most $100 or two hours |
-| Each dish cooked three times, since one can be lucky | Each setting built three times: **K** = 3 |
+| Each dish cooked many times, since one can be lucky | Each setting built 15 times: **K** = 15 |
 | Tasters who do not know which note the cook had | The **blind judge** and the **hidden tests** |
 | Rules for winning, written before anyone cooks | The rules, committed before the first run |
 
@@ -125,7 +125,7 @@ Fixed in every run, so only the knobs can move the meters:
   every run. An agent cannot score cleaner by loosening its own lint rules
 - **The judge:** GPT-6 Astra at high effort, blind to the arm, reading
   each app three times
-- **Runs per arm:** fixed by each round before it starts, 3 today
+- **Runs per arm:** fixed by each round before it starts, 15 today
 
 ## 4. One round, start to finish
 
@@ -180,16 +180,16 @@ Section 5 explains the comparison and the verdicts.
 
 A model's behaviour drifts from day to day. So the arms take turns: block 1
 runs every arm once, back to back, then block 2, then block 3. Runs in one
-block meet the same model on the same day.
+block meet the same model on the same day. Each block starts one arm later
+than the last, so no arm always runs first or last.
 
 The benchmark then compares partners, not averages. `inline-1` is compared
-with `none-1`, `inline-2` with `none-2`, and so on. Three differences come
-out, and those three decide.
+with `none-1`, `inline-2` with `none-2`, and so on. The picture shows three
+blocks, so three differences come out.
 
-Three blocks are the smallest useful set, not a limit. The same pattern
-extends to any number K of blocks: 10 blocks give each arm 10 deltas, 20
-give 20. Each extra block adds one more run per arm, and the luck check
-gets sharper with every delta, as section 5.3 shows.
+The same pattern extends to any number K of blocks. Round 5 runs 15, so
+each arm gets 15 deltas. Each extra block adds one more run per arm, and the
+luck check gets sharper with every delta, as section 5.3 shows.
 
 ### 5.2 Reading the bar
 
@@ -213,19 +213,19 @@ that a change is not much worse.
 
 ### 5.3 How many runs it takes
 
-Each round fixes K, the runs per arm, before it starts. The more runs, the
-stronger the claim:
+Each round fixes K, the runs per arm, before it starts, from how noisy the
+meters were in the rounds before it. The more runs, the stronger the claim:
 
 | Runs per arm | What a result can claim |
 | ------------ | ----------------------- |
 | 3 | A signal. Every report says so beside every number |
 | 6 | The fewest where every pair pointing one way counts as proof |
 | about 10 | Enough to catch an effect as big as the run-to-run noise |
+| 15 | Round 5's count: a real loss is caught 98 times in 100, and a loss the size of the margin passes as held at most 5 times in 100 |
 
-If a result is close, the rules allow adding runs once, for example from 3
-to 5. They forbid adding runs again and again until the answer comes out as
-hoped: with enough tries, luck alone would produce it, like flipping a coin
-until it lands heads.
+Runs are never added once the results are seen. With enough tries, luck
+alone would produce the hoped-for answer, like flipping a coin until it
+lands heads.
 
 ## 6. The rules that keep it honest
 

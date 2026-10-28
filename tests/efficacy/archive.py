@@ -293,12 +293,13 @@ def figures(root, seed):
     trials = report.load(root)
     report.exclude_reached(trials, report.reaches(root))
     table = report.collect(trials)
-    results = report.contrasts(table, seed, report.crossed_labels(trials))
+    results = report.contrasts(table, seed, report.crossed_labels(trials),
+                               report.margins_of(trials))
     withdrawn = report.withdrawals(trials)
     report.withdraw(withdrawn, table, results)
     return {"table": table, "results": results, "withdrawn": withdrawn,
             "escalation": report.assess_escalation(trials, results, seed,
-                                                   withdrawn),
+                                                   withdrawn, root),
             "reach": report.reaches(root),
             "lost": [{key: value for key, value in loss.items()
                       if key != "kept"}

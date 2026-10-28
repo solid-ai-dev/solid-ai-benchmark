@@ -15,7 +15,7 @@ setting, not a choice the benchmark made. Chapter 9 records the choices.
 | 6 | The builder and the judge bill against subscriptions | A round's budget is quota, not invoice. The judge's weekly plan limit sets how fast a round is judged |
 | 7 | This repository is public | The hidden suite and the raw runs live in private repositories, `braboj/tariff-hidden-suite` and `braboj/tariff-runs` |
 | 8 | Scoring runs Python 3.12 | Every trial's environment is made by the scorer's own interpreter, so a round is scored under one version |
-| 9 | A K = 3 round needs about 15 GB free | Each scored trial's environment is about 290 MB |
+| 9 | A round needs about 0.5 GB free per trial: about 40 GB for round 5's 75 | Each scored trial's environment is about 290 MB |
 | 10 | GitHub refuses a file over 50 MB on push | The archive refuses one too |
 
 ## 2.2 Organisational constraints
@@ -24,7 +24,7 @@ setting, not a choice the benchmark made. Chapter 9 records the choices.
 | - | ---------- | ----------- |
 | 1 | One owner runs and reads every round | No step may wait for a person, and no person may score. A person in the loop would leak judgement into an arm |
 | 2 | Rules are registered before the trials they govern | A new hypothesis is committed to its round's registration before its first trial. A check chosen afterwards describes and never decides |
-| 3 | K is at most 5, with one escalation from 3 | Sampling until an interval clears zero is not possible |
+| 3 | K is fixed before a round's first trial: at most 5 after one escalation from 3, or 15 in round 5 | Sampling until an interval clears zero is not possible |
 | 4 | `ledger`, a second app, stays sealed | Every round so far measures `tariff`, the development app |
 | 5 | The templates live in another repository | Every run names a templates source with `--templates` or `BENCHMARK_TEMPLATES`, and reports land in that source's `docs/audits/` |
 

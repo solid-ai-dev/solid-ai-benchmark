@@ -22,7 +22,7 @@ Assumptions:
 | 2 | Team lead | Reads the finding table's first row, "Improves the code?", per file | 2 min | Yes, Worse or No, against no file |
 | 3 | Team lead | Reads "Hidden tests passed" against the no-file arm | 2 min | A file that breaks the app is not an improvement, whatever else it gains |
 | 4 | Team lead | Reads code size and cost | 2 min | Signed shares of the bare agent's, shown only where the interval separated them |
-| 5 | Team lead | Reads the caveats line: K, the escalation, lost trials, reach | 3 min | Every interval is descriptive at K = 3 |
+| 5 | Team lead | Reads the caveats line: K, the escalation, lost trials, reach | 3 min | Below K = 6 every interval is descriptive; round 5 runs 15 |
 | 6 | Team lead | Reads the assessment's claims table for the view across rounds | 3 min | One round's verdict can flip in the next |
 | | | Total | about 15 min | |
 

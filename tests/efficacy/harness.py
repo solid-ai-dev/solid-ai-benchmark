@@ -69,6 +69,13 @@ TIMEOUT_S = 7200
 K_PRIMARY = 3
 K_CEILING = 5
 
+# Round 5 registers its own K instead, with no escalation. Fifteen blocks
+# were sized before its first trial from the rounds before it, whose per-trial
+# noise left three blocks unable to decide its hypotheses. A run holding one
+# of its arms may go that far and no further.
+ROUND5_ARMS = ("inline", "reference", "skills")
+ROUND5_K = 15
+
 # The release every generated arm is produced from, and the one the hybrid
 # arm's vendored templates are taken at. The design fixes it: the last 2.x,
 # before the v3.0 split moves any template.
@@ -251,8 +258,11 @@ def reach_denials(root, workspace):
     """
     root = os.path.abspath(root)
     own = os.path.basename(os.path.abspath(workspace))
-    names = {trial_name(arm, trial)
-             for arm in ARMS for trial in range(1, K_CEILING + 1)}
+
+    # Every block any run may hold, so no trial of a long round is left
+    # readable by the trials of its other blocks.
+    names = {trial_name(arm, trial) for arm in ARMS
+             for trial in range(1, max(K_CEILING, ROUND5_K) + 1)}
     names |= {"change-" + name for name in names}
     targets = [repository_root(), scoring_area(root),
                os.path.join(root, "home"), os.path.join(root, "void")]
@@ -1565,20 +1575,34 @@ def reached(record):
 
 
 def order(arms, k):
-    """Interleave the trials by block: none-1, short-1, hybrid-1, none-2, ...
+    """Interleave the trials by block, each block starting one arm later:
+    none-1, short-1, hybrid-1, short-2, hybrid-2, none-2, hybrid-3, ...
 
     A model-side change part-way through a run then lands across the arms
     rather than on one of them, where it would pass for the arm's effect.
+    Rotating the start keeps any arm from always running first or last in
+    its block, where a drift within the block would land on it every time.
     """
-    return [(arm, trial) for trial in range(1, k + 1) for arm in arms]
+    count = len(arms)
+    return [(arms[(trial - 1 + place) % count], trial)
+            for trial in range(1, k + 1) for place in range(count)]
+
+
+def k_ceiling(arms):
+    """The most blocks a run of these arms may hold."""
+    return ROUND5_K if set(arms) & set(ROUND5_ARMS) else K_CEILING
 
 
 def pending_trials(arms, k, start=None):
     """The interleaved order, from `start` onwards where one is given."""
-    if not 1 <= k <= K_CEILING:
-        raise TrialError("--k %d is outside 1 to %d: a round escalates once "
-                         "to K = %d and never further"
-                         % (k, K_CEILING, K_CEILING))
+    ceiling = k_ceiling(arms)
+    if ceiling == ROUND5_K:
+        why = "round 5 registers K = %d and no escalation" % ROUND5_K
+    else:
+        why = ("a round escalates once to K = %d and never further"
+               % K_CEILING)
+    if not 1 <= k <= ceiling:
+        raise TrialError("--k %d is outside 1 to %d: %s" % (k, ceiling, why))
     trials = order(arms, k)
     if start is None:
         return trials
@@ -1889,8 +1913,8 @@ def resume_checks():
     arms = ["none", "short", "hybrid"]
     names = [trial_name(*pair) for pair in pending_trials(arms, 3, "short-2")]
     checks.append(("--from short-2 starts there and keeps the order",
-                   names == ["short-2", "hybrid-2", "none-3", "short-3",
-                             "hybrid-3"]))
+                   names == ["short-2", "hybrid-2", "none-2", "hybrid-3",
+                             "none-3", "short-3"]))
     try:
         pending_trials(arms, 3, "other-1")
         checks.append(("--from an unknown trial refuses", False))
@@ -1905,8 +1929,31 @@ def resume_checks():
     names = [trial_name(*pair)
              for pair in pending_trials(arms, K_CEILING, first_escalated)]
     checks.append(("the escalation runs its blocks from none-4",
-                   names == ["none-4", "short-4", "hybrid-4", "none-5",
-                             "short-5", "hybrid-5"]))
+                   names == ["none-4", "short-4", "hybrid-4", "short-5",
+                             "hybrid-5", "none-5"]))
+
+    # Round 5's five arms: each block starts one arm later, so over five
+    # blocks every arm runs once in every place of its block.
+    round5 = ["none", "inline", "hybrid", "reference", "skills"]
+    rotated = order(round5, 5)
+    checks.append(("each block starts one arm later",
+                   [arm for arm, _ in rotated[5:10]]
+                   == ["inline", "hybrid", "reference", "skills", "none"]))
+    places = {arm: {index % 5 for index, (other, _) in enumerate(rotated)
+                    if other == arm} for arm in round5}
+    checks.append(("over five blocks every arm runs in every place",
+                   all(found == set(range(5)) for found in places.values())))
+    try:
+        held = len(pending_trials(round5, ROUND5_K))
+    except TrialError:
+        held = None
+    try:
+        pending_trials(round5, ROUND5_K + 1)
+        refused = False
+    except TrialError:
+        refused = True
+    checks.append(("a round-5 run takes K = %d and refuses more" % ROUND5_K,
+                   held == 5 * ROUND5_K and refused))
 
     blocked = {"outcome": "blocked", "reason": "planted",
                "void": {"dir": os.path.join("void", "none-1-planted")}}
@@ -2692,6 +2739,9 @@ def denial_checks():
          all(denied(os.path.join(root, entry))
              for entry in ("full-1", "none-2", "change-none-1",
                            "change-hand-5", "home", "void"))),
+        ("a round-5 run's last block is denied too",
+         all(denied(os.path.join(root, trial_name(arm, ROUND5_K)))
+             for arm in ROUND5_ARMS)),
         ("tarballs and run records are denied",
          "Read(%s/*.tar)" % spelled in rules
          and "Read(%s/run-*.json)" % spelled in rules),
@@ -2931,13 +2981,14 @@ def parse_args(argv):
                              "each scorable build trial")
     parser.add_argument("--arms",
                         help="which arms to run, as words separated by "
-                             "commas: none,full,short,hybrid,hand. Required "
-                             "for a run, so a run names the arms it "
-                             "holds")
+                             "commas, from %s; their order is block 1's. "
+                             "Required for a run, so a run names the arms "
+                             "it holds" % ",".join(ARMS))
     parser.add_argument("--k", type=int, default=K_PRIMARY,
-                        help="trials per arm (default %d, the registered K; "
-                             "at most %d, the escalation's ceiling)"
-                             % (K_PRIMARY, K_CEILING))
+                        help="trials per arm (default %d; at most %d, the "
+                             "escalation's ceiling, or %d for a run holding "
+                             "a round-5 arm)"
+                             % (K_PRIMARY, K_CEILING, ROUND5_K))
     parser.add_argument("--model", default="claude-sonnet-5",
                         help="exact generator model id, recorded in the report")
     parser.add_argument("--effort", default="high")

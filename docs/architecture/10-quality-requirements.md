@@ -12,15 +12,17 @@ checks it.
 | Q1-2 | An agent writes its own `ruff.toml` | Every arm is still measured under `toolconfig/` | `score.py` |
 | Q1-3 | A trial packages its tests in an extra | Coverage still runs, from the trial's declared groups within the lock | `score.py` |
 | Q1-4 | The spec requires HTMX, whose attributes HTML lacks | HTML validity sets aside `hx-*` errors and records how many | `score.py` |
+| Q1-5 | The model drifts within one block | No arm always runs first or last: each block starts one arm later | `harness.py --self-test` |
 
 ## 10.2 Q2, pre-registration
 
 | # | Stimulus | Response | Checked by |
 | - | -------- | -------- | ---------- |
-| Q2-1 | A primary's interval contains zero while its mean exceeds the smallest change that matters | The report names the rows that owe K = 5 and the command that settles it | `report.py --self-test` |
-| Q2-2 | Someone asks for K = 6 | The harness refuses, and the report refuses a run past 5 | `harness.py`, `report.py` |
+| Q2-1 | In a round registered at K = 3, a primary's interval contains zero while its mean exceeds the smallest change that matters | The report names the rows that owe K = 5 and the command that settles it | `report.py --self-test` |
+| Q2-2 | Someone asks for more blocks than the round allows | The harness refuses past 5, or past 15 for a round-5 run, and the report refuses a run past them | `harness.py`, `report.py` |
 | Q2-3 | A check is added after the results were seen | It prints in its own section with no verdict | `report.py` |
 | Q2-4 | A grader is found to measure something else | Every run that revision graded loses the metric, named with its reason | `withdrawn.json`, `report.py --self-test` |
+| Q2-5 | A round-5 run holds fewer than its 15 blocks | The report calls it part-run and names the blocks still owed | `report.py --self-test` |
 
 ## 10.3 Q3, isolation
 
@@ -48,6 +50,7 @@ checks it.
 | Q5-2 | A reading changes after the archive was verified | The report refuses to write under `docs/audits/` | `archive.py`, `report.py` |
 | Q5-3 | A run stops part way | The run record holds every trial it finished, and `--from` resumes at the next | `harness.py` |
 | Q5-4 | A later template revision is to be measured | The same harness runs it as a candidate against the recorded baseline | Design [ch. 4.2](04-solution-strategy.md) |
+| Q5-5 | A report is aimed at any `docs/audits/` before the round is archived | Refused, in the templates source as anywhere else | `report.py --self-test` |
 
 ## 10.6 The numbers behind the rules
 

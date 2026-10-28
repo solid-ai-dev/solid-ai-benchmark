@@ -44,20 +44,20 @@ Round 3's root held 5.5 GB after both tasks. Each scored trial's
 environment is about 290 MB.
 <!-- /measured -->
 
-A K = 3 round with five arms and both tasks wants about 15 GB free on the
-root's drive. A full disk stops a trial or a scoring with
-`No space left on device`, and that trial is not a result.
+Round 5's 75 build trials want about 40 GB free on the root's drive; a
+K = 3 round of five arms and both tasks wanted about 15 GB. A full disk stops
+a trial or a scoring with `No space left on device`, and that trial is not a
+result.
 
 ## 7.3 Budget
 
-Round 3 runs five arms at K = 3. Figures per trial are measured in rounds 1
-and 2.
+Round 5 runs five arms at K = 15, the build task alone. Figures per trial
+are round 3's, measured at `claude-sonnet-5`.
 
 | Item | Count | Per item | Round total |
 |---|---|---|---|
-| Build trials | 15 | 16–28 min, $8.7–$16.7 | about 4–7 hours, about $195 |
-| Change tasks | 15 | $5–$17 (round 1) | about $130 |
-| Judgings | 45 (15 trees × 3) | — | ChatGPT plan quota |
-| Escalation to K = 5, if owed | +10 build, +10 change, +30 judgings | as above | about $215 more |
+| Control fixture | 33 judgings (11 trees × 3) | — | ChatGPT plan quota, before block A |
+| Build trials | 75 (5 arms × 15) | 10–29 min, $1.4–$3.5 | about 21 hours, about $185 |
+| Judgings | 225 (75 trees × 3) | — | ChatGPT plan quota |
 
 Both CLIs bill against a subscription, so this is quota, not invoice.

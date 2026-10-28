@@ -80,8 +80,8 @@ every trial, so a stopped run keeps every trial it finished.
 
 - **A dry run** prepares every workspace in `<root>-dry-run`, cleared first,
   and records the command without calling a model. The root stays untouched.
-- **`--arms` is required,** for the change task as well, and the trials
-  interleave in that order, block by block.
+- **`--arms` is required,** for the change task as well. Block 1 runs the
+  arms in that order, and each block after it starts one arm later.
 - **The templates' revision.** Each trial records the templates source's
   remote, the round's ref and the commit it names. Vendoring reads that ref
   with `git archive`, so the clone's HEAD may move during a run.
@@ -233,11 +233,16 @@ any root, which is how a later round re-reads an earlier one.
 
 ### 6.4.3 The escalation in the report
 
-The report computes the one escalation to K = 5, so nobody decides it by eye.
-At K = 3 it names the rows that owe it and the `--k 5 --from none-4` run that
-settles it. At K = 5 it reads the first three blocks alone, prints their
-verdicts beside the K = 5 ones, and flags an escalation no row owed. The
-harness refuses `--k` above 5, and the report refuses a run past it.
+The report computes the one escalation to K = 5 of a round registered at
+K = 3, so nobody decides it by eye. At K = 3 it names the rows that owe it and
+the `--k 5 --from` run that settles it, from the trial the rotated order puts
+first in block 4. At K = 5 it reads the first three blocks alone, prints their
+verdicts beside the K = 5 ones, and flags an escalation no row owed.
+
+Round 5 registers K = 15 and no escalation. Its report says how many of the 15
+blocks are in, and calls a run short of them part-run. The harness refuses
+`--k` above 5, or above 15 for a run holding a round-5 arm, and the report
+refuses a run past it.
 
 ### 6.4.4 Reusing an earlier round's trials
 
