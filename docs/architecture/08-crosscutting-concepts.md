@@ -14,6 +14,11 @@ The question, the metrics and the rule for reading a result are written down
 before any trial runs. Nobody can then pick the metric or the threshold that
 makes the templates look good after seeing the numbers.
 
+From round 5 on, the report holds a round to that order. It refuses a
+round whose registration under `docs/rounds/` was last committed after the
+round's first trial started, by the committer date, or has changes not yet
+committed.
+
 | Setting | Value | Why |
 |---|---|---|
 | Unit compared | The difference between two arms' trials in the same block: `full-1` minus `none-1` | The arms in a block meet the same model on the same day |

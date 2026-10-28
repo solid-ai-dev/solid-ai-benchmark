@@ -36,12 +36,18 @@ import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
                      ROUND5_ARMS, ROUND5_K, SCORABLE, TEMPLATES_ENV, VOIDING,
-                     TrialError, canonical, k_ceiling, order, reach,
+                     TrialError, canonical, git, k_ceiling, order, reach,
                      read_transcripts, scoring_area, split_name,
                      templates_root, trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPOSITORY = os.path.dirname(os.path.dirname(HERE))
+
+# Round 5's registration, relative to this repository. Its hypotheses bind
+# only if they were committed before its first trial ran and left unchanged
+# after, so a registration last committed later reads the results first.
+ROUND5_REGISTRATION = "docs/rounds/round-5.md"
 
 # A round's report is its record, kept beside the templates it measured:
 # under the templates source's docs/audits/. A report written to any such
@@ -1036,6 +1042,31 @@ def started(record):
     except (KeyError, TypeError, ValueError):
         return None
     return moment.timestamp()
+
+
+def registration_problem(root, registration, repository=REPOSITORY):
+    """Why the round's registration does not predate its first trial, or
+    None when it was committed before that trial and not changed since."""
+    first = min(filter(None, map(started, run_records(root))), default=None)
+    if first is None:
+        return "no run record under %s says when the first trial ran" % root
+    if git(repository, "status", "--porcelain", "--", registration):
+        return "%s has changes that are not committed" % registration
+    committed = git(repository, "log", "-1", "--format=%cI", "--",
+                    registration)
+    if not committed:
+        return "%s is not committed" % registration
+
+    # The committer date, not the author date: a registration counts from when
+    # it landed, so one written before the first trial but landed after it is
+    # refused.
+    landed = datetime.datetime.fromisoformat(committed)
+    if landed.timestamp() > first:
+        return ("%s was last committed at %s, after the first trial started "
+                "at %s" % (registration, committed,
+                           datetime.datetime.fromtimestamp(first)
+                           .isoformat(timespec="seconds")))
+    return None
 
 
 def reaches(root):
@@ -2624,6 +2655,61 @@ def lost_checks():
              and "no run record" in unrecorded_row[0]["reason"])]
 
 
+def registration_checks():
+    """A round is refused when its registration was committed after its
+    first trial, changed and not committed, or never committed."""
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-registration-self-test")
+    shutil.rmtree(scratch, ignore_errors=True)
+    repository = os.path.join(scratch, "repository")
+    os.makedirs(os.path.join(repository, "docs"))
+    registration = "docs/round.md"
+    path = os.path.join(repository, *registration.split("/"))
+    git(repository, "init", "-q")
+
+    def plant_run(name, moment):
+        root = os.path.join(scratch, name)
+        os.makedirs(root)
+        with io.open(os.path.join(root, "run-planted.json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"trials": [{"arm": "none", "trial": 1,
+                                   "outcome": "completed",
+                                   "started_at": moment.isoformat(
+                                       timespec="seconds")}]}, handle)
+        return root
+
+    def problem(root):
+        return registration_problem(root, registration, repository)
+
+    # One run that started an hour before the commit, one an hour after it.
+    now = datetime.datetime.now()
+    before = plant_run("before", now - datetime.timedelta(hours=1))
+    after = plant_run("after", now + datetime.timedelta(hours=1))
+    with io.open(path, "w", encoding="utf-8") as handle:
+        handle.write("# Round\n")
+    uncommitted = problem(after)
+    git(repository, "add", registration)
+    git(repository, "-c", "user.name=self-test",
+        "-c", "user.email=self-test@example.invalid",
+        "commit", "-q", "-m", "register the round")
+    late, early = problem(before), problem(after)
+    with io.open(path, "a", encoding="utf-8") as handle:
+        handle.write("A hypothesis added after the first trial.\n")
+    changed = problem(after)
+    unrecorded = problem(os.path.join(scratch, "repository"))
+    shutil.rmtree(scratch, ignore_errors=True)
+    return [("a registration committed before the first trial passes",
+             early is None),
+            ("one committed after the first trial is refused",
+             late is not None and "after the first trial" in late),
+            ("one never committed is refused",
+             uncommitted is not None and "not committed" in uncommitted),
+            ("one changed and not committed is refused",
+             changed is not None and "not committed" in changed),
+            ("a root with no run record is refused",
+             unrecorded is not None and "no run record" in unrecorded)]
+
+
 def rescan_checks():
     """A record scanned under an earlier rule is read again from its
     transcript."""
@@ -3405,6 +3491,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in reach_checks())
     checks.extend((label, ok, ok) for label, ok in lost_checks())
     checks.extend((label, ok, ok) for label, ok in rescan_checks())
+    checks.extend((label, ok, ok) for label, ok in registration_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -3454,6 +3541,18 @@ def main(argv):
     # from a round archived as it stands; anywhere else it is a draft.
     if is_record(out_dir):
         problem = archive.stamp_problem(options.root)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
+
+    # A hypothesis registered or changed after the round's first trial could
+    # have been written to fit what that trial showed, so the round is refused
+    # rather than read against it.
+    if is_round5(trials):
+        try:
+            problem = registration_problem(options.root, ROUND5_REGISTRATION)
+        except TrialError as error:
+            problem = str(error)
         if problem:
             print("refused: %s" % problem)
             return 2
