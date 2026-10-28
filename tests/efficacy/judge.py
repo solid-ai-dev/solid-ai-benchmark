@@ -26,6 +26,7 @@ import random
 import re
 import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1325,7 +1326,7 @@ def claim_checks(scratch):
 def self_test():
     """Prove a bundle is blind and carries its tree's own specification,
     labels continue, the judge launches, and a live run refuses a second."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-judge-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)

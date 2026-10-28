@@ -29,6 +29,7 @@ import secrets
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1664,7 +1665,7 @@ def self_test():
     missing with a reason. Any that comes back zero is a scorer reporting a
     clean trial it never read.
     """
-    scratch = os.path.join(os.environ.get("TEMP", "."), "efficacy-self-test")
+    scratch = os.path.join(tempfile.gettempdir(), "efficacy-self-test")
     remove_tree(scratch)
     os.makedirs(scratch)
     checks = (run_record_checks(scratch) + churn_checks(scratch)

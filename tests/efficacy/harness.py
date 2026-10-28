@@ -1850,7 +1850,7 @@ def outcome_checks():
                classify(status, result)[0] == expected)
               for label, status, result, expected in ENDINGS]
 
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-void-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     workspace = os.path.join(scratch, "none-1")
@@ -2065,7 +2065,7 @@ def change_checks():
              "`caps`", "/invoices/preview"))),
     ]
 
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-change-self-test")
     remove_tree(scratch)
     build = os.path.join(scratch, "A1")
@@ -2127,7 +2127,7 @@ def dry_run_checks():
     the run record offering it. The generator is a stand-in on `PATH` and the
     home a scratch one, so no real CLI or credential is reached.
     """
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-dry-run-self-test")
     remove_tree(scratch)
     root = os.path.join(scratch, "root")
@@ -2211,7 +2211,7 @@ def dry_run_checks():
 
 def credential_checks():
     """A trial's Git cannot borrow a credential the machine stores."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-credential-self-test")
     remove_tree(scratch)
     os.makedirs(scratch)
@@ -2245,7 +2245,7 @@ def credential_checks():
 
 def process_checks():
     """A process running from a trial's directory is stopped, and no other."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-process-self-test")
     owned = os.path.join(scratch, "none-1")
     neighbour = os.path.join(scratch, "none-10")
@@ -2313,7 +2313,7 @@ def claimed_pid(path):
 
 def claim_checks():
     """A live run refuses a second; an ended or reused one is taken over."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-claim-self-test")
     remove_tree(scratch)
     live = planted_run("judge.py")
@@ -2389,7 +2389,7 @@ def claim_refusal_check(tool, main, root, *extra):
 
 def leftover_checks():
     """A temp entry a trial made and named moves to its own; nothing else."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-leftover-self-test")
     remove_tree(scratch)
     shared = os.path.join(scratch, "shared")
@@ -2434,7 +2434,7 @@ PLANTED_TRANSCRIPT = ((r"C:\efficacy\run-v290\A1", "C--efficacy-run-v290-A1")
 
 def reach_checks():
     """A tool call fetching the templates is flagged; reading them is not."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-reach-self-test")
     remove_tree(scratch)
     home = os.path.join(scratch, "home")
@@ -2493,7 +2493,7 @@ def reach_checks():
 def outside_checks():
     """A call into another part of the run is flagged; the trial's own
     workspace and temporary directory are not."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-outside-self-test")
     remove_tree(scratch)
     root = os.path.abspath(os.path.join(scratch, "run"))
@@ -2602,7 +2602,7 @@ def alive(pid):
 def hang_checks():
     """A CLI that lingers after its result, or never answers, is ended with
     everything under it, and what it printed is kept."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-hang-self-test")
     remove_tree(scratch)
     os.makedirs(scratch)
@@ -2637,7 +2637,7 @@ def hang_checks():
 def credential_link_checks():
     """The scratch home reads the account's live credentials, and gets them
     back before a trial where they went missing."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-credential-link-self-test")
     remove_tree(scratch)
     real = os.path.join(os.path.expanduser("~"), CREDENTIALS)
@@ -2663,7 +2663,7 @@ def vendor_checks():
     if templates_root(required=False) is None:
         return [("a templates source is set in %s, so the vendoring can be "
                  "proved" % TEMPLATES_ENV, False)]
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-vendor-self-test")
     remove_tree(scratch)
     workspace = os.path.join(scratch, "hybrid-1")

@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -260,7 +261,7 @@ def plant_source(scratch):
 def self_test():
     """Prove a reuse copies the chosen arms' trials, and only those, under
     the words, and refuses to offer a trial twice."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-reuse-self-test")
     remove_tree(scratch)
     source = plant_source(scratch)
