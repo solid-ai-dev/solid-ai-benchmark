@@ -145,6 +145,11 @@ BANDED = ("app_lines", "app_files")
 # They are still printed, without a verdict, so nothing reads them twice.
 SUPERSEDED_IN_ROUND5 = ("source_lines", "tracked_files")
 
+# The app-code rows decide from round 5 on. An earlier round rescored by the
+# current scorer carries them too, but was registered on source lines and
+# files, so it prints them without a verdict and reads as it was reported.
+FROM_ROUND5 = ("app_lines", "app_files")
+
 # The practical thresholds that can owe the one
 # escalation to K = 5. Only a primary dimension triggers it, so no other
 # metric's threshold is carried here, where something could come to read it.
@@ -739,7 +744,7 @@ def crossed_labels(trials):
 
 def collect(trials, metrics=METRICS):
     """Metric values by metric, arm and trial index."""
-    superseded = SUPERSEDED_IN_ROUND5 if is_round5(trials) else ()
+    superseded = SUPERSEDED_IN_ROUND5 if is_round5(trials) else FROM_ROUND5
     table = {}
     for key, label, direction, accessor in metrics:
         if key in superseded:
@@ -2764,8 +2769,16 @@ def band_checks(seed):
     files = results["tracked_files"]["skills-none"]["verdict"]
     earlier = {name.replace("skills", "full"): value
                for name, value in trials.items()}
-    kept = contrasts(collect(earlier), seed)["tracked_files"]["full-none"]
+    reread = contrasts(collect(earlier), seed)
+    kept = reread["tracked_files"]["full-none"]
+    later = reread["app_lines"]["full-none"]["verdict"]
+    shares = size_cell(collect(earlier), reread, "full-none")
     checks.extend([
+        ("an earlier round rescored prints app code without a verdict",
+         later == "reported without a verdict", later),
+        ("and names each size share once",
+         shares == "lines +10 %, files +100 %",
+         shares),
         ("round 5 reads a 10 % rise in app code as held", app == "held", app),
         ("round 5 reports the files it supersedes without a verdict",
          files == "reported without a verdict", files),

@@ -596,8 +596,9 @@ its mean and interval and counts as neither a win nor a fail.
   files. A rise whose whole interval stays inside the margin of section 8.1.2
   reads as held; only one wholly past it reads as worse.
 - **Neutral, reported without a verdict:** maintainability index,
-  instability, test code's lines, and from round 5 the source lines and files
-  that app code replaces.
+  instability, test code's lines, from round 5 the source lines and files
+  that app code replaces, and before round 5 app code's rows, so an earlier
+  round rescored reads as it was reported.
 
 ### 8.7.3 What the report prints
 
