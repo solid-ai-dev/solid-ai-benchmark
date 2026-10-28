@@ -33,6 +33,9 @@ jobs:
         with:
           repository: solid-ai-dev/solid-ai-templates
           path: solid-ai-templates
+          # The arms are built from registered tags, such as the baseline's
+          # v2.90.0, so the clone needs its full history and tags.
+          fetch-depth: 0
 
       # The interpreter every scored trial runs under.
       - uses: actions/setup-python@v5

@@ -2543,7 +2543,7 @@ WORKED = (
 
 def reach_checks():
     """The report names a trial whose scan hit, and no other."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-reach-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
@@ -2578,7 +2578,7 @@ def reach_checks():
 
 def lost_checks():
     """A voided trial is listed whether or not a run record names it."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-lost-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     recorded = os.path.join(scratch, "void", "A1-2026-09-15T10-00-00")
@@ -2627,7 +2627,7 @@ def lost_checks():
 def rescan_checks():
     """A record scanned under an earlier rule is read again from its
     transcript."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-rescan-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     workspace = os.path.join(scratch, "none-2")
@@ -2756,7 +2756,7 @@ def escalation_checks(seed):
     checks.append(("a K = 3 run is assessed on its own vector",
                    state == "assessed", state))
 
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-escalation-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
@@ -2815,7 +2815,7 @@ def posthoc_checks(seed):
                    posthoc_owed(trials) and not posthoc_owed(probed),
                    (posthoc_owed(trials), posthoc_owed(probed))))
 
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-posthoc-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
@@ -2867,7 +2867,7 @@ def rendered(trials, seed, withdrawn):
     results = contrasts(table, seed, crossed_labels(trials))
     before = results["change_success"]["full-none"]["verdict"]
     withdraw(withdrawn, table, results)
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-withdrawal-render")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
@@ -2891,7 +2891,7 @@ def section_rows(text, heading, label):
 def withdrawal_checks(seed):
     """A withdrawn metric prints only its withdrawal, and only on runs graded
     by the revision it was withdrawn for."""
-    scratch = os.path.join(os.environ.get("TEMP", "."),
+    scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-withdrawal-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
