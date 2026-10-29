@@ -96,6 +96,12 @@ VENDORED = {"ref": RELEASE, "path": "templates",
 # Round 5's templates and roots, as registered: one commit and one
 # chain for every arm, so the arms differ only in how they deliver it.
 ROUND5_REF = "9086e0ff"
+
+# Round 5's specification, as registered: one file at one content for every
+# trial. A spec edited while a two-day run is under way would otherwise mix two
+# specifications in one round without a trace in its verdicts.
+ROUND5_SPEC = ("normal",
+               "48ee93ff968ef4a3175408c349afd6ce7223d0f3bd25b49ad4521f0fc307e55e")
 ROUND5_ROOTS = ["backend-api", "backend-auth", "backend-database",
                 "frontend-ux", "base-security", "base-data-governance"]
 
@@ -1345,12 +1351,50 @@ def prepare_change_workspace(arm, trial, root, build):
     return workspace, git(workspace, "rev-parse", "HEAD")
 
 
+def spec_digest(path):
+    with io.open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+def spec_problem(arms, spec_name, digest):
+    """Why a run of these arms may not build from this spec, or None.
+
+    A run holding a round-5 arm builds from the spec round 5 registers, at
+    the content it registers; any other run is not checked here.
+    """
+    if not set(arms) & set(ROUND5_ARMS):
+        return None
+    name, registered = ROUND5_SPEC
+    if spec_name != name:
+        return ("round 5 registers the %s spec, and this run names %s"
+                % (name, spec_name))
+    if digest != registered:
+        return ("the %s spec is not the content round 5 registers: sha256 %s, "
+                "registered %s" % (name, digest, registered))
+    return None
+
+
 def run_trial(arm, trial, root, home, options):
     """Run one build trial and return its record."""
-    spec = SPECS[getattr(options, "spec", "normal")]
+    spec_name = getattr(options, "spec", "normal")
+    spec = SPECS[spec_name]
+
+    # Read again for every trial, so an edit made after the run started
+    # refuses the trials after it rather than building them from a new spec.
+    arms = getattr(options, "arm_list", ())
+    problem = spec_problem(arms, spec_name, spec_digest(spec))
+    if problem:
+        raise TrialError(problem)
     workspace, vendored = prepare_workspace(arm, trial, root, spec)
-    with io.open(spec, "rb") as handle:
-        digest = hashlib.sha256(handle.read()).hexdigest()
+
+    # The copy is what the agent reads, and the source can change between the
+    # check above and the copy, so the copy is what is checked and recorded.
+    # A refused workspace is removed, so the trial's slot stays free.
+    digest = spec_digest(os.path.join(workspace, "SPEC.md"))
+    problem = spec_problem(arms, spec_name, digest)
+    if problem:
+        remove_tree(workspace)
+        raise TrialError(problem)
     record = {"arm": arm, "label": ARMS[arm]["label"], "trial": trial,
               "task": "build", "vendored": vendored,
               "spec": {"file": os.path.basename(spec), "sha256": digest}}
@@ -2953,6 +2997,78 @@ def round5_checks():
     return checks
 
 
+def spec_checks():
+    """A round-5 run builds from the registered spec, and from nothing else."""
+    import argparse as _argparse
+
+    round5 = ["none", "inline", "hybrid", "reference", "skills"]
+    name, registered = ROUND5_SPEC
+    checks = [
+        ("round 5's registered digest is SPEC.md's content",
+         spec_digest(SPECS[name]) == registered),
+        ("a round-5 run on the registered spec passes",
+         spec_problem(round5, name, registered) is None),
+        ("a round-5 run on other content is refused",
+         spec_problem(round5, name, "0" * 64) is not None),
+        ("a round-5 run on the thin spec is refused",
+         spec_problem(round5, "thin", spec_digest(SPECS["thin"])) is not None),
+        ("a run without a round-5 arm is not checked",
+         spec_problem(["none", "hybrid"], "thin", "0" * 64) is None),
+    ]
+
+    # The spec edited after the run started: the next trial is refused before
+    # its workspace is laid out, so nothing is built from the new content.
+    scratch = tempfile.mkdtemp(prefix="efficacy-spec-")
+    original = SPECS[name]
+    try:
+        edited = os.path.join(scratch, "SPEC.md")
+        with io.open(original, "rb") as source, io.open(edited, "wb") as out:
+            out.write(source.read() + b"\nOne more line.\n")
+        SPECS[name] = edited
+        # The options name no model, so a trial that got past the check stops
+        # on that before any CLI is called.
+        options = _argparse.Namespace(spec=name, arm_list=round5)
+        root = os.path.join(scratch, "root")
+        os.makedirs(root)
+        try:
+            run_trial("none", 2, root, scratch, options)
+            refused = False
+        except TrialError:
+            refused = True
+        except Exception:
+            refused = False
+        checks.append(("a spec edited mid-run refuses the next trial unbuilt",
+                       refused and os.listdir(root) == []))
+
+        # The source edited between its check and its copy: the planted copy
+        # step writes the edit into the workspace after the source passed.
+        SPECS[name] = original
+        prepare = globals()["prepare_workspace"]
+
+        def edited_in_flight(*args, **kwargs):
+            workspace, vendored = prepare(*args, **kwargs)
+            with io.open(os.path.join(workspace, "SPEC.md"), "ab") as copy:
+                copy.write(b"\nOne more line.\n")
+            return workspace, vendored
+
+        globals()["prepare_workspace"] = edited_in_flight
+        try:
+            run_trial("none", 3, root, scratch, options)
+            refused = False
+        except TrialError:
+            refused = True
+        except Exception:
+            refused = False
+        finally:
+            globals()["prepare_workspace"] = prepare
+        checks.append(("a spec changed as it is copied refuses the trial and "
+                       "frees its slot", refused and os.listdir(root) == []))
+    finally:
+        SPECS[name] = original
+        shutil.rmtree(scratch, ignore_errors=True)
+    return checks
+
+
 def self_test():
     """Prove the naming, isolation, outcome, resume, change and vendoring
     rules before a trial."""
@@ -2962,7 +3078,7 @@ def self_test():
               + process_checks()
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()
               + vendor_checks() + denial_checks() + kill_checks()
-              + recover_checks() + round5_checks())
+              + recover_checks() + round5_checks() + spec_checks())
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     passed = sum(1 for _, ok in checks if ok)
@@ -3072,6 +3188,13 @@ def main(argv):
     except TrialError as error:
         print("refused: %s" % error)
         return 2
+    options.arm_list = arms
+    if options.task == "build":
+        problem = spec_problem(arms, options.spec,
+                               spec_digest(SPECS[options.spec]))
+        if problem:
+            print("refused: %s" % problem)
+            return 2
 
     # A trial an earlier harness died under holds its slot until voided, so
     # the run that re-runs it `--from` that trial finds the slot free.

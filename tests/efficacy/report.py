@@ -35,7 +35,8 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
-                     ROUND5_ARMS, ROUND5_K, SCORABLE, TEMPLATES_ENV, VOIDING,
+                     ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, SCORABLE,
+                     TEMPLATES_ENV, VOIDING,
                      TrialError, canonical, git, k_ceiling, order, reach,
                      read_transcripts, scoring_area, split_name,
                      templates_root, trial_name)
@@ -1093,6 +1094,29 @@ def started(record):
     except (KeyError, TypeError, ValueError):
         return None
     return moment.timestamp()
+
+
+def spec_problem(root):
+    """Why the round's build trials did not all build from the spec round 5
+    registers, or None when every one did."""
+    registered = ROUND5_SPEC[1]
+    for record in run_records(root):
+        if record.get("task", "build") != "build":
+            continue
+        spec = record.get("spec")
+
+        # A refused or unfinished trial built nothing, so it has no spec to
+        # show; a trial with something to score has to.
+        if spec is None:
+            if record.get("outcome") in SCORABLE:
+                return ("trial %s records no spec, so it cannot be shown to "
+                        "have built from the registered one" % trial_of(record))
+            continue
+        if spec.get("sha256") != registered:
+            return ("trial %s built from %s at sha256 %s, and round 5 "
+                    "registers sha256 %s" % (trial_of(record), spec.get("file"),
+                                             spec.get("sha256"), registered))
+    return None
 
 
 def registration_problem(root, registration, repository=REPOSITORY):
@@ -2787,6 +2811,51 @@ def band_checks(seed):
     return checks
 
 
+def spec_checks():
+    """A round is refused when a trial with something to score built from
+    another spec than the registered one, or records none."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-spec-")
+    registered = ROUND5_SPEC[1]
+
+    def problem_for(*trials):
+        for old in glob.glob(os.path.join(scratch, "run-*.json")):
+            os.remove(old)
+        with io.open(os.path.join(scratch, "run-1.json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"trials": list(trials)}, handle)
+        return spec_problem(scratch)
+
+    def build(arm, trial, digest="registered", outcome="completed"):
+        record = {"arm": arm, "trial": trial, "task": "build",
+                  "outcome": outcome}
+        if digest is not None:
+            record["spec"] = {"file": "SPEC.md",
+                              "sha256": registered if digest == "registered"
+                              else digest}
+        return record
+
+    try:
+        checks = [
+            ("every trial on the registered spec passes",
+             problem_for(build("none", 1), build("skills", 1)) is None),
+            ("a trial on another spec is refused",
+             problem_for(build("none", 1), build("skills", 1, "0" * 64))
+             is not None),
+            ("a scorable trial recording no spec is refused",
+             problem_for(build("none", 1, None)) is not None),
+            ("a refused trial, which built nothing, is not read",
+             problem_for(build("none", 1),
+                         build("skills", 1, None, "refused")) is None),
+            ("a change task, which gets no spec, is not read",
+             problem_for(build("none", 1),
+                         {"arm": "none", "trial": 1, "task": "change",
+                          "outcome": "completed"}) is None),
+        ]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return checks
+
+
 def registration_checks():
     """A round is refused when its registration landed on the main branch
     after its first trial, has not landed, is changed and not committed, or
@@ -3647,6 +3716,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in lost_checks())
     checks.extend((label, ok, ok) for label, ok in rescan_checks())
     checks.extend((label, ok, ok) for label, ok in registration_checks())
+    checks.extend((label, ok, ok) for label, ok in spec_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -3708,6 +3778,13 @@ def main(argv):
             problem = registration_problem(options.root, ROUND5_REGISTRATION)
         except TrialError as error:
             problem = str(error)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
+
+        # Two specifications in one round would read as one arm's effect, so
+        # a round whose trials did not all get the registered one is refused.
+        problem = spec_problem(options.root)
         if problem:
             print("refused: %s" % problem)
             return 2
