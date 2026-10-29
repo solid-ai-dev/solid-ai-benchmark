@@ -1109,15 +1109,15 @@ def outside_pattern(workspace, temp):
     alternatives = ["(?:%s)/?(?=$|[\\s\"';,])" % forms,
                     "(?:%s)/%s[^/\\s\"';,]+" % (forms, not_own)]
 
-    # An entry of the root climbed to from inside the workspace: one level up
-    # where the workspace sits in the root, two where it sits in a pen, whose
-    # own entries one level up are the trial's.
+    # An entry of the root climbed to by a relative path, from any depth: a
+    # command can change directory first, so `../` reaches the root from the
+    # pen as `../../` does from the workspace. The pen's own entries are not
+    # the root's, so a virtualenv beside the workspace stays the trial's.
     entries = (sorted(entry.lower() for entry in os.listdir(root))
                if os.path.isdir(root) else [])
-    climb = "\\.\\./" * (1 if pen == workspace else 2)
     if entries:
-        alternatives.append("%s%s(?:%s)%s" % (
-            climb, not_own, "|".join(re.escape(entry) for entry in entries),
+        alternatives.append("\\.\\./%s(?:%s)%s" % (
+            not_own, "|".join(re.escape(entry) for entry in entries),
             PATH_END))
     return re.compile("|".join(alternatives))
 
@@ -2661,7 +2661,9 @@ def pen_checks():
                       os.path.join(root, "home", ".claude")):
         os.makedirs(directory)
 
-    # The first four stay in the pen; each of the last four reaches out.
+    # The first four stay in the pen; each of the last five reaches out, the
+    # last after changing directory to the pen, one level above the
+    # workspace.
     calls = [
         ("Bash", {"command": 'python -m venv "%s"' % venv}),
         ("Bash", {"command": 'cd "%s" && pip install ./none-1' % pen}),
@@ -2672,6 +2674,8 @@ def pen_checks():
                                             "app.py")}),
         ("Bash", {"command": "cat ../../short-1/short-1/app.py"}),
         ("Bash", {"command": "ls %s" % os.path.join(root, "home")}),
+        ("Bash", {"command": 'cd "%s" && cat ../short-1/short-1/app.py'
+                             % pen}),
     ]
     texts = [(tool, json.dumps(payload)) for tool, payload in calls]
     hits = reach(["planted.jsonl"], texts, workspace, temp)["hits"] or []
@@ -2686,7 +2690,7 @@ def pen_checks():
         ("a virtualenv beside the workspace is not flagged",
          not [index for index in flagged if index < 4]),
         ("the root, another pen and a climb out of the pen are flagged",
-         flagged == [4, 5, 6, 7]),
+         flagged == [4, 5, 6, 7, 8]),
     ]
 
     # The plant landed: the voided try left a virtualenv beside its
