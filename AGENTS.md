@@ -18,6 +18,7 @@ py tests/efficacy/judge.py --self-test
 py tests/efficacy/report.py --self-test
 py tests/efficacy/archive.py --self-test
 py tests/efficacy/reuse.py --self-test
+py tests/efficacy/progress.py --self-test
 py tests/efficacy/security.py --self-test
 py tests/efficacy/control/control.py --self-test
 py -m pyflakes tests
