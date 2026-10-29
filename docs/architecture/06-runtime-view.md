@@ -55,9 +55,10 @@ Every arm gets one prompt, identical for all:
 > and every page and route in the spec works end to end against the
 > seed fixture. Commit when done.
 
-The second sentence was added for round 5. A trial runs headless, and the
-templates ask for a plan's approval before implementation code, so without it a
-templates arm could end its trial with a plan and nothing built.
+The second sentence was added for [round 5b](../rounds/round-5b.md). A trial
+runs headless, and the templates ask for a plan's approval before implementation
+code, so without it a templates arm could end its trial with a plan and nothing
+built.
 
 **Isolation.** Each trial runs apart from the machine and from the others:
 

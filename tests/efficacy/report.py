@@ -45,10 +45,13 @@ from harness import name_of as trial_of  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 
-# Round 5's registration, relative to this repository. Its hypotheses bind
-# only if they landed on the main branch before its first trial ran and stayed
-# unchanged after, so a registration that landed later read the results first.
-ROUND5_REGISTRATION = "docs/rounds/round-5.md"
+# The registration a run of round 5's arms is read against, relative to this
+# repository. Its hypotheses bind only if they landed on the main branch before
+# its first trial ran and stayed unchanged after, so a registration that landed
+# later read the results first. Round 5 was stopped after its first start and
+# runs again as round 5b, which takes round 5's design whole and changes only
+# the prompt.
+ROUND5_REGISTRATION = "docs/rounds/round-5b.md"
 
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
@@ -1120,22 +1123,22 @@ def spec_problem(root):
 
 
 def prompt_problem(root):
-    """Why a run of the round's build trials gave them another prompt than
-    the one every arm is given, or None when none did."""
-    for file in sorted(glob.glob(os.path.join(root, "run-*.json"))):
-        with io.open(file, encoding="utf-8") as handle:
-            run = json.load(handle)
-        if run.get("task", "build") != "build":
+    """Why one of the round's build trials was given another prompt than the
+    one every arm is given, or None when none was."""
+
+    # Read per trial, not per run: reusing a trial copies its record, with
+    # its own prompt, into a run that names the current one.
+    for record in run_records(root):
+        if record.get("task", "build") != "build":
             continue
 
-        # A run whose trials were all refused or left unfinished put nothing
-        # in front of the scorer, so its prompt does not matter.
-        trials = run.get("trials", [])
-        if not any(record.get("outcome") in SCORABLE for record in trials):
+        # A refused or unfinished trial put nothing in front of the scorer,
+        # so its prompt does not matter.
+        if record.get("outcome") not in SCORABLE:
             continue
-        if run.get("prompt") != PROMPT:
-            return ("%s gave its trials another prompt than the one every "
-                    "arm is given" % os.path.basename(file))
+        if record.get("prompt") != PROMPT:
+            return ("trial %s was given another prompt than the one every "
+                    "arm is given" % trial_of(record))
     return None
 
 
@@ -2877,36 +2880,40 @@ def spec_checks():
 
 
 def prompt_checks():
-    """A round is refused when a build run with something to score gave its
-    trials another prompt than the one every arm is given."""
+    """A round is refused when a build trial with something to score was
+    given another prompt than the one every arm is given, or records none."""
     scratch = tempfile.mkdtemp(prefix="efficacy-report-prompt-")
+    old_prompt = "Implement SPEC.md."
 
-    def problem_for(*runs):
+    def problem_for(*trials, run_prompt=PROMPT):
         for old in glob.glob(os.path.join(scratch, "run-*.json")):
             os.remove(old)
-        for index, run in enumerate(runs):
-            with io.open(os.path.join(scratch, "run-%d.json" % index), "w",
-                         encoding="utf-8") as handle:
-                json.dump(run, handle)
+        with io.open(os.path.join(scratch, "run-1.json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"task": "build", "prompt": run_prompt,
+                       "trials": list(trials)}, handle)
         return prompt_problem(scratch)
 
-    def run(prompt=PROMPT, outcome="completed", task="build"):
-        return {"task": task, "prompt": prompt,
-                "trials": [{"arm": "none", "trial": 1, "task": task,
-                            "outcome": outcome}]}
+    def trial(prompt=PROMPT, outcome="completed", task="build"):
+        record = {"arm": "none", "trial": 1, "task": task, "outcome": outcome}
+        if prompt is not None:
+            record["prompt"] = prompt
+        return record
 
     try:
         checks = [
-            ("every run on the one prompt passes",
-             problem_for(run(), run()) is None),
-            ("a run on another prompt is refused",
-             problem_for(run(), run("Implement SPEC.md.")) is not None),
-            ("a run recording no prompt is refused",
-             problem_for(run(None)) is not None),
-            ("a run whose trials were all refused is not read",
-             problem_for(run(), run("Implement SPEC.md.", "refused")) is None),
-            ("a change run, which has its own prompt, is not read",
-             problem_for(run(), run("Change it.", task="change")) is None),
+            ("every trial on the one prompt passes",
+             problem_for(trial(), trial()) is None),
+            ("a trial on another prompt is refused",
+             problem_for(trial(), trial(old_prompt)) is not None),
+            ("so is one reused into a run naming the current prompt",
+             problem_for(trial(old_prompt), run_prompt=PROMPT) is not None),
+            ("a scorable trial recording no prompt is refused",
+             problem_for(trial(None)) is not None),
+            ("a refused trial, which built nothing, is not read",
+             problem_for(trial(), trial(old_prompt, "refused")) is None),
+            ("a change task, which has its own prompt, is not read",
+             problem_for(trial(), trial("Change it.", task="change")) is None),
         ]
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
