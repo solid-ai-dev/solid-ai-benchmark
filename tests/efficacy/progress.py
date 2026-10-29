@@ -38,8 +38,12 @@ def records(root):
             # The harness rewrites a record after every trial, so a read can
             # land mid-write; the next redraw reads it whole.
             continue
+
+        # A trial in flight records no task of its own; the run it sits in
+        # says which task it is.
+        task = run.get("task", "build")
         found.extend(record for record in run.get("trials", [])
-                     if record.get("task", "build") == "build")
+                     if record.get("task", task) == "build")
     return found
 
 
@@ -52,10 +56,17 @@ def cost_of(record):
 
 
 def started(record):
+    """When a trial started, or None where its record does not say in a
+    known zone."""
     try:
-        return datetime.datetime.fromisoformat(record["started_at"])
+        stamp = datetime.datetime.fromisoformat(record["started_at"])
     except (KeyError, TypeError, ValueError):
         return None
+
+    # Records from before starts carried an offset were written in whatever
+    # zone the machine was in, which nothing records; no time is read from
+    # them rather than a guessed one.
+    return stamp if stamp.tzinfo else None
 
 
 def tally(trials, arms):
@@ -156,12 +167,34 @@ def self_test():
     with io.open(os.path.join(scratch, "run-2.json"), "w",
                  encoding="utf-8") as handle:
         handle.write('{"trials": [')
-    try:
-        lines = render(scratch, moment=moment)
-    except Exception as error:
-        lines = ["raised %r" % error]
+
+    # A change task in flight, recorded as the harness records one: the task
+    # is the run's, not the trial's.
+    in_flight = trial("skills", 1, "running", 5)
+    del in_flight["task"]
+    with io.open(os.path.join(scratch, "run-3.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"task": "change", "trials": [in_flight]}, handle)
+
+    # A root from before starts carried an offset.
+    legacy = os.path.join(scratch, "legacy")
+    os.makedirs(legacy)
+    naive = [dict(record, started_at=record["started_at"][:19])
+             for record in planted]
+    with io.open(os.path.join(legacy, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"task": "build", "trials": naive}, handle)
+
+    def drawn(root):
+        try:
+            return render(root, moment=moment)
+        except Exception as error:
+            return ["raised %r" % error]
+
+    lines, old = drawn(scratch), drawn(legacy)
     shutil.rmtree(scratch, ignore_errors=True)
     by_arm = {line.split()[0]: line for line in lines[2:] if line.strip()}
+    old_by_arm = {line.split()[0]: line for line in old[2:] if line.strip()}
     checks = [
         ("every arm and the whole run get a line",
          sorted(by_arm) == sorted(list(ROUND5_RUN) + ["all"])),
@@ -176,9 +209,14 @@ def self_test():
          "running hybrid-1, 15 min" in by_arm.get("hybrid", "")),
         ("an arm with nothing yet shows an empty bar",
          " 0/15 " in by_arm.get("skills", "")),
+        ("a change task in flight is not shown as a running build",
+         "running" not in by_arm.get("skills", "")),
         ("the run's line counts every arm and estimates what is left",
          " 2/75 " in by_arm.get("all", "")
          and "h left" in by_arm.get("all", "")),
+        ("a root without offsets draws its counts and reads no time",
+         " 2/75 " in old_by_arm.get("all", "")
+         and not any("min" in line or "h left" in line for line in old)),
     ]
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
