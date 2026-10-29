@@ -4,7 +4,8 @@ Registered in the design on 2026-10-26, before any round-5 trial ran, and
 amended twice on 2026-10-27, still before any trial: once to change the judge,
 and once to size the round from the noise of rounds 3 and 4 (#38). Moved here
 unchanged but for its links, and amended on 2026-10-28, still before any trial,
-to read code size as app code and test code (#39).
+to read code size as app code and test code (#39). Amended on 2026-10-29, still
+before any trial, to register the specification's content as well as its name.
 
 ## 13. Round 5: how the rules are delivered
 
@@ -23,6 +24,11 @@ fifteen times:
 | Block | Specification | Model | Trials |
 | --- | --- | --- | --- |
 | A, main | `SPEC.md` | `claude-sonnet-5`, effort `high` | 5 arms × K = 15 |
+
+`SPEC.md` is registered at sha256
+`48ee93ff968ef4a3175408c349afd6ce7223d0f3bd25b49ad4521f0fc307e55e`. The harness
+refuses a trial whose spec has other content, and the report refuses a round
+with a trial that built from one.
 
 Blocks B (`SPEC-thin.md`) and C (`claude-haiku-4-5-20251001`) are deferred to a
 later round, sized from block A's measured noise. On the noise round 4 measured

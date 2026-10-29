@@ -20,6 +20,11 @@ whose registration under `docs/rounds/`:
 - landed on `main` after the round's first trial started, read on `main`'s
   first-parent line so a merge counts at the merge
 - differs from `main`'s copy, or has changes not yet committed
+- holds a trial that built from a spec other than the one it registers, by
+  content, or a trial with something to score that records no spec
+
+The harness checks the spec too, before every trial, so an edit made while a
+run is under way refuses the trials after it rather than building them.
 
 Trials record their start with its UTC offset, so the order holds on any
 machine; a start with no offset is refused rather than guessed. A
