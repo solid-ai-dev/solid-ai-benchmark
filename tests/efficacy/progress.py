@@ -134,9 +134,11 @@ def watch(root, every):
     while True:
         lines = render(root)
 
-        # Clear and home the cursor; Windows consoles take the sequence once
-        # the shell has enabled it, which `os.system("")` does.
-        sys.stdout.write("\x1b[2J\x1b[H" + "\n".join(lines) + "\n")
+        # The console's own clear, not an escape sequence: a Windows console
+        # can take the sequence and still leave the text scrolled out of the
+        # window, which then shows black.
+        os.system("cls" if os.name == "nt" else "clear")
+        sys.stdout.write("\n".join(lines) + "\n")
         sys.stdout.flush()
         time.sleep(every)
 
@@ -248,7 +250,6 @@ def main(argv):
     if options.once:
         print("\n".join(render(options.root)))
         return 0
-    os.system("")
     try:
         watch(options.root, options.every)
     except KeyboardInterrupt:
