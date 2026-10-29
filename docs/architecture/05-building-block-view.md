@@ -47,12 +47,18 @@ harness and `reuse.py`.
 
 | Path | Holds |
 | ---- | ----- |
-| `<arm>-<block>/` | A trial's workspace, such as `full-2/` |
+| `<arm>-<block>/` | A trial's pen, such as `full-2/`: everything the trial owns |
+| `<arm>-<block>/<arm>-<block>/` | The trial's workspace, inside its pen |
+| `<arm>-<block>/tmp/<trial>/` | The trial's own temporary directory, inside its pen |
 | `<arm>-<block>.tar` | The frozen workspace, the only copy scoring reads |
 | `run-*.json` | One run record per invocation, rewritten after every trial |
 | `home/` | The scratch home: settings with the deny rules, the credential link, the transcripts |
-| `tmp/<trial>/` | Each trial's own temporary directory |
-| `void/<trial>-<time>/` | A blocked or reached trial, kept and never scored |
+| `void/<trial>-<time>/` | A blocked or reached trial's whole pen, kept and never scored |
+
+An agent checking a clean install puts its virtualenv beside the workspace, out
+of the repository. In the pen, that is the trial's own. Run roots from before
+round 5c hold each workspace straight in the root, with `tmp/` beside them, and
+are still read.
 
 ## 5.4 The scoring area
 

@@ -71,7 +71,8 @@ built.
 | The web | Web tools disallowed. The shell keeps its network, because every trial installs packages |
 | The templates repository | Not mounted |
 | Git's stored credentials | Cleared |
-| Temporary files | Each trial gets its own directory; entries it left in the machine's are moved into it |
+| The other trials | Each trial gets a pen of its own in the run root, its workspace inside it; anything past the pen is a reach |
+| Temporary files | Each trial gets its own directory, in its pen; entries it left in the machine's are moved into it |
 | Leftover processes | Stopped when the trial ends |
 
 **Bounds.** A trial ends at $100 of the CLI's own cost figure or at two

@@ -9,7 +9,8 @@ trial of that round has run. The rules every round shares are in
 | ----- | ---------- | ---- |
 | [Round 4](round-4.md) | Before its first trial, after round 3 | Does a file supply what a thin spec leaves out, and help a weaker model more |
 | [Round 5](round-5.md) | 2026-10-26, amended 2026-10-27, 2026-10-28 and 2026-10-29; stopped after its first start | Which way of delivering the rules gives the best and most consistent code |
-| [Round 5b](round-5b.md) | 2026-10-29, after round 5 stopped | Round 5's question, with a prompt that tells every arm the spec is the approved plan |
+| [Round 5b](round-5b.md) | 2026-10-29, after round 5 stopped; stopped after its first start | Round 5's question, with a prompt that tells every arm the spec is the approved plan |
+| [Round 5c](round-5c.md) | 2026-10-29, after round 5b stopped | Round 5b's question, with each trial's workspace in a pen of its own |
 
 ## Reports
 
@@ -24,4 +25,5 @@ repository existed.
 | 3 | 2026-09-27 | Context file: every arm run fresh | [Report](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy.md), [assessment of rounds 1 to 3](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy-assessment.md) |
 | 4 | 2026-10-17 | Spec: thin, and builder: Haiku 4.5 | [Summary](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-round-4.md), [thin spec](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-efficacy-thin.md), [weaker model](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-efficacy-weaker.md) |
 | 5 | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
-| 5b | Not run yet | Context file: how the rules are delivered | — |
+| 5b | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
+| 5c | Not run yet | Context file: how the rules are delivered | — |
