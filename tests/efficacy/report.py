@@ -35,7 +35,7 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
-                     ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, SCORABLE,
+                     PROMPT, ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, SCORABLE,
                      TEMPLATES_ENV, VOIDING,
                      TrialError, canonical, git, k_ceiling, order, reach,
                      read_transcripts, scoring_area, split_name,
@@ -45,10 +45,13 @@ from harness import name_of as trial_of  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 
-# Round 5's registration, relative to this repository. Its hypotheses bind
-# only if they landed on the main branch before its first trial ran and stayed
-# unchanged after, so a registration that landed later read the results first.
-ROUND5_REGISTRATION = "docs/rounds/round-5.md"
+# The registration a run of round 5's arms is read against, relative to this
+# repository. Its hypotheses bind only if they landed on the main branch before
+# its first trial ran and stayed unchanged after, so a registration that landed
+# later read the results first. Round 5 was stopped after its first start and
+# runs again as round 5b, which takes round 5's design whole and changes only
+# the prompt.
+ROUND5_REGISTRATION = "docs/rounds/round-5b.md"
 
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
@@ -1116,6 +1119,26 @@ def spec_problem(root):
             return ("trial %s built from %s at sha256 %s, and round 5 "
                     "registers sha256 %s" % (trial_of(record), spec.get("file"),
                                              spec.get("sha256"), registered))
+    return None
+
+
+def prompt_problem(root):
+    """Why one of the round's build trials was given another prompt than the
+    one every arm is given, or None when none was."""
+
+    # Read per trial, not per run: reusing a trial copies its record, with
+    # its own prompt, into a run that names the current one.
+    for record in run_records(root):
+        if record.get("task", "build") != "build":
+            continue
+
+        # A refused or unfinished trial put nothing in front of the scorer,
+        # so its prompt does not matter.
+        if record.get("outcome") not in SCORABLE:
+            continue
+        if record.get("prompt") != PROMPT:
+            return ("trial %s was given another prompt than the one every "
+                    "arm is given" % trial_of(record))
     return None
 
 
@@ -2856,6 +2879,47 @@ def spec_checks():
     return checks
 
 
+def prompt_checks():
+    """A round is refused when a build trial with something to score was
+    given another prompt than the one every arm is given, or records none."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-prompt-")
+    old_prompt = "Implement SPEC.md."
+
+    def problem_for(*trials, run_prompt=PROMPT):
+        for old in glob.glob(os.path.join(scratch, "run-*.json")):
+            os.remove(old)
+        with io.open(os.path.join(scratch, "run-1.json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"task": "build", "prompt": run_prompt,
+                       "trials": list(trials)}, handle)
+        return prompt_problem(scratch)
+
+    def trial(prompt=PROMPT, outcome="completed", task="build"):
+        record = {"arm": "none", "trial": 1, "task": task, "outcome": outcome}
+        if prompt is not None:
+            record["prompt"] = prompt
+        return record
+
+    try:
+        checks = [
+            ("every trial on the one prompt passes",
+             problem_for(trial(), trial()) is None),
+            ("a trial on another prompt is refused",
+             problem_for(trial(), trial(old_prompt)) is not None),
+            ("so is one reused into a run naming the current prompt",
+             problem_for(trial(old_prompt), run_prompt=PROMPT) is not None),
+            ("a scorable trial recording no prompt is refused",
+             problem_for(trial(None)) is not None),
+            ("a refused trial, which built nothing, is not read",
+             problem_for(trial(), trial(old_prompt, "refused")) is None),
+            ("a change task, which has its own prompt, is not read",
+             problem_for(trial(), trial("Change it.", task="change")) is None),
+        ]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return checks
+
+
 def registration_checks():
     """A round is refused when its registration landed on the main branch
     after its first trial, has not landed, is changed and not committed, or
@@ -3717,6 +3781,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in rescan_checks())
     checks.extend((label, ok, ok) for label, ok in registration_checks())
     checks.extend((label, ok, ok) for label, ok in spec_checks())
+    checks.extend((label, ok, ok) for label, ok in prompt_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -3785,6 +3850,13 @@ def main(argv):
         # Two specifications in one round would read as one arm's effect, so
         # a round whose trials did not all get the registered one is refused.
         problem = spec_problem(options.root)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
+
+        # The same holds for the prompt: trials given two prompts would read
+        # as one arm's effect.
+        problem = prompt_problem(options.root)
         if problem:
             print("refused: %s" % problem)
             return 2
