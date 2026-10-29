@@ -39,6 +39,7 @@ under [`docs/rounds/`](../rounds/).
 | Lost trial | A trial the provider ended rather than the agent, recorded as blocked. Re-run once in its place. A second loss stops the run |
 | Margin | The largest loss a metric may show and still read held, such as 2 points of hidden-test pass rate |
 | Missing | A metric that was not measured: a tool that saw no files, failed or timed out. Never recorded as zero |
+| Pen | A trial's own folder in the run root, holding its workspace, its temporary directory and whatever the agent puts beside the workspace. Anything past it is a reach |
 | Primary dimension | A metric the report leads with and a hypothesis may decide on: the judge's design, readability, maintainability, security and data-protection rows, and the two probe pass rates |
 | Reach | A tool call in a trial's transcript that names this repository, the hidden suite, the scoring area or another trial. A reached trial is voided and re-run once |
 | Reference model | A context file that only names the templates to read. Round 5's `reference` arm tests it |
@@ -59,6 +60,6 @@ under [`docs/rounds/`](../rounds/).
 | Undecided | The primer's word for no improvement shown: the likely range covers zero, so neither better nor worse can be claimed |
 | Verdict | Better, worse or no improvement shown, per metric per contrast, from where the interval lies |
 | Verdict vector | Every verdict of a round, printed at the end of the report |
-| Void | `void/` in the run root, where a blocked or reached trial's workspace is kept and never scored |
+| Void | `void/` in the run root, where a blocked or reached trial's pen is kept and never scored |
 | Withdrawn | A metric whose grader measured something else, listed in `withdrawn.json` against the grader's revision. Named with its reason, no number |
 | Workspace | A trial's directory: an empty git repository with `SPEC.md` and the arm's files, where the agent works |

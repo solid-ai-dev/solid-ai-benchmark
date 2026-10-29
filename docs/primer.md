@@ -72,8 +72,8 @@ The five arms, the settings of the first knob:
 | `skills` | A short root file plus one skill per kind of task, loaded when the task needs it | Does a root file with skills deliver what hybrid does |
 
 [Round 5's registration](rounds/round-5.md) sets the arms and the questions
-they answer. [Round 5b](rounds/round-5b.md) runs it, with one sentence added
-to the prompt.
+they answer. [Round 5c](rounds/round-5c.md) runs it, with one sentence added
+to the prompt and each trial in a folder of its own.
 
 ### 3.3 Specs
 

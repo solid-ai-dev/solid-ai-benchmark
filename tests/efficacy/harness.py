@@ -418,6 +418,26 @@ def dry_run_area(root):
     return os.path.abspath(root).rstrip("\\/") + "-dry-run"
 
 
+# An agent checking a clean install puts its virtualenv beside the workspace,
+# out of the repository. Beside every other trial in the run root, that reads
+# as a reach and voids the trial; in a folder the trial owns, it stays the
+# trial's. So each trial gets a pen: its workspace, its temporary directory,
+# and whatever the agent puts beside the workspace.
+def trial_workspace(root, name):
+    """A trial's workspace: in its pen in the run root, under its own name."""
+    return os.path.join(root, name, name)
+
+
+def pen_of(workspace):
+    """The pen a workspace sits in, or the workspace itself where it sits
+    straight in the run root, as trials did before pens."""
+    workspace = os.path.abspath(workspace)
+    parent = os.path.dirname(workspace)
+    if os.path.basename(parent).lower() == os.path.basename(workspace).lower():
+        return parent
+    return workspace
+
+
 def assert_no_ambient_context(workspace, home):
     """Refuse a run that a context file outside the arm would reach.
 
@@ -545,8 +565,8 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
     if arm not in ARMS:
         raise TrialError("unknown arm %r; the arms are %s"
                          % (arm, ", ".join(sorted(ARMS))))
-    workspace = os.path.join(root, trial_name(arm, trial))
-    if os.path.exists(workspace):
+    workspace = trial_workspace(root, trial_name(arm, trial))
+    if os.path.exists(pen_of(workspace)):
         raise TrialError("workspace %s already exists; a trial never reuses "
                          "one" % workspace)
     os.makedirs(workspace)
@@ -873,17 +893,27 @@ def classify(status, result):
 
 
 def void(root, workspace, frozen, name):
-    """Move a blocked trial's workspace and tarball under `void/`."""
+    """Move a blocked trial's pen, its workspace with it, and its tarball
+    under `void/`."""
     stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     target = os.path.join(root, "void", "%s-%s" % (name, stamp))
     moved = {"dir": target, "workspace": os.path.join(target, name),
              "tarball": os.path.join(target, "%s.tar" % name)}
 
-    # A process the agent left running can hold a file open. A workspace that
-    # cannot move would block the re-run, so the caller stops the run.
+    # The whole pen goes, so the re-run does not find what the voided try
+    # left beside its workspace. A process the agent left running can hold a
+    # file open. A pen that cannot move would block the re-run, so the caller
+    # stops the run.
+    pen = pen_of(workspace)
     try:
         os.makedirs(target)
-        shutil.move(workspace, moved["workspace"])
+        if pen == os.path.abspath(workspace):
+            shutil.move(workspace, moved["workspace"])
+        else:
+            for entry in os.listdir(pen):
+                shutil.move(os.path.join(pen, entry),
+                            os.path.join(target, entry))
+            os.rmdir(pen)
         shutil.move(frozen["tarball"], moved["tarball"])
     except OSError as error:
         raise TrialError("could not void %s: %s" % (name, error))
@@ -1007,7 +1037,7 @@ def reach(files, calls, workspace=None, temp=None, vendored=None):
                  for owned in (REPOSITORY_TERMS
                                if term == "solid-ai-templates" else (term,))]
     if workspace:
-        root = os.path.dirname(os.path.abspath(workspace))
+        root = os.path.dirname(pen_of(workspace))
         terms.append(os.path.basename(scoring_area(root)).lower())
         outside = outside_pattern(workspace, temp)
     hits = []
@@ -1055,10 +1085,11 @@ def path_pattern(paths):
 
 def outside_pattern(workspace, temp):
     """A pattern matching a path into the run root other than the trial's own
-    workspace or temporary directory, as normalised by `reach`."""
+    pen, workspace or temporary directory, as normalised by `reach`."""
     workspace = os.path.abspath(workspace)
-    root = os.path.dirname(workspace)
-    own = [re.escape(os.path.basename(workspace).lower())]
+    pen = pen_of(workspace)
+    root = os.path.dirname(pen)
+    own = [re.escape(os.path.basename(pen).lower())]
     if temp:
         name = os.path.basename(os.path.abspath(temp)).lower()
         own.append("tmp/" + re.escape(name))
@@ -1078,12 +1109,15 @@ def outside_pattern(workspace, temp):
     alternatives = ["(?:%s)/?(?=$|[\\s\"';,])" % forms,
                     "(?:%s)/%s[^/\\s\"';,]+" % (forms, not_own)]
 
-    # An entry of the root climbed to from inside the workspace.
+    # An entry of the root climbed to from inside the workspace: one level up
+    # where the workspace sits in the root, two where it sits in a pen, whose
+    # own entries one level up are the trial's.
     entries = (sorted(entry.lower() for entry in os.listdir(root))
                if os.path.isdir(root) else [])
+    climb = "\\.\\./" * (1 if pen == workspace else 2)
     if entries:
-        alternatives.append("\\.\\./%s(?:%s)%s" % (
-            not_own, "|".join(re.escape(entry) for entry in entries),
+        alternatives.append("%s%s(?:%s)%s" % (
+            climb, not_own, "|".join(re.escape(entry) for entry in entries),
             PATH_END))
     return re.compile("|".join(alternatives))
 
@@ -1280,8 +1314,11 @@ def contain(workspace, temp, home, shared, since, vendored=None):
     """
     files, calls = read_transcripts(home, workspace, since)
     leftovers = shared_leftovers(shared, since, calls)
-    owned = [workspace, temp, home] + [os.path.join(shared, entry)
-                                       for entry in leftovers]
+
+    # The pen, not only the workspace: a server started from a virtualenv
+    # beside the workspace runs from the pen.
+    owned = [pen_of(workspace), temp, home] + [os.path.join(shared, entry)
+                                               for entry in leftovers]
     result = {"reach": reach(files, calls, workspace, temp, vendored),
               "shared_temp_dir": shared}
 
@@ -1321,8 +1358,8 @@ def prepare_change_workspace(arm, trial, root, build):
     Returns the workspace and the commit its starting state is recorded in.
     """
     name = "change-%s" % trial_name(arm, trial)
-    workspace = os.path.join(root, name)
-    if os.path.exists(workspace):
+    workspace = trial_workspace(root, name)
+    if os.path.exists(pen_of(workspace)):
         raise TrialError("workspace %s already exists; a trial never reuses "
                          "one" % workspace)
     tarball = (build.get("frozen") or {}).get("tarball")
@@ -1338,6 +1375,7 @@ def prepare_change_workspace(arm, trial, root, build):
     try:
         with tarfile.open(tarball) as archive:
             archive.extractall(unpacking, filter="data")
+        os.makedirs(pen_of(workspace))
         shutil.move(os.path.join(unpacking, frozen_top(tarball, unpacking)),
                     workspace)
     except (OSError, tarfile.TarError) as error:
@@ -1397,7 +1435,7 @@ def run_trial(arm, trial, root, home, options):
     digest = spec_digest(os.path.join(workspace, "SPEC.md"))
     problem = spec_problem(arms, spec_name, digest)
     if problem:
-        remove_tree(workspace)
+        remove_tree(pen_of(workspace))
         raise TrialError(problem)
     record = {"arm": arm, "label": ARMS[arm]["label"], "trial": trial,
               "task": "build", "vendored": vendored,
@@ -1576,10 +1614,12 @@ def run_agent(workspace, name, prompt, record, root, home, options):
         return record
 
     # The trial's own temporary directory, apart from the machine's, which
-    # every trial shares. Stamped, because a voided trial re-runs under its
-    # own name.
-    temp = os.path.join(root, "tmp", "%s-%s" % (
-        name, datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")))
+    # every trial shares, and in its pen, so the directory above it is the
+    # trial's too. Stamped, because a voided trial re-runs under its own name.
+    pen = pen_of(workspace)
+    stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    temp = os.path.join(root if pen == os.path.abspath(workspace) else pen,
+                        "tmp", "%s-%s" % (name, stamp))
     os.makedirs(temp)
     record["temp"] = temp
     shared = tempfile.gettempdir()
@@ -1802,12 +1842,16 @@ def recover(root, home, table=None):
                                  % (name, record.get("harness_pid"), root))
 
             # The orphaned agent names its settings file on its command line,
-            # and what it started runs from the workspace.
-            workspace = os.path.join(root, name)
+            # and what it started runs from the pen. A root laid out before
+            # pens holds the workspace straight in the root.
+            workspace = trial_workspace(root, name)
+            if not os.path.isdir(workspace):
+                workspace = os.path.join(root, name)
             settings = os.path.join(home, "settings-%s.json" % name)
             ending = {"outcome": "interrupted",
                       "reason": "the harness ended while the trial ran",
-                      "stopped": stop_processes([workspace, settings], table)}
+                      "stopped": stop_processes([pen_of(workspace), settings],
+                                                table)}
             if os.path.isdir(workspace):
                 frozen = freeze(workspace, root, name)
                 ending["void"] = void(root, workspace, frozen, name)
@@ -2153,9 +2197,9 @@ def change_checks():
                                                    {"frozen": frozen})
     except TrialError:
         workspace, base = None, None
-    checks.append(("the change workspace unpacks under its own name, from "
-                   "a tarball frozen under round 1's",
-                   workspace == os.path.join(scratch, "change-none-1")
+    checks.append(("the change workspace unpacks under its own name, in its "
+                   "pen, from a tarball frozen under round 1's",
+                   workspace == trial_workspace(scratch, "change-none-1")
                    and os.path.isfile(os.path.join(workspace, "draft.py"))))
     checks.append(("its starting state is committed", workspace is not None
                    and git(workspace, "status", "--porcelain") == ""
@@ -2599,6 +2643,64 @@ def outside_checks():
              not [index for index in flagged if index < 5]),
             ("every call reaching past the trial is flagged",
              flagged == [5, 6, 7, 8])]
+
+
+def pen_checks():
+    """A trial's workspace sits in a pen of its own: what the agent puts
+    beside the workspace is the trial's, another pen and the root are not,
+    and a voided trial takes its whole pen with it."""
+    scratch = os.path.join(tempfile.gettempdir(), "efficacy-pen-self-test")
+    remove_tree(scratch)
+    root = os.path.abspath(os.path.join(scratch, "run"))
+    os.makedirs(root)
+    workspace, _ = prepare_workspace("none", 1, root)
+    pen = os.path.join(root, "none-1")
+    temp = os.path.join(pen, "tmp", "none-1-planted")
+    venv = os.path.join(pen, "_clean_venv_test")
+    for directory in (temp, venv, trial_workspace(root, "short-1"),
+                      os.path.join(root, "home", ".claude")):
+        os.makedirs(directory)
+
+    # The first four stay in the pen; each of the last four reaches out.
+    calls = [
+        ("Bash", {"command": 'python -m venv "%s"' % venv}),
+        ("Bash", {"command": 'cd "%s" && pip install ./none-1' % pen}),
+        ("Bash", {"command": "../_clean_venv_test/Scripts/python -m tariff"}),
+        ("Bash", {"command": 'cd "%s" && ls' % os.path.dirname(temp)}),
+        ("Bash", {"command": 'cd "%s" && ls' % root}),
+        ("Read", {"file_path": os.path.join(trial_workspace(root, "short-1"),
+                                            "app.py")}),
+        ("Bash", {"command": "cat ../../short-1/short-1/app.py"}),
+        ("Bash", {"command": "ls %s" % os.path.join(root, "home")}),
+    ]
+    texts = [(tool, json.dumps(payload)) for tool, payload in calls]
+    hits = reach(["planted.jsonl"], texts, workspace, temp)["hits"] or []
+    flagged = sorted({index for index, (_, text) in enumerate(texts)
+                      for hit in hits if hit["call"] == text[:300]})
+    checks = [
+        ("a new trial's workspace sits in a pen under its own name",
+         workspace == trial_workspace(root, "none-1")
+         and pen_of(workspace) == pen),
+        ("a workspace straight in the root is its own pen",
+         pen_of(os.path.join(root, "none-1")) == pen),
+        ("a virtualenv beside the workspace is not flagged",
+         not [index for index in flagged if index < 4]),
+        ("the root, another pen and a climb out of the pen are flagged",
+         flagged == [4, 5, 6, 7]),
+    ]
+
+    # The plant landed: the voided try left a virtualenv beside its
+    # workspace, which the re-run must not find.
+    frozen = freeze(workspace, root, "none-1")
+    moved = void(root, workspace, frozen, "none-1")
+    checks.append(("a voided trial takes its whole pen and its tarball",
+                   not os.path.exists(pen)
+                   and os.path.isdir(moved["workspace"])
+                   and os.path.isdir(os.path.join(moved["dir"],
+                                                  "_clean_venv_test"))
+                   and os.path.isfile(moved["tarball"])))
+    remove_tree(scratch)
+    return checks
 
 
 def naming_checks():
@@ -3082,7 +3184,8 @@ def self_test():
               + process_checks()
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()
               + vendor_checks() + denial_checks() + kill_checks()
-              + recover_checks() + round5_checks() + spec_checks())
+              + recover_checks() + round5_checks() + spec_checks()
+              + pen_checks())
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     passed = sum(1 for _, ok in checks if ok)

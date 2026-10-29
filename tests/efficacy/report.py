@@ -49,9 +49,9 @@ REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 # repository. Its hypotheses bind only if they landed on the main branch before
 # its first trial ran and stayed unchanged after, so a registration that landed
 # later read the results first. Round 5 was stopped after its first start and
-# runs again as round 5b, which takes round 5's design whole and changes only
-# the prompt.
-ROUND5_REGISTRATION = "docs/rounds/round-5b.md"
+# ran again as round 5b, which changed only the prompt; round 5b was stopped in
+# turn and runs again as round 5c, which changes only where a workspace sits.
+ROUND5_REGISTRATION = "docs/rounds/round-5c.md"
 
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
