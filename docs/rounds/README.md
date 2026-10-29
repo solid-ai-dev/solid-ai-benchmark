@@ -8,7 +8,7 @@ trial of that round has run. The rules every round shares are in
 | Round | Registered | Asks |
 | ----- | ---------- | ---- |
 | [Round 4](round-4.md) | Before its first trial, after round 3 | Does a file supply what a thin spec leaves out, and help a weaker model more |
-| [Round 5](round-5.md) | 2026-10-26, amended 2026-10-27, 2026-10-28 and 2026-10-29 | Which way of delivering the rules gives the best and most consistent code |
+| [Round 5](round-5.md) | 2026-10-26, amended 2026-10-27, 2026-10-28 and twice on 2026-10-29 | Which way of delivering the rules gives the best and most consistent code |
 
 ## Reports
 

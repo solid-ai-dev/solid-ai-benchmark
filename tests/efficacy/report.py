@@ -35,7 +35,7 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
-                     ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, SCORABLE,
+                     PROMPT, ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, SCORABLE,
                      TEMPLATES_ENV, VOIDING,
                      TrialError, canonical, git, k_ceiling, order, reach,
                      read_transcripts, scoring_area, split_name,
@@ -1116,6 +1116,26 @@ def spec_problem(root):
             return ("trial %s built from %s at sha256 %s, and round 5 "
                     "registers sha256 %s" % (trial_of(record), spec.get("file"),
                                              spec.get("sha256"), registered))
+    return None
+
+
+def prompt_problem(root):
+    """Why a run of the round's build trials gave them another prompt than
+    the one every arm is given, or None when none did."""
+    for file in sorted(glob.glob(os.path.join(root, "run-*.json"))):
+        with io.open(file, encoding="utf-8") as handle:
+            run = json.load(handle)
+        if run.get("task", "build") != "build":
+            continue
+
+        # A run whose trials were all refused or left unfinished put nothing
+        # in front of the scorer, so its prompt does not matter.
+        trials = run.get("trials", [])
+        if not any(record.get("outcome") in SCORABLE for record in trials):
+            continue
+        if run.get("prompt") != PROMPT:
+            return ("%s gave its trials another prompt than the one every "
+                    "arm is given" % os.path.basename(file))
     return None
 
 
@@ -2856,6 +2876,43 @@ def spec_checks():
     return checks
 
 
+def prompt_checks():
+    """A round is refused when a build run with something to score gave its
+    trials another prompt than the one every arm is given."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-prompt-")
+
+    def problem_for(*runs):
+        for old in glob.glob(os.path.join(scratch, "run-*.json")):
+            os.remove(old)
+        for index, run in enumerate(runs):
+            with io.open(os.path.join(scratch, "run-%d.json" % index), "w",
+                         encoding="utf-8") as handle:
+                json.dump(run, handle)
+        return prompt_problem(scratch)
+
+    def run(prompt=PROMPT, outcome="completed", task="build"):
+        return {"task": task, "prompt": prompt,
+                "trials": [{"arm": "none", "trial": 1, "task": task,
+                            "outcome": outcome}]}
+
+    try:
+        checks = [
+            ("every run on the one prompt passes",
+             problem_for(run(), run()) is None),
+            ("a run on another prompt is refused",
+             problem_for(run(), run("Implement SPEC.md.")) is not None),
+            ("a run recording no prompt is refused",
+             problem_for(run(None)) is not None),
+            ("a run whose trials were all refused is not read",
+             problem_for(run(), run("Implement SPEC.md.", "refused")) is None),
+            ("a change run, which has its own prompt, is not read",
+             problem_for(run(), run("Change it.", task="change")) is None),
+        ]
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return checks
+
+
 def registration_checks():
     """A round is refused when its registration landed on the main branch
     after its first trial, has not landed, is changed and not committed, or
@@ -3717,6 +3774,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in rescan_checks())
     checks.extend((label, ok, ok) for label, ok in registration_checks())
     checks.extend((label, ok, ok) for label, ok in spec_checks())
+    checks.extend((label, ok, ok) for label, ok in prompt_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -3785,6 +3843,13 @@ def main(argv):
         # Two specifications in one round would read as one arm's effect, so
         # a round whose trials did not all get the registered one is refused.
         problem = spec_problem(options.root)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
+
+        # The same holds for the prompt: trials given two prompts would read
+        # as one arm's effect.
+        problem = prompt_problem(options.root)
         if problem:
             print("refused: %s" % problem)
             return 2

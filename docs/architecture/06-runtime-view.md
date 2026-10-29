@@ -48,10 +48,16 @@ How a trial ends:
 
 Every arm gets one prompt, identical for all:
 
-> Implement the application described in SPEC.md. Done means:
+> Implement the application described in SPEC.md. SPEC.md is the
+> approved plan, and nobody will answer questions during this run, so
+> build it to the end without stopping for approval. Done means:
 > `pip install .` succeeds in a clean virtualenv, your own tests pass,
 > and every page and route in the spec works end to end against the
 > seed fixture. Commit when done.
+
+The second sentence was added for round 5. A trial runs headless, and the
+templates ask for a plan's approval before implementation code, so without it a
+templates arm could end its trial with a plan and nothing built.
 
 **Isolation.** Each trial runs apart from the machine and from the others:
 

@@ -50,9 +50,13 @@ CHANGE_PROMPT = os.path.join(HERE, "change-prompt.txt")
 
 # Identical for every arm, so the context file is the only difference.
 # Changing it changes what the benchmark measures, so it is a constant and
-# not an option.
+# not an option. A trial runs headless, so a context file asking the agent to
+# wait for a plan's approval would end the trial with nothing built; the spec
+# stands as the approved plan, and the prompt says nobody will answer.
 PROMPT = (
-    "Implement the application described in SPEC.md. Done means: "
+    "Implement the application described in SPEC.md. SPEC.md is the approved "
+    "plan, and nobody will answer questions during this run, so build it to "
+    "the end without stopping for approval. Done means: "
     "`pip install .` succeeds in a clean virtualenv, your own tests pass, "
     "and every page and route in the spec works end to end against the "
     "seed fixture. Commit when done."

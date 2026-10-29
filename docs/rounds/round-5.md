@@ -6,6 +6,9 @@ and once to size the round from the noise of rounds 3 and 4 (#38). Moved here
 unchanged but for its links, and amended on 2026-10-28, still before any trial,
 to read code size as app code and test code (#39). Amended on 2026-10-29, still
 before any trial, to register the specification's content as well as its name.
+Amended again on 2026-10-29, after a first start of block A was stopped and its
+four trials discarded, to tell every arm the spec is the approved plan (section
+13.7).
 
 ## 13. Round 5: how the rules are delivered
 
@@ -200,3 +203,31 @@ Why: a better solution is often a little bigger, with tests, error handling and
 layering, so a small rise should not read as worse. In round 4's trees, tests
 were 10 to 40 % of the Python lines, and docs, templates and config outnumbered
 the app's modules, so the old rows measured neither code nor bulk cleanly.
+
+### 13.7 The prompt
+
+Amended on 2026-10-29, after a first start of block A. Every arm's prompt gains
+one sentence after its first:
+
+> SPEC.md is the approved plan, and nobody will answer questions during this
+> run, so build it to the end without stopping for approval.
+
+Why: `templates/core/review.md` at `9086e0ff` asks for a plan, and its
+approval, before implementation code, unless the requester specified the change
+in full. A trial runs headless, so nobody approves. The first start's
+`inline-1` printed a plan, cited that rule, and ended after 2 minutes and $0.30
+with nothing built. Without the sentence a
+templates arm loses for waiting, not for the code it guides. The sentence goes
+to every arm, `none` included, so the context file stays the only difference.
+
+The first start, from 08:21 to 09:47 on 2026-10-29 in `C:/efficacy/r5-main`:
+
+| Trial | What happened |
+| --- | --- |
+| `none-1` | Voided for a command run outside its workspace, then rerun to completion |
+| `inline-1` | Stopped after its plan, as above |
+| `hybrid-1` | Stopped mid-build when block A was stopped |
+
+Its four trials count toward nothing. None was scored or judged. Block A
+restarts at block 1 in a fresh run root, and the report refuses a build run
+whose recorded prompt is not this one.
