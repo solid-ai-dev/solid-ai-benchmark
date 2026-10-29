@@ -382,7 +382,7 @@ No person scores the judge. Two automated checks do:
   bundle it was quoted from, and the report prints the share found per
   trial. A judge that never opened the code still returns plausible
   numbers; this is what tells the two apart.
-- **The control fixture:** eleven trees built from two pinned applications
+- **The control fixture:** twelve trees built from two pinned applications
   (`tests/efficacy/control/`). Every tree passes the same tests as its
   application, so only what was changed separates them. Some are damaged,
   some improved. A primary dimension counts only if it falls on the damaged
@@ -417,6 +417,7 @@ application's tests.
 | `base-1` | the application as one trial generated it, unaltered |
 | `degraded-1` | the domain merged into one module, `from flask import current_app` used inside `price`, and the package's exceptions reparented off `TariffError` |
 | `obscured-1` | the pricing algorithm inlined into one long function with abbreviated names, and nothing else: the module boundaries, the error hierarchy and the dispatch are the base's |
+| `clarified-1` | the mirror of `obscured-1`: the pricing module rewritten into short functions of one step each, with names that carry the intent, and nothing else changed |
 | `improved-1` | a rule contract and self-registering kind registry, dispatch on concrete type removed from pricing and persistence, the hardcoded kinds tuple replaced by the registry, a `__class__.__name__` ladder removed from a template, and two stray error classes folded into the package hierarchy |
 | `improved-2` | `improved-1`, and the store maps a rule's own terms onto its columns with a codec per column, so no module dispatches on a kind |
 | `improved-3` | `improved-2`, and each kind declares the fields it asks a form for, so the form-building code and the template are derived from the registry and no layer names a kind |
@@ -458,7 +459,7 @@ about the instrument:
 
 Which tree tests which row matters. `degraded-1` damages structure and leaves
 every function body alone, so a flat `readability` there says nothing about
-the row — that is what `obscured-1` is for. Read each row against the tree
+the row — that is what `obscured-1` and `clarified-1` are for. Read each row against the tree
 built to move it, and treat the others as a check that it is not moving on
 noise.
 

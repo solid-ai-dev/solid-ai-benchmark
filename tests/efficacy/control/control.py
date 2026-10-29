@@ -55,7 +55,7 @@ BASE_2_SHA256 = "a07d606c035078cff718de7cf9ed02131ea06b6bcf09ee8ecf0f296638425b7
 MERGED = ("errors", "models", "rules", "pricing")
 
 TRIALS = ("base-1", "degraded-1", "improved-1", "improved-2",
-          "improved-3", "obscured-1")
+          "improved-3", "obscured-1", "clarified-1")
 
 # The second application's trees: its security and its handling of personal
 # data, each damaged in one tree and improved in another.
@@ -319,6 +319,20 @@ def obscure(tree):
                  os.path.join(tree, "tariff", "pricing.py"))
 
 
+def clarify(tree):
+    """Improve what a reader has to hold in their head, and nothing else.
+
+    The mirror of `obscure`: only the pricing module is rewritten, into short
+    functions that each do one step, with names that carry the intent and no
+    expression that needs a second reading. The module boundaries, the error
+    hierarchy and the dispatch on concrete rule classes stay the base's, so
+    the readability row has something to rise on and every other row has
+    nothing.
+    """
+    shutil.copy2(os.path.join(OVERLAY, "pricing_clarified.py"),
+                 os.path.join(tree, "tariff", "pricing.py"))
+
+
 def edit(tree, rel, *swaps):
     """Apply `(old, new, where)` swaps to one file of the tree, in order."""
     text = read(tree, rel)
@@ -484,34 +498,35 @@ def protect(tree):
 LANDINGS = (
     ("tariff/core.py exists", lambda t: os.path.isfile(
         os.path.join(t, "tariff", "core.py")),
-     {"base-1": False, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": False, "improved-3": False}),
+     {"base-1": False, "clarified-1": False, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": False, "improved-3": False}),
 
     # Read against the domain alone: the web package imports flask in every
     # tree, so a whole-tree probe would answer yes whatever was done.
     ("the domain imports flask", lambda t: "from flask import current_app"
-     in domain(t), {"base-1": False, "degraded-1": True,
+     in domain(t), {"base-1": False, "clarified-1": False, "degraded-1": True,
                     "improved-1": False, "improved-2": False, "obscured-1": False, "improved-3": False}),
     ("ValidationError derives from TariffError",
      lambda t: "class ValidationError(TariffError):" in whole(t),
-     {"base-1": True, "degraded-1": False, "improved-1": True, "improved-2": True, "obscured-1": True, "improved-3": True}),
+     {"base-1": True, "clarified-1": True, "degraded-1": False, "improved-1": True, "improved-2": True, "obscured-1": True, "improved-3": True}),
 
     # The damaged tree keeps the ladder: merging the modules moves it into
     # core.py rather than removing it. Only the improved tree loses it.
     ("pricing dispatches on concrete type",
-     lambda t: "isinstance(r, TieredRule)" in whole(t),
-     {"base-1": True, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
+     lambda t: ("isinstance(r, TieredRule)" in whole(t)
+                or "isinstance(rule, TieredRule)" in domain(t)),
+     {"base-1": True, "clarified-1": True, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
     ("the rules declare a contract", lambda t: "class Rule(ABC):" in whole(t),
-     {"base-1": False, "degraded-1": False, "improved-1": True, "improved-2": True, "obscured-1": False, "improved-3": True}),
+     {"base-1": False, "clarified-1": False, "degraded-1": False, "improved-1": True, "improved-2": True, "obscured-1": False, "improved-3": True}),
     ("the kinds are hardcoded",
      lambda t: 'KINDS = ("percentage", "bulk", "tiered", "coupon")'
-     in whole(t), {"base-1": True, "degraded-1": True,
+     in whole(t), {"base-1": True, "clarified-1": True, "degraded-1": True,
                    "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
     ("an error class sits outside the hierarchy",
      lambda t: "class _BadRequest(Exception):" in whole(t),
-     {"base-1": True, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
+     {"base-1": True, "clarified-1": True, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
     ("the template branches on a class name",
      lambda t: "__class__.__name__" in whole(t),
-     {"base-1": True, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
+     {"base-1": True, "clarified-1": True, "degraded-1": True, "improved-1": False, "improved-2": False, "obscured-1": True, "improved-3": False}),
 
     # The seed fixture names a kind per sample row in every tree, and has to:
     # that is data. What this reads is whether the store DISPATCHES on kind,
@@ -520,18 +535,24 @@ LANDINGS = (
      lambda t: ('kind == "tiered"' in store(t)
                 or "isinstance(rule, TieredRule)" in store(t)
                 or "_TO_ROW = {" in store(t)),
-     {"base-1": True, "degraded-1": True, "improved-1": True,
+     {"base-1": True, "clarified-1": True, "degraded-1": True, "improved-1": True,
       "improved-2": False, "obscured-1": True, "improved-3": False}),
 
     ("the pricing algorithm is broken into named steps",
      lambda t: "def _price_line(" in whole(t),
-     {"base-1": True, "degraded-1": True, "improved-1": True,
+     {"base-1": True, "clarified-1": True, "degraded-1": True, "improved-1": True,
       "improved-2": True, "obscured-1": False, "improved-3": True}),
+
+    ("the invoice's discounts are a step of their own",
+     lambda t: "def _apply_invoice_rules(" in whole(t),
+     {"base-1": False, "clarified-1": True, "degraded-1": False,
+      "improved-1": False, "improved-2": False, "improved-3": False,
+      "obscured-1": False}),
 
     ("the form names a rule kind",
      lambda t: ('kind == "percentage"' in form(t)
                 or "Buy (bulk)" in form(t)),
-     {"base-1": True, "degraded-1": True, "improved-1": True,
+     {"base-1": True, "clarified-1": True, "degraded-1": True, "improved-1": True,
       "improved-2": True, "improved-3": False, "obscured-1": True}),
 )
 
@@ -697,6 +718,7 @@ def build(root):
     improve_further(made["improved-2"])
     improve_form(made["improved-3"])
     obscure(made["obscured-1"])
+    clarify(made["clarified-1"])
 
     second = extract(pinned(BASE_2, BASE_2_SHA256), scoring, TRIALS_2)
     insecure(second["insecure-1"])

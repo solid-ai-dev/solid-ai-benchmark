@@ -22,8 +22,8 @@ Assumptions:
 | 1 | Owner | Runs the control's self test | 2 min | Builds in a temporary directory and checks every mutation landed |
 | 2 | Owner | Builds the control root | 2 min | Prints one line per entity it changed, read back off the trees |
 | 3 | Owner | Runs the tests in each built tree | 10 min | Every tree passes, so only structure separates them |
-| 4 | Judge | Reads the control root, three times per tree | 30 to 60 min | Eleven trees, 33 judgings |
-| 5 | Owner | Reads each primary row: down on `degraded-1`, `obscured-1`, `insecure-1`, `leaky-1`, up on `improved-*`, `secured-1`, `protected-1` | 15 min | A row that does not move cannot decide a round. Results go in [ch. 10.7](../../architecture/10-quality-requirements.md) |
+| 4 | Judge | Reads the control root, three times per tree | 75 to 80 min | Twelve trees, 36 judgings |
+| 5 | Owner | Reads each primary row: down on `degraded-1`, `obscured-1`, `insecure-1`, `leaky-1`, up on `improved-*`, `clarified-1`, `secured-1`, `protected-1` | 15 min | A row that does not move cannot decide a round. Results go in [ch. 10.7](../../architecture/10-quality-requirements.md) |
 | | | Total | about 1.5 hours | |
 
 ## Commands
