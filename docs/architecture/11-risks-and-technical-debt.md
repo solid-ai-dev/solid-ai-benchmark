@@ -16,17 +16,15 @@ Each risk names what holds it today.
 | 7 | A missing setting measures the setting, not the code: round 4's hybrid app refused to start without a secret key the spec never named | Both specs now name `TARIFF_SECRET_KEY`, and scoring supplies it | |
 | 8 | The model changes under a round | Exact ids pinned, arms interleaved, each block starting one arm later | A provider-side change within one id is not detectable |
 | 9 | Every trial is one session | | Drift over a project's life, the templates' strongest claim, is untested |
+| 10 | One author writes the templates, the spec, the hidden suite and the rubric, so the judge's rows may reward the templates for agreeing with themselves: the 5s describe the templates' own approach, and the control trees were built to those anchors | The hidden suite, the security probes and the size metrics do not read the rubric | No outside reader has reviewed the anchors or scored a tree, #75 |
 
 ## 11.2 Technical debt
 
 | # | Debt | Cost | Next step |
 | - | ---- | ---- | --------- |
-| 1 | No CI runs the self tests in this repository | A regression in a guard shows only when a round runs | Add a workflow that runs every `--self-test`, #6 |
-| 2 | Windows-specific handling: `.CMD` shims, `cmd.exe` expansion, process trees | A run on another platform is untested | State the platform in [ch. 2](02-constraints.md), or test one |
-| 3 | `harness.py` and `report.py` each run past 3,000 lines | A change is hard to review in isolation | Split by stage when next touched |
-| 4 | Round 1's trials keep their letter names on disk (`A1`, `B2`, `C3`) | Every reader maps them | None while round 1 is read |
-| 5 | The reports land in the templates source, not here | A reader of this repository finds no results | A results index here, linking each report |
-| 6 | Round 5's arms are registered but not yet built | Its hypotheses wait on harness work | Design [round 5's registration, 13.4](../rounds/round-5.md) |
+| 1 | Windows-specific handling: `.CMD` shims, `cmd.exe` expansion, process trees | A run on another platform is untested | State the platform in [ch. 2](02-constraints.md), or test one |
+| 2 | `harness.py` and `report.py` each run past 3,000 lines | A change is hard to review in isolation | Split by stage when next touched |
+| 3 | Round 1's trials keep their letter names on disk (`A1`, `B2`, `C3`) | Every reader maps them | None while round 1 is read |
 
 ## 11.3 Confounds and their controls
 
