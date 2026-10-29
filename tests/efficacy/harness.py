@@ -1381,11 +1381,20 @@ def run_trial(arm, trial, root, home, options):
 
     # Read again for every trial, so an edit made after the run started
     # refuses the trials after it rather than building them from a new spec.
-    digest = spec_digest(spec)
-    problem = spec_problem(getattr(options, "arm_list", ()), spec_name, digest)
+    arms = getattr(options, "arm_list", ())
+    problem = spec_problem(arms, spec_name, spec_digest(spec))
     if problem:
         raise TrialError(problem)
     workspace, vendored = prepare_workspace(arm, trial, root, spec)
+
+    # The copy is what the agent reads, and the source can change between the
+    # check above and the copy, so the copy is what is checked and recorded.
+    # A refused workspace is removed, so the trial's slot stays free.
+    digest = spec_digest(os.path.join(workspace, "SPEC.md"))
+    problem = spec_problem(arms, spec_name, digest)
+    if problem:
+        remove_tree(workspace)
+        raise TrialError(problem)
     record = {"arm": arm, "label": ARMS[arm]["label"], "trial": trial,
               "task": "build", "vendored": vendored,
               "spec": {"file": os.path.basename(spec), "sha256": digest}}
@@ -3030,6 +3039,30 @@ def spec_checks():
             refused = False
         checks.append(("a spec edited mid-run refuses the next trial unbuilt",
                        refused and os.listdir(root) == []))
+
+        # The source edited between its check and its copy: the planted copy
+        # step writes the edit into the workspace after the source passed.
+        SPECS[name] = original
+        prepare = globals()["prepare_workspace"]
+
+        def edited_in_flight(*args, **kwargs):
+            workspace, vendored = prepare(*args, **kwargs)
+            with io.open(os.path.join(workspace, "SPEC.md"), "ab") as copy:
+                copy.write(b"\nOne more line.\n")
+            return workspace, vendored
+
+        globals()["prepare_workspace"] = edited_in_flight
+        try:
+            run_trial("none", 3, root, scratch, options)
+            refused = False
+        except TrialError:
+            refused = True
+        except Exception:
+            refused = False
+        finally:
+            globals()["prepare_workspace"] = prepare
+        checks.append(("a spec changed as it is copied refuses the trial and "
+                       "frees its slot", refused and os.listdir(root) == []))
     finally:
         SPECS[name] = original
         shutil.rmtree(scratch, ignore_errors=True)
