@@ -114,8 +114,10 @@ every trial, so a stopped run keeps every trial it finished.
   is back: on 2026-10-30 `hybrid-6` refreshed at 15:05 and the owner's
   session was forced to log in at 15:10 (#87). A watch therefore looks at
   the home's file every 15 seconds while a trial runs, and writes a later
-  token back as soon as it appears, under the same lock and compare. The
-  link itself is still remade only between trials.
+  token back as soon as it appears, under the same lock and compare, and
+  looks once more as the trial ends, so a refresh after the last look is not
+  left for a run's end or a long wait. The link itself is still remade only
+  between trials.
 - **The temporary directory.** Git Bash maps `/tmp` to the machine's
   temporary directory whatever `TEMP` says, so an entry that appeared there
   during a trial and that a tool call names is moved into the trial's own.

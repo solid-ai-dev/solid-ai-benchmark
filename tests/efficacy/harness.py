@@ -749,21 +749,24 @@ def credential_watch(home, account=None, every_s=WATCH_EVERY_S):
     # so every other session on the machine holds a dead one until the new
     # token is written back. Left to the end of the trial, that gap ran an
     # hour and forced a login; the link is still remade only between trials.
+    def sync():
+        try:
+            if not os.path.exists(target) or not os.path.exists(source) \
+                    or os.path.samefile(source, target):
+                return
+            with credential_lock(source):
+                if write_back(source, target):
+                    written.append(time.time())
+                    print("  credentials: a token the trial refreshed was "
+                          "written back to the account's file", flush=True)
+        except OSError:
+
+            # The CLI may be mid-save; the next look reads the file whole.
+            pass
+
     def look():
         while not stop.wait(every_s):
-            try:
-                if not os.path.exists(target) or not os.path.exists(source) \
-                        or os.path.samefile(source, target):
-                    continue
-                with credential_lock(source):
-                    if write_back(source, target):
-                        written.append(time.time())
-                        print("  credentials: a token the trial refreshed was "
-                              "written back to the account's file", flush=True)
-            except OSError:
-
-                # The CLI may be mid-save; the next look reads the file whole.
-                continue
+            sync()
 
     watcher = threading.Thread(target=look, daemon=True)
     watcher.start()
@@ -772,6 +775,11 @@ def credential_watch(home, account=None, every_s=WATCH_EVERY_S):
     finally:
         stop.set()
         watcher.join(every_s + 30)
+
+        # A refresh after the last look would otherwise wait for the next
+        # trial's re-link, which the last trial of a run, or one followed by
+        # a long wait for the generator, does not reach for hours.
+        sync()
 
 
 def prepare_home(root):
@@ -3076,12 +3084,19 @@ def credential_watch_checks():
         older_kept = expires_at(account) == 2000
         threads = threading.active_count()
     stopped = threading.active_count() == threads - 1
+
+    # A refresh after the last look, with no look due before the trial ends.
+    with credential_watch(home, account, every_s=3600):
+        write(target, 3000)
+    last_kept = expires_at(account) == 3000
     remove_tree(scratch)
     return [("a token refreshed mid-trial reaches the account's file "
              "while the trial runs", reached and len(written) == 1),
             ("an older token seen mid-trial leaves the account's as it was",
              older_kept),
-            ("the watch stops when the trial ends", stopped)]
+            ("the watch stops when the trial ends", stopped),
+            ("a token refreshed after the last look is written back as the "
+             "trial ends", last_kept)]
 
 
 def credential_link_checks():
