@@ -167,6 +167,29 @@ skill. A whole template keeps its manifest ID as its name.
 Every section of the four split templates lands in exactly one skill. A
 skill that loads in no trial is a finding in itself.
 
+## A comparison: the Nango blog pipeline
+
+The Nango blog pipeline's `AGENTS.md`, a working project's root file,
+already has this shape:
+
+| Nango blog pipeline | This pilot |
+| --- | --- |
+| short root with a phase-to-skill table | short root with a moment-to-skill table |
+| 9 skills, each a workflow | 27 skills, each a slice of rules |
+| a person starts each phase, mostly by slash command | no person: one prompt, then hours alone |
+| one session per phase | one session for the whole build |
+| rules in shared files the skills read | the rules are the skills |
+
+Two lessons carry over:
+
+- **Auto-detection proved unreliable even there.** 7 of its 9 skills are
+  marked explicit only, under "always prefer explicit /slash-command
+  invocation over natural language to avoid skill confusion". That is with
+  9 skills and a person at hand; the pilot has 27 and nobody.
+- **Another variant to weigh.** Skills for the work phases (start, build,
+  test, review, finish), each telling the agent which rule files to read,
+  with the rules kept as files rather than cut into skills.
+
 ## Next steps
 
 - [x] Choose how the triggers are written: by hand for the pilot; `load_when:`
