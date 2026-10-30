@@ -176,7 +176,7 @@ already has this shape:
 | --- | --- |
 | short root with a phase-to-skill table | short root with a moment-to-skill table |
 | 9 skills, each a workflow | 27 skills, each a slice of rules |
-| a person starts each phase, mostly by slash command | no person: one prompt, then hours alone |
+| a person starts each phase, mostly by command | one prompt, then hours alone |
 | one session per phase | one session for the whole build |
 | rules in shared files the skills read | the rules are the skills |
 
