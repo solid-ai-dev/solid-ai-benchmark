@@ -106,7 +106,9 @@ every trial, so a stopped run keeps every trial it finished.
   written back over the account's. Dropping it ended `hybrid-1` and
   `reference-4` of round 5c at their first call (#83). The compare, the
   write and the re-link hold a lock file beside the account's, so two runs
-  writing back at once cannot leave the older token.
+  writing back at once cannot leave the older token. The CLI takes no lock,
+  so the account's file is compared through the handle that writes it, and a
+  save that replaces it meanwhile is compared again rather than overwritten.
 - **The temporary directory.** Git Bash maps `/tmp` to the machine's
   temporary directory whatever `TEMP` says, so an entry that appeared there
   during a trial and that a tool call names is moved into the trial's own.

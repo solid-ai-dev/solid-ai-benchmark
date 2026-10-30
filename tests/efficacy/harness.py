@@ -607,15 +607,59 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
 CREDENTIALS = os.path.join(".claude", ".credentials.json")
 
 
+def expiry_of(data):
+    """When the access token in a credentials file's bytes expires, or 0
+    where they say nothing readable."""
+    try:
+        stamp = json.loads(data.decode("utf-8"))["claudeAiOauth"]["expiresAt"]
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return 0
+    return stamp if isinstance(stamp, (int, float)) else 0
+
+
 def expires_at(path):
     """When a credentials file's access token expires, or 0 where it says
     nothing readable."""
     try:
-        with io.open(path, encoding="utf-8") as handle:
-            stamp = json.load(handle)["claudeAiOauth"]["expiresAt"]
-    except (OSError, ValueError, KeyError, TypeError):
+        with io.open(path, "rb") as handle:
+            return expiry_of(handle.read())
+    except OSError:
         return 0
-    return stamp if isinstance(stamp, (int, float)) else 0
+
+
+def write_back(source, target, attempts=5):
+    """Write the home's credentials over the account's, in place, where they
+    expire later; True when they were written."""
+    for _ in range(attempts):
+        try:
+            with io.open(target, "rb") as handle:
+                fresh = handle.read()
+        except OSError:
+            return False
+        expiry = expiry_of(fresh)
+
+        # The account's file is compared through the handle that is then
+        # written, so the comparison is with the very file overwritten, not
+        # one a CLI's save has since put in its place.
+        with io.open(source, "r+b") as handle:
+            if expiry_of(handle.read()) >= expiry:
+                return False
+            handle.seek(0)
+            handle.write(fresh)
+            handle.truncate()
+            written = os.fstat(handle.fileno())
+
+        # A save that replaced the file after it was opened leaves the write
+        # on the file it replaced, and the account's is the save's. The next
+        # attempt compares against that one.
+        try:
+            current = os.stat(source)
+        except OSError:
+            continue
+        if (current.st_ino, current.st_dev) == (written.st_ino,
+                                                written.st_dev):
+            return True
+    return False
 
 
 def refresh_credentials(home, account=None):
@@ -636,11 +680,9 @@ def refresh_credentials(home, account=None):
         return None
     os.makedirs(os.path.dirname(target), exist_ok=True)
 
-    # Two runs on one machine share the account's file. Without the lock one
-    # can read the expiries, the other write a newer token back, and the
-    # first then overwrite it with its older one. A CLI saving its own token
-    # takes no lock, but it replaces the file rather than writing into it,
-    # so a write racing it lands on the file it replaced.
+    # Two runs on one machine share the account's file, and the lock keeps
+    # one's write-back and re-link from interleaving with the other's. A CLI
+    # saving its own token takes no lock; the write-back guards against it.
     with credential_lock(source):
         if os.path.lexists(target):
 
@@ -651,9 +693,8 @@ def refresh_credentials(home, account=None):
             # keeping that file and its other links, before the link is
             # remade; dropping it would hand the next trial a revoked token,
             # and it ended two trials at their first call.
-            if (not os.path.samefile(source, target)
-                    and expires_at(target) > expires_at(source)):
-                shutil.copyfile(target, source)
+            if not os.path.samefile(source, target):
+                write_back(source, target)
             os.remove(target)
         try:
             os.link(source, target)
@@ -2896,35 +2937,57 @@ def credential_rotation_checks():
                    and os.path.samefile(account, target)))
 
     # Two runs refresh at once: this home holds 5000 and the other 6000.
-    # The other is started after this one has read the expiries and before
-    # it writes, the order that let the older token overwrite the newer.
+    # The other is started after this one has read its home's file and
+    # before it writes.
     other = os.path.join(scratch, "other")
     refresh_credentials(other, account)
     write(target, 5000)
     write(os.path.join(other, CREDENTIALS), 6000)
-    plain = globals()["expires_at"]
+    plain = globals()["expiry_of"]
     racer = threading.Thread(target=refresh_credentials,
                              args=(other, account))
 
-    def paused(path):
-        stamp = plain(path)
-        if (path == account and racer.ident is None
+    def paused(data):
+        stamp = plain(data)
+        if (stamp == 5000 and racer.ident is None
                 and threading.current_thread() is threading.main_thread()):
             racer.start()
             time.sleep(0.5)
         return stamp
 
-    globals()["expires_at"] = paused
+    globals()["expiry_of"] = paused
     try:
         refresh_credentials(home, account)
     finally:
-        globals()["expires_at"] = plain
+        globals()["expiry_of"] = plain
     racer.join(30)
     checks.append(("a newer token written back at the same time wins",
                    expires_at(account) == 6000
                    and os.path.samefile(account, target)
                    and os.path.samefile(account,
                                         os.path.join(other, CREDENTIALS))))
+
+    # A CLI's save replaces the account's file, taking no lock, after this
+    # run has read its home's file and before it writes.
+    write(target, 6500)
+    fresh = os.path.join(scratch, "saved.json")
+    with io.open(fresh, "w", encoding="utf-8") as handle:
+        json.dump({"claudeAiOauth": {"expiresAt": 7000}}, handle)
+
+    def replaced(data):
+        stamp = plain(data)
+        if stamp == 6500 and os.path.exists(fresh):
+            os.replace(fresh, account)
+        return stamp
+
+    globals()["expiry_of"] = replaced
+    try:
+        refresh_credentials(home, account)
+    finally:
+        globals()["expiry_of"] = plain
+    checks.append(("a CLI's save racing the write-back is not overwritten",
+                   expires_at(account) == 7000
+                   and os.path.samefile(account, target)))
 
     # A run that died holding the lock leaves it behind.
     left = account + ".lock"
