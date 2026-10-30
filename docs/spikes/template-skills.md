@@ -105,7 +105,8 @@ CLAUDE.md (1-2 KB)
 
 ## Next steps
 
-- [ ] Choose how the triggers are written: by hand, or `load_when:` upstream
+- [x] Choose how the triggers are written: by hand for the pilot; `load_when:`
+  upstream only if the pilot shows the skills get loaded
 - [ ] Generate the arm and commit it under `tests/efficacy/arms/`
 - [ ] Count skill loads per trial in the harness or the scorer
 - [ ] Pilot of about 3 trials, with the owner's go first, since it spends
