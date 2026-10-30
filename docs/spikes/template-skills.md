@@ -103,6 +103,30 @@ CLAUDE.md (1-2 KB)
   ...                         13 in all
 ```
 
+## Load moments
+
+Written by hand for the pilot. The root carries this table, one row a
+skill, each named by its template's manifest ID:
+
+| Skill | Load it before |
+| --- | --- |
+| `base-quality` | writing or changing any code |
+| `base-security` | writing code that takes input, handles secrets or calls out |
+| `base-testing` | writing or changing a test |
+| `base-git` | a commit, a branch or a pull request |
+| `base-docs` | writing a README, a doc or a docstring |
+| `base-review` | reviewing a change, your own included, before finishing |
+| `backend-http` | writing a route, a handler or the server setup |
+| `backend-api` | designing or changing an endpoint or its contract |
+| `backend-auth` | touching sign-in, sessions or access control |
+| `backend-database` | writing a schema, a migration or a query |
+| `base-data-modeling` | designing tables or data shapes |
+| `base-data-governance` | storing, logging or exporting personal data |
+| `frontend-ux` | writing a page, a template or a form |
+
+The first row fires on nearly every task, so `base-quality` is likely to
+load in every trial. A skill that loads in none is a finding in itself.
+
 ## Next steps
 
 - [x] Choose how the triggers are written: by hand for the pilot; `load_when:`
