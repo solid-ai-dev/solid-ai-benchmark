@@ -190,12 +190,69 @@ Two lessons carry over:
   test, review, finish), each telling the agent which rule files to read,
   with the rules kept as files rather than cut into skills.
 
+## The rules-files option
+
+Skills load when the agent chooses, and round 5c's agents chose none. The
+alternatives that load without a choice are hooks, which need a state file
+and a script per moment, and path-scoped rules, which need neither. The
+rules are the plug-and-play one.
+
+A rules file is a `.claude/rules/*.md` with a `paths:` glob in its
+frontmatter. Claude Code loads it when the agent reads or edits a matching
+file, or views one with a Bash read such as `cat`
+([memory docs](https://code.claude.com/docs/en/memory)). A rules file with
+no `paths:` loads at the start, as `CLAUDE.md` does.
+
+```markdown
+---
+paths:
+  - "tests/**"
+---
+
+## Isolation
+...verbatim from core/testing.md
+```
+
+The 27 slices, mapped by the file each applies to. The globs follow the
+layout round 5c's agents chose (`src/tariff/`, `web/routes/`,
+`web/templates/`, `migrations/`, `tests/`):
+
+<!-- markdownlint-disable MD013 -->
+| Loads on | Slices |
+| --- | --- |
+| `tests/**` | testing-design, testing-isolation, testing-assertions, testing-fixes |
+| `**/migrations/**`, `**/*.sql`, `**/db.py`, `**/repository.py` | backend-database, base-data-modeling |
+| `**/templates/**`, `**/static/**` | frontend-ux, security-web |
+| `**/routes/**` | backend-http, backend-api, security-input |
+| `**/auth*.py` | backend-auth, security-auth |
+| `**/*.md` | base-docs |
+| `pyproject.toml`, `uv.lock`, `requirements*.txt` | quality-dependencies |
+| `**/*.py` | quality-design, quality-errors, quality-files, security-secrets, security-ssrf, base-data-governance |
+| no file: always on | base-git, review-start, review-checklist, review-ci, review-verify, quality-finish |
+<!-- markdownlint-enable MD013 -->
+
+What it costs and leaves open:
+
+- **The always-on six are about 15 KB.** Committing, starting, reviewing and
+  finishing touch no file of their own, so their slices load at the start.
+  With the facts, the root context starts near 16 KB, not 3 KB.
+- **`**/*.py` is coarse.** Six slices load on the first Python file, so in
+  a build from scratch they arrive almost at once. Lazy, but not fine.
+- **Globs guess the layout.** They are written before the agent picks its
+  folders; a route kept outside `routes/` loads no route rules.
+- **Timing is untested.** A rule may load only after the write that
+  matched it, so the first file of each kind is written without it.
+- **Bash writes skip it.** A file made by `cat >` or a script loads nothing.
+- **Measuring needs one hook.** `InstructionsLoaded` logs each rules file
+  as it loads, and why, which gives the counts per trial.
+
 ## Next steps
 
 - [x] Choose how the triggers are written: by hand for the pilot; `load_when:`
   upstream only if the pilot shows the skills get loaded
+- [ ] Choose the arm: instructed skills, or rules files
 - [ ] Generate the arm and commit it under `tests/efficacy/arms/`
-- [ ] Count skill loads per trial in the harness or the scorer
+- [ ] Count loads per trial: skill calls, or `InstructionsLoaded` entries
 - [ ] Pilot of about 3 trials, with the owner's go first, since it spends
   plan limits
 - [ ] Decide from the pilot whether a round registers the arm
