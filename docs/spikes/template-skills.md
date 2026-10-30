@@ -84,9 +84,11 @@ The 13 templates the reference arm lists, by size:
 
 Variant 3 is the one with a new question. Its triggers need writing, either
 by hand for this arm or as a `load_when:` field per template in the
-templates' manifest, which the generator would read. Some templates apply to
-nearly every edit (`core/quality.md`, `security/security.md`), so variant 3
-may keep those in the root and offer the rest as skills.
+templates' manifest, which the generator would read. All 13 templates
+become skills and the root stays short, about 1–2 KB, as decided on #85.
+Keeping `core/quality.md` and `security/security.md` in the root, since
+they apply to nearly every edit, would grow it to about 22 KB, the hybrid
+arm's size. They get a load moment like the rest instead.
 
 ```text
 CLAUDE.md (1-2 KB)
