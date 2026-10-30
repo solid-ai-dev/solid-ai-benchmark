@@ -45,7 +45,7 @@ from its description alone. That is the central risk for the new arm.
 | Arm generator | small | a new kind: each template, verbatim, to a `SKILL.md` |
 | Harness | none | it already places a skills folder and probes discovery |
 | Descriptions | small | the manifest's `description:` names topics, not moments |
-| Size | none | root 1–2 KB; 13 skills of 2.7 to 10.5 KB, 74 KB in all |
+| Size | none | root about 3 KB; 27 skills of 0.5 to 6.7 KB, 74 KB in all |
 | Measuring use | small | count the arm's skill calls per trial in the transcript |
 | Cross-references | upstream | templates name each other by path, not by skill name |
 
@@ -85,47 +85,87 @@ The 13 templates the reference arm lists, by size:
 Variant 3 is the one with a new question. Its triggers need writing, either
 by hand for this arm or as a `load_when:` field per template in the
 templates' manifest, which the generator would read. All 13 templates
-become skills and the root stays short, about 1–2 KB, as decided on #85.
+become skills and the root stays short, as decided on #85.
 Keeping `core/quality.md` and `security/security.md` in the root, since
 they apply to nearly every edit, would grow it to about 22 KB, the hybrid
 arm's size. They get a load moment like the rest instead.
 
 ```text
-CLAUDE.md (1-2 KB)
+CLAUDE.md (about 3 KB)
   facts, commands
   "before <moment>, load <skill>" table
         |
         v
 .claude/skills/
-  base-testing/SKILL.md    <- core/testing.md, verbatim
-  base-git/SKILL.md        <- core/git.md, verbatim
-  backend-api/SKILL.md     <- backend/api.md, verbatim
-  ...                         13 in all
+  quality-design/SKILL.md   <- core/quality.md, 5 sections, verbatim
+  testing-design/SKILL.md   <- core/testing.md, 3 sections, verbatim
+  backend-api/SKILL.md      <- backend/api.md, whole, verbatim
+  ...                          27 in all
 ```
+
+## Splitting the large templates
+
+A template loaded whole fires whenever any of its rules applies, and
+`core/quality.md` and `security/security.md` apply to nearly every task. So
+the four largest templates are cut at their `##` headings into skills of
+0.5 to 3 KB, each with a narrower moment; the text stays verbatim, and only
+the cut points are chosen. One skill per section would make about 127, too
+many to choose among, so sections are grouped.
+
+| Template | Size | Skills |
+| --- | --- | --- |
+| `security/security.md` | 10.5 KB | 5 |
+| `core/quality.md` | 9.9 KB | 5 |
+| `core/testing.md` | 8.5 KB | 4 |
+| `core/review.md` | 7.3 KB | 4 |
+| the other 9 | 2.7 to 6.7 KB | 1 each, whole |
+
+That makes 27 skills, and a root of about 3 KB with its load table. The
+cost is a longer table and more chances to load the wrong skill.
+
+Sizes are at templates `84f4bb51`, the merge of
+[#2415](https://github.com/solid-ai-dev/solid-ai-templates/pull/2415). The
+pilot builds there or later, so no skill names a template file.
 
 ## Load moments
 
 Written by hand for the pilot. The root carries this table, one row a
-skill, each named by its template's manifest ID:
+skill. A whole template keeps its manifest ID as its name.
 
-| Skill | Load it before |
-| --- | --- |
-| `base-quality` | writing or changing any code |
-| `base-security` | writing code that takes input, handles secrets or calls out |
-| `base-testing` | writing or changing a test |
-| `base-git` | a commit, a branch or a pull request |
-| `base-docs` | writing a README, a doc or a docstring |
-| `base-review` | reviewing a change, your own included, before finishing |
-| `backend-http` | writing a route, a handler or the server setup |
-| `backend-api` | designing or changing an endpoint or its contract |
-| `backend-auth` | touching sign-in, sessions or access control |
-| `backend-database` | writing a schema, a migration or a query |
-| `base-data-modeling` | designing tables or data shapes |
-| `base-data-governance` | storing, logging or exporting personal data |
-| `frontend-ux` | writing a page, a template or a form |
+<!-- markdownlint-disable MD013 -->
+| Skill | From | Sections | Size | Load it before |
+| --- | --- | --- | --- | --- |
+| `quality-design` | quality | Principles, Architecture, Naming, Complexity, Module structure | 2.0 KB | writing new code |
+| `quality-dependencies` | quality | Dependencies, Deprecation and renames, Library output | 1.9 KB | adding a dependency or renaming something public |
+| `quality-errors` | quality | Errors, Destructive operations, Debug code | 1.8 KB | handling errors, or deleting or overwriting data |
+| `quality-files` | quality | Encoding and line endings, Comments | 2.3 KB | writing a file or a comment |
+| `quality-finish` | quality | Rejected mechanisms, New constraints, Check trust, Enforcement, Completion | 1.9 KB | finishing a task |
+| `security-input` | security | Input validation, Output encoding, Injection prevention, Deserialization, File uploads | 2.4 KB | code that takes input or renders output |
+| `security-web` | security | CSRF, Security headers, CORS, Transport security | 2.8 KB | server setup or a form |
+| `security-auth` | security | Authentication, Session management | 0.9 KB | sign-in or sessions |
+| `security-secrets` | security | Secrets in code, Agent secrets handling, Logging, Error handling | 2.5 KB | config, logs or error messages |
+| `security-ssrf` | security | Server-Side Request Forgery | 1.3 KB | calling out to a URL |
+| `testing-design` | testing | Test types, Coverage, Testability | 1.8 KB | planning the tests for a feature |
+| `testing-isolation` | testing | Isolation, Unique resources, Worker leaks, Fault injection | 2.1 KB | writing a test's setup or fixtures |
+| `testing-assertions` | testing | External definitions, Guard use, Provenance, Thresholds, Empty results | 3.0 KB | writing assertions |
+| `testing-fixes` | testing | Call sites, Real data, Rendered output, Drift guards | 1.5 KB | proving a fix or a visual change |
+| `review-start` | review | Picking up an issue, Planning, Structure audit | 1.9 KB | starting an issue or a new project |
+| `review-checklist` | review | Principle, Priority order, MUST and SHOULD checklists, Deviations | 2.5 KB | reviewing a change, your own included |
+| `review-ci` | review | CI signals | 0.5 KB | reading a check's result |
+| `review-verify` | review | Verifying a finding | 2.3 KB | reporting or acting on a finding |
+| `base-docs` | docs | whole | 6.7 KB | writing a README, a doc or a docstring |
+| `base-git` | git | whole | 5.9 KB | a commit, a branch or a pull request |
+| `backend-http` | http | whole | 5.5 KB | writing a route, a handler or the server setup |
+| `backend-api` | api | whole | 4.5 KB | designing or changing an endpoint or its contract |
+| `backend-auth` | auth | whole | 3.9 KB | touching sign-in, sessions or access control |
+| `base-data-governance` | data-governance | whole | 3.2 KB | storing, logging or exporting personal data |
+| `frontend-ux` | ux | whole | 3.1 KB | writing a page, a template or a form |
+| `base-data-modeling` | data-modeling | whole | 2.8 KB | designing tables or data shapes |
+| `backend-database` | database | whole | 2.7 KB | writing a schema, a migration or a query |
+<!-- markdownlint-enable MD013 -->
 
-The first row fires on nearly every task, so `base-quality` is likely to
-load in every trial. A skill that loads in none is a finding in itself.
+Every section of the four split templates lands in exactly one skill. A
+skill that loads in no trial is a finding in itself.
 
 ## Next steps
 
