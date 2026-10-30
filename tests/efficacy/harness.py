@@ -607,7 +607,18 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
 CREDENTIALS = os.path.join(".claude", ".credentials.json")
 
 
-def refresh_credentials(home):
+def expires_at(path):
+    """When a credentials file's access token expires, or 0 where it says
+    nothing readable."""
+    try:
+        with io.open(path, encoding="utf-8") as handle:
+            stamp = json.load(handle)["claudeAiOauth"]["expiresAt"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+    return stamp if isinstance(stamp, (int, float)) else 0
+
+
+def refresh_credentials(home, account=None):
     """Give the scratch home the account's live credentials; say how.
 
     A hard link to the real file rather than a copy. Another client of the
@@ -616,14 +627,26 @@ def refresh_credentials(home):
     ended a trial eighteen minutes in. Through the link a rotation written
     in place reaches the trial's CLI as it happens. Where no link can be
     made the file is copied, and the copy is taken again before every
-    trial and every probe, so at worst a trial starts fresh.
+    trial and every probe, so at worst a trial starts fresh. `account`
+    names the real file, for a test; it defaults to the user's own.
     """
-    source = os.path.join(os.path.expanduser("~"), CREDENTIALS)
+    source = account or os.path.join(os.path.expanduser("~"), CREDENTIALS)
     target = os.path.join(home, CREDENTIALS)
     if not os.path.exists(source):
         return None
     os.makedirs(os.path.dirname(target), exist_ok=True)
     if os.path.lexists(target):
+
+        # A trial's CLI that refreshes an expired token saves the new one as
+        # a new file, which breaks the link: the home then holds the only
+        # live refresh token, and the account's has been rotated out. It is
+        # written back over the account's file in place, keeping that file
+        # and its other links, before the link is remade; dropping it would
+        # hand the next trial a revoked token, and it ended two trials at
+        # their first call.
+        if (not os.path.samefile(source, target)
+                and expires_at(target) > expires_at(source)):
+            shutil.copyfile(target, source)
         os.remove(target)
     try:
         os.link(source, target)
@@ -2798,6 +2821,48 @@ def hang_checks():
     return checks
 
 
+def credential_rotation_checks():
+    """A token a trial refreshed into a file of its own reaches the account's
+    file before the link is remade, and an older one never does."""
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-credential-rotation-self-test")
+    remove_tree(scratch)
+    home = os.path.join(scratch, "home")
+    account = os.path.join(scratch, "account", ".credentials.json")
+    os.makedirs(os.path.dirname(account))
+    target = os.path.join(home, CREDENTIALS)
+
+    def write(path, expires):
+        # A new file each time, as the CLI saves a refreshed token.
+        if os.path.lexists(path):
+            os.remove(path)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump({"claudeAiOauth": {"expiresAt": expires}}, handle)
+
+    write(account, 1000)
+    refresh_credentials(home, account)
+    checks = [("the home links the account's file",
+               os.path.samefile(account, target))]
+    write(target, 2000)
+    refresh_credentials(home, account)
+    checks.append(("a token refreshed into a new file reaches the account's",
+                   expires_at(account) == 2000
+                   and os.path.samefile(account, target)))
+    write(target, 500)
+    refresh_credentials(home, account)
+    checks.append(("an older home file leaves the account's as it was",
+                   expires_at(account) == 2000
+                   and os.path.samefile(account, target)))
+    write(target, 3000)
+    write(account, 4000)
+    refresh_credentials(home, account)
+    checks.append(("an account file refreshed elsewhere is kept",
+                   expires_at(account) == 4000
+                   and os.path.samefile(account, target)))
+    remove_tree(scratch)
+    return checks
+
+
 def credential_link_checks():
     """The scratch home reads the account's live credentials, and gets them
     back before a trial where they went missing."""
@@ -3183,7 +3248,8 @@ def self_test():
     """Prove the naming, isolation, outcome, resume, change and vendoring
     rules before a trial."""
     checks = (naming_checks() + environment_checks() + credential_checks()
-              + credential_link_checks() + outcome_checks() + hang_checks()
+              + credential_link_checks() + credential_rotation_checks()
+              + outcome_checks() + hang_checks()
               + resume_checks() + change_checks() + dry_run_checks()
               + process_checks()
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()

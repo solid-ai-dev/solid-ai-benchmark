@@ -100,7 +100,11 @@ every trial, so a stopped run keeps every trial it finished.
   owner. The judge strips the copy with the context file.
 - **The credential file** in the scratch home is a hard link to the account's
   live one, remade before every trial, because another client of the
-  account rotates the tokens and an earlier copy would be revoked.
+  account rotates the tokens and an earlier copy would be revoked. A trial's
+  CLI that refreshes an expired token saves it as a new file, breaking the
+  link, so before the link is remade a home file that expires later is
+  written back over the account's. Dropping it ended `hybrid-1` and
+  `reference-4` of round 5c at their first call (#83).
 - **The temporary directory.** Git Bash maps `/tmp` to the machine's
   temporary directory whatever `TEMP` says, so an entry that appeared there
   during a trial and that a tool call names is moved into the trial's own.
