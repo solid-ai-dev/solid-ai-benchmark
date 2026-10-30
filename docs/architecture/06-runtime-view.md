@@ -104,7 +104,9 @@ every trial, so a stopped run keeps every trial it finished.
   CLI that refreshes an expired token saves it as a new file, breaking the
   link, so before the link is remade a home file that expires later is
   written back over the account's. Dropping it ended `hybrid-1` and
-  `reference-4` of round 5c at their first call (#83).
+  `reference-4` of round 5c at their first call (#83). The compare, the
+  write and the re-link hold a lock file beside the account's, so two runs
+  writing back at once cannot leave the older token.
 - **The temporary directory.** Git Bash maps `/tmp` to the machine's
   temporary directory whatever `TEMP` says, so an entry that appeared there
   during a trial and that a tool call names is moved into the trial's own.

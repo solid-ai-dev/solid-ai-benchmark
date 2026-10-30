@@ -635,25 +635,60 @@ def refresh_credentials(home, account=None):
     if not os.path.exists(source):
         return None
     os.makedirs(os.path.dirname(target), exist_ok=True)
-    if os.path.lexists(target):
 
-        # A trial's CLI that refreshes an expired token saves the new one as
-        # a new file, which breaks the link: the home then holds the only
-        # live refresh token, and the account's has been rotated out. It is
-        # written back over the account's file in place, keeping that file
-        # and its other links, before the link is remade; dropping it would
-        # hand the next trial a revoked token, and it ended two trials at
-        # their first call.
-        if (not os.path.samefile(source, target)
-                and expires_at(target) > expires_at(source)):
-            shutil.copyfile(target, source)
-        os.remove(target)
+    # Two runs on one machine share the account's file. Without the lock one
+    # can read the expiries, the other write a newer token back, and the
+    # first then overwrite it with its older one. A CLI saving its own token
+    # takes no lock, but it replaces the file rather than writing into it,
+    # so a write racing it lands on the file it replaced.
+    with credential_lock(source):
+        if os.path.lexists(target):
+
+            # A trial's CLI that refreshes an expired token saves the new one
+            # as a new file, which breaks the link: the home then holds the
+            # only live refresh token, and the account's has been rotated
+            # out. It is written back over the account's file in place,
+            # keeping that file and its other links, before the link is
+            # remade; dropping it would hand the next trial a revoked token,
+            # and it ended two trials at their first call.
+            if (not os.path.samefile(source, target)
+                    and expires_at(target) > expires_at(source)):
+                shutil.copyfile(target, source)
+            os.remove(target)
+        try:
+            os.link(source, target)
+            return "linked"
+        except OSError:
+            shutil.copyfile(source, target)
+            return "copied"
+
+
+@contextlib.contextmanager
+def credential_lock(source, stale_s=60, poll_s=0.05):
+    """Hold the lock file beside the account's credentials while inside."""
+    lock = source + ".lock"
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+
+            # The lock is held for milliseconds, so one this old was left by
+            # a run that died holding it.
+            try:
+                if time.time() - os.path.getmtime(lock) > stale_s:
+                    os.remove(lock)
+                    continue
+            except OSError:
+                continue
+            time.sleep(poll_s)
     try:
-        os.link(source, target)
-        return "linked"
-    except OSError:
-        shutil.copyfile(source, target)
-        return "copied"
+        yield
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
 
 
 def prepare_home(root):
@@ -2859,6 +2894,45 @@ def credential_rotation_checks():
     checks.append(("an account file refreshed elsewhere is kept",
                    expires_at(account) == 4000
                    and os.path.samefile(account, target)))
+
+    # Two runs refresh at once: this home holds 5000 and the other 6000.
+    # The other is started after this one has read the expiries and before
+    # it writes, the order that let the older token overwrite the newer.
+    other = os.path.join(scratch, "other")
+    refresh_credentials(other, account)
+    write(target, 5000)
+    write(os.path.join(other, CREDENTIALS), 6000)
+    plain = globals()["expires_at"]
+    racer = threading.Thread(target=refresh_credentials,
+                             args=(other, account))
+
+    def paused(path):
+        stamp = plain(path)
+        if (path == account and racer.ident is None
+                and threading.current_thread() is threading.main_thread()):
+            racer.start()
+            time.sleep(0.5)
+        return stamp
+
+    globals()["expires_at"] = paused
+    try:
+        refresh_credentials(home, account)
+    finally:
+        globals()["expires_at"] = plain
+    racer.join(30)
+    checks.append(("a newer token written back at the same time wins",
+                   expires_at(account) == 6000
+                   and os.path.samefile(account, target)
+                   and os.path.samefile(account,
+                                        os.path.join(other, CREDENTIALS))))
+
+    # A run that died holding the lock leaves it behind.
+    left = account + ".lock"
+    io.open(left, "w").close()
+    os.utime(left, (time.time() - 3600, time.time() - 3600))
+    checks.append(("a lock left by a dead run is broken, not waited on",
+                   refresh_credentials(home, account) == "linked"
+                   and not os.path.exists(left)))
     remove_tree(scratch)
     return checks
 
