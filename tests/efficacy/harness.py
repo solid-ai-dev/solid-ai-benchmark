@@ -732,6 +732,48 @@ def credential_lock(source, stale_s=60, poll_s=0.05):
             pass
 
 
+# How often a running trial's credentials are looked at. The account's own
+# clients go without a live token from a trial's refresh until the next look.
+WATCH_EVERY_S = 15
+
+
+@contextlib.contextmanager
+def credential_watch(home, account=None, every_s=WATCH_EVERY_S):
+    """While inside, write a token the trial refreshed back to the account's
+    file as soon as it is seen; yields a list that counts the write-backs."""
+    source = account or os.path.join(os.path.expanduser("~"), CREDENTIALS)
+    target = os.path.join(home, CREDENTIALS)
+    written, stop = [], threading.Event()
+
+    # A trial's refresh retires the refresh token the account's file holds,
+    # so every other session on the machine holds a dead one until the new
+    # token is written back. Left to the end of the trial, that gap ran an
+    # hour and forced a login; the link is still remade only between trials.
+    def look():
+        while not stop.wait(every_s):
+            try:
+                if not os.path.exists(target) or not os.path.exists(source) \
+                        or os.path.samefile(source, target):
+                    continue
+                with credential_lock(source):
+                    if write_back(source, target):
+                        written.append(time.time())
+                        print("  credentials: a token the trial refreshed was "
+                              "written back to the account's file", flush=True)
+            except OSError:
+
+                # The CLI may be mid-save; the next look reads the file whole.
+                continue
+
+    watcher = threading.Thread(target=look, daemon=True)
+    watcher.start()
+    try:
+        yield written
+    finally:
+        stop.set()
+        watcher.join(every_s + 30)
+
+
 def prepare_home(root):
     """Create the scratch home every trial runs under, and return it.
 
@@ -3000,6 +3042,48 @@ def credential_rotation_checks():
     return checks
 
 
+def credential_watch_checks():
+    """A token a running trial refreshed reaches the account's file before
+    the trial ends, an older one never does, and the watch stops with it."""
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-credential-watch-self-test")
+    remove_tree(scratch)
+    home = os.path.join(scratch, "home")
+    account = os.path.join(scratch, "account", ".credentials.json")
+    os.makedirs(os.path.dirname(account))
+    target = os.path.join(home, CREDENTIALS)
+
+    def write(path, expires):
+        # A new file each time, as the CLI saves a refreshed token.
+        if os.path.lexists(path):
+            os.remove(path)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump({"claudeAiOauth": {"expiresAt": expires}}, handle)
+
+    def settle(until, bound_s=10):
+        deadline = time.time() + bound_s
+        while not until() and time.time() < deadline:
+            time.sleep(0.02)
+        return until()
+
+    write(account, 1000)
+    refresh_credentials(home, account)
+    with credential_watch(home, account, every_s=0.05) as written:
+        write(target, 2000)
+        reached = settle(lambda: expires_at(account) == 2000)
+        write(target, 1500)
+        time.sleep(0.5)
+        older_kept = expires_at(account) == 2000
+        threads = threading.active_count()
+    stopped = threading.active_count() == threads - 1
+    remove_tree(scratch)
+    return [("a token refreshed mid-trial reaches the account's file "
+             "while the trial runs", reached and len(written) == 1),
+            ("an older token seen mid-trial leaves the account's as it was",
+             older_kept),
+            ("the watch stops when the trial ends", stopped)]
+
+
 def credential_link_checks():
     """The scratch home reads the account's live credentials, and gets them
     back before a trial where they went missing."""
@@ -3386,6 +3470,7 @@ def self_test():
     rules before a trial."""
     checks = (naming_checks() + environment_checks() + credential_checks()
               + credential_link_checks() + credential_rotation_checks()
+              + credential_watch_checks()
               + outcome_checks() + hang_checks()
               + resume_checks() + change_checks() + dry_run_checks()
               + process_checks()
@@ -3567,13 +3652,15 @@ def main(argv):
     def runner(arm, trial):
         refresh_credentials(home)
         if options.task == "build":
-            return run_trial(arm, trial, work, home, options)
+            with credential_watch(home):
+                return run_trial(arm, trial, work, home, options)
         name = trial_name(arm, trial)
         if name not in builds:
             raise TrialError("build trial %s has no scorable outcome, so it "
                              "has no change task" % name)
-        return run_change_trial(arm, trial, work, home, options,
-                                builds[name])
+        with credential_watch(home):
+            return run_change_trial(arm, trial, work, home, options,
+                                    builds[name])
 
     def write():
         write_run(run_file, started_at, records, options.task, prompt)
