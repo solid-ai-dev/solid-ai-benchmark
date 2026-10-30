@@ -607,7 +607,62 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
 CREDENTIALS = os.path.join(".claude", ".credentials.json")
 
 
-def refresh_credentials(home):
+def expiry_of(data):
+    """When the access token in a credentials file's bytes expires, or 0
+    where they say nothing readable."""
+    try:
+        stamp = json.loads(data.decode("utf-8"))["claudeAiOauth"]["expiresAt"]
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return 0
+    return stamp if isinstance(stamp, (int, float)) else 0
+
+
+def expires_at(path):
+    """When a credentials file's access token expires, or 0 where it says
+    nothing readable."""
+    try:
+        with io.open(path, "rb") as handle:
+            return expiry_of(handle.read())
+    except OSError:
+        return 0
+
+
+def write_back(source, target, attempts=5):
+    """Write the home's credentials over the account's, in place, where they
+    expire later; True when they were written."""
+    for _ in range(attempts):
+        try:
+            with io.open(target, "rb") as handle:
+                fresh = handle.read()
+        except OSError:
+            return False
+        expiry = expiry_of(fresh)
+
+        # The account's file is compared through the handle that is then
+        # written, so the comparison is with the very file overwritten, not
+        # one a CLI's save has since put in its place.
+        with io.open(source, "r+b") as handle:
+            if expiry_of(handle.read()) >= expiry:
+                return False
+            handle.seek(0)
+            handle.write(fresh)
+            handle.truncate()
+            written = os.fstat(handle.fileno())
+
+        # A save that replaced the file after it was opened leaves the write
+        # on the file it replaced, and the account's is the save's. The next
+        # attempt compares against that one.
+        try:
+            current = os.stat(source)
+        except OSError:
+            continue
+        if (current.st_ino, current.st_dev) == (written.st_ino,
+                                                written.st_dev):
+            return True
+    return False
+
+
+def refresh_credentials(home, account=None):
     """Give the scratch home the account's live credentials; say how.
 
     A hard link to the real file rather than a copy. Another client of the
@@ -616,21 +671,65 @@ def refresh_credentials(home):
     ended a trial eighteen minutes in. Through the link a rotation written
     in place reaches the trial's CLI as it happens. Where no link can be
     made the file is copied, and the copy is taken again before every
-    trial and every probe, so at worst a trial starts fresh.
+    trial and every probe, so at worst a trial starts fresh. `account`
+    names the real file, for a test; it defaults to the user's own.
     """
-    source = os.path.join(os.path.expanduser("~"), CREDENTIALS)
+    source = account or os.path.join(os.path.expanduser("~"), CREDENTIALS)
     target = os.path.join(home, CREDENTIALS)
     if not os.path.exists(source):
         return None
     os.makedirs(os.path.dirname(target), exist_ok=True)
-    if os.path.lexists(target):
-        os.remove(target)
+
+    # Two runs on one machine share the account's file, and the lock keeps
+    # one's write-back and re-link from interleaving with the other's. A CLI
+    # saving its own token takes no lock; the write-back guards against it.
+    with credential_lock(source):
+        if os.path.lexists(target):
+
+            # A trial's CLI that refreshes an expired token saves the new one
+            # as a new file, which breaks the link: the home then holds the
+            # only live refresh token, and the account's has been rotated
+            # out. It is written back over the account's file in place,
+            # keeping that file and its other links, before the link is
+            # remade; dropping it would hand the next trial a revoked token,
+            # and it ended two trials at their first call.
+            if not os.path.samefile(source, target):
+                write_back(source, target)
+            os.remove(target)
+        try:
+            os.link(source, target)
+            return "linked"
+        except OSError:
+            shutil.copyfile(source, target)
+            return "copied"
+
+
+@contextlib.contextmanager
+def credential_lock(source, stale_s=60, poll_s=0.05):
+    """Hold the lock file beside the account's credentials while inside."""
+    lock = source + ".lock"
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+
+            # The lock is held for milliseconds, so one this old was left by
+            # a run that died holding it.
+            try:
+                if time.time() - os.path.getmtime(lock) > stale_s:
+                    os.remove(lock)
+                    continue
+            except OSError:
+                continue
+            time.sleep(poll_s)
     try:
-        os.link(source, target)
-        return "linked"
-    except OSError:
-        shutil.copyfile(source, target)
-        return "copied"
+        yield
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
 
 
 def prepare_home(root):
@@ -2798,6 +2897,109 @@ def hang_checks():
     return checks
 
 
+def credential_rotation_checks():
+    """A token a trial refreshed into a file of its own reaches the account's
+    file before the link is remade, and an older one never does."""
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-credential-rotation-self-test")
+    remove_tree(scratch)
+    home = os.path.join(scratch, "home")
+    account = os.path.join(scratch, "account", ".credentials.json")
+    os.makedirs(os.path.dirname(account))
+    target = os.path.join(home, CREDENTIALS)
+
+    def write(path, expires):
+        # A new file each time, as the CLI saves a refreshed token.
+        if os.path.lexists(path):
+            os.remove(path)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump({"claudeAiOauth": {"expiresAt": expires}}, handle)
+
+    write(account, 1000)
+    refresh_credentials(home, account)
+    checks = [("the home links the account's file",
+               os.path.samefile(account, target))]
+    write(target, 2000)
+    refresh_credentials(home, account)
+    checks.append(("a token refreshed into a new file reaches the account's",
+                   expires_at(account) == 2000
+                   and os.path.samefile(account, target)))
+    write(target, 500)
+    refresh_credentials(home, account)
+    checks.append(("an older home file leaves the account's as it was",
+                   expires_at(account) == 2000
+                   and os.path.samefile(account, target)))
+    write(target, 3000)
+    write(account, 4000)
+    refresh_credentials(home, account)
+    checks.append(("an account file refreshed elsewhere is kept",
+                   expires_at(account) == 4000
+                   and os.path.samefile(account, target)))
+
+    # Two runs refresh at once: this home holds 5000 and the other 6000.
+    # The other is started after this one has read its home's file and
+    # before it writes.
+    other = os.path.join(scratch, "other")
+    refresh_credentials(other, account)
+    write(target, 5000)
+    write(os.path.join(other, CREDENTIALS), 6000)
+    plain = globals()["expiry_of"]
+    racer = threading.Thread(target=refresh_credentials,
+                             args=(other, account))
+
+    def paused(data):
+        stamp = plain(data)
+        if (stamp == 5000 and racer.ident is None
+                and threading.current_thread() is threading.main_thread()):
+            racer.start()
+            time.sleep(0.5)
+        return stamp
+
+    globals()["expiry_of"] = paused
+    try:
+        refresh_credentials(home, account)
+    finally:
+        globals()["expiry_of"] = plain
+    racer.join(30)
+    checks.append(("a newer token written back at the same time wins",
+                   expires_at(account) == 6000
+                   and os.path.samefile(account, target)
+                   and os.path.samefile(account,
+                                        os.path.join(other, CREDENTIALS))))
+
+    # A CLI's save replaces the account's file, taking no lock, after this
+    # run has read its home's file and before it writes.
+    write(target, 6500)
+    fresh = os.path.join(scratch, "saved.json")
+    with io.open(fresh, "w", encoding="utf-8") as handle:
+        json.dump({"claudeAiOauth": {"expiresAt": 7000}}, handle)
+
+    def replaced(data):
+        stamp = plain(data)
+        if stamp == 6500 and os.path.exists(fresh):
+            os.replace(fresh, account)
+        return stamp
+
+    globals()["expiry_of"] = replaced
+    try:
+        refresh_credentials(home, account)
+    finally:
+        globals()["expiry_of"] = plain
+    checks.append(("a CLI's save racing the write-back is not overwritten",
+                   expires_at(account) == 7000
+                   and os.path.samefile(account, target)))
+
+    # A run that died holding the lock leaves it behind.
+    left = account + ".lock"
+    io.open(left, "w").close()
+    os.utime(left, (time.time() - 3600, time.time() - 3600))
+    checks.append(("a lock left by a dead run is broken, not waited on",
+                   refresh_credentials(home, account) == "linked"
+                   and not os.path.exists(left)))
+    remove_tree(scratch)
+    return checks
+
+
 def credential_link_checks():
     """The scratch home reads the account's live credentials, and gets them
     back before a trial where they went missing."""
@@ -3183,7 +3385,8 @@ def self_test():
     """Prove the naming, isolation, outcome, resume, change and vendoring
     rules before a trial."""
     checks = (naming_checks() + environment_checks() + credential_checks()
-              + credential_link_checks() + outcome_checks() + hang_checks()
+              + credential_link_checks() + credential_rotation_checks()
+              + outcome_checks() + hang_checks()
               + resume_checks() + change_checks() + dry_run_checks()
               + process_checks()
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()
