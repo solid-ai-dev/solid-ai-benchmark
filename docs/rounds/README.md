@@ -11,6 +11,7 @@ trial of that round has run. The rules every round shares are in
 | [Round 5](round-5.md) | 2026-10-26, amended 2026-10-27, 2026-10-28 and 2026-10-29; stopped after its first start | Which way of delivering the rules gives the best and most consistent code |
 | [Round 5b](round-5b.md) | 2026-10-29, after round 5 stopped; stopped after its first start | Round 5's question, with a prompt that tells every arm the spec is the approved plan |
 | [Round 5c](round-5c.md) | 2026-10-29, after round 5b stopped | Round 5b's question, with each trial's workspace in a pen of its own |
+| [Round 5d](round-5d.md) | 2026-10-31, while round 5c ran | Whether a person's short file does what the templates do, against round 5c |
 
 ## Reports
 
@@ -27,3 +28,4 @@ repository existed.
 | 5 | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
 | 5b | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
 | 5c | Not run yet | Context file: how the rules are delivered | — |
+| 5d | Not run yet | Context file: a hand-written one, against round 5c | — |
