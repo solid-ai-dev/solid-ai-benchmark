@@ -242,16 +242,18 @@ def scoring_lines(root, arms, k, alive=live_scorer):
         # started. What is left is known only for a plain run, which scores
         # every trial without a score; a rescore keeps the scores it has not
         # yet replaced, and a run of named trials or of one record holds only
-        # those.
+        # those. The estimate covers the scoring alone: the security readings
+        # that follow it run at a pace of their own, so once every trial is
+        # scored no estimate is shown.
         plain = plain_scoring(claim.get("argv"))
         if begun is not None:
             fresh = sum(1 for written in scores.values()
                         if written >= begun.timestamp())
             elapsed = time.time() - begun.timestamp()
             summary += "  %.1f h in" % (elapsed / 3600)
-            if fresh and plain:
+            if fresh and plain and done < total:
                 left = elapsed / fresh * (total - done)
-                summary += ", about %.1f h left" % (left / 3600)
+                summary += ", about %.1f h of scoring left" % (left / 3600)
     lines.extend(["", summary])
     return lines
 
@@ -365,6 +367,10 @@ def self_test():
     dated(os.path.join(area, "security", "inline-1"), 57, folder=True)
     securing = scoring_now()
 
+    # A plain run with every trial scored, as one of one arm: only the
+    # security readings are left, and they have no estimate.
+    all_scored = scoring_lines(scratch, ("none",), 1, alive=lambda claim: True)
+
     # A rescore keeps the scores it has not replaced, so what is left of it
     # cannot be told from the area.
     with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
@@ -415,10 +421,13 @@ def self_test():
          any("scoring none-1" in line for line in rescoring)),
         ("a refused trial's directory does not hide the security reading",
          any("reading inline-1 for security" in line for line in securing)
-         and not any("scoring " in line for line in securing)),
+         and not any("  scoring " in line for line in securing)),
         ("a rescore shows its time in and no time left",
          any(" h in" in line for line in rescore_pace)
          and not any("h left" in line for line in rescore_pace)),
+        ("once every trial is scored, the security pass shows no time left",
+         any(" h in" in line for line in all_scored)
+         and not any("left" in line for line in all_scored)),
         ("only a plain scoring run, in any spelling, estimates what is left",
          plain_scoring(["score.py", "--root", "r"])
          and not any(plain_scoring(["score.py", "--root", "r"] + extra)
@@ -427,7 +436,7 @@ def self_test():
                                    ["--run", "run-1.json"],
                                    ["--task", "change"], ["--bogus"]))),
         ("the scoring's line counts every arm and estimates what is left",
-         " 3/75" in scored.get("all", "") and "h left" in scored.get("all", "")),
+         " 3/75" in scored.get("all", "") and "h of scoring left" in scored.get("all", "")),
         ("a scorer that has ended names no trial and no pace",
          not any("scoring " in line or " h in" in line for line in stale)),
     ]
