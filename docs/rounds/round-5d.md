@@ -139,13 +139,14 @@ Done with this registration:
 - the harness reads `short` from its new file
 - the report already computes H6's contrast, `short` minus `hand`, paired, as
   it did for round 2
+- K up to 15 for a run of `hand` and `short`, with round 5's spec check
+- `--cli` pins the CLI file every trial runs, the updater is off in every
+  trial, and every trial records the CLI's version; round 5d runs
+  `C:/efficacy/cli/claude-2.1.314.exe`, a copy of 2.1.314 kept where the
+  launcher's updater does not prune it
 
-The harness and the report still gain, each with a self-test:
+The report still gains, with a self-test:
 
-- K up to 15 for a run of `hand` and `short`, with round 5's spec check; today
-  a run with no round-5 arm is capped at K = 5 and its spec is not checked
-- the Claude CLI pinned at 2.1.314 for the round, with auto-update off and the
-  version recorded on every trial
 - round 5c's `none` trials read with their scores, judgings, security readings
   and tool lock, kept apart from round 5d's `none-1` to `none-3`, whose names
   they share

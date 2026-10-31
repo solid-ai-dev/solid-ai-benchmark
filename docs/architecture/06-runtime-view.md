@@ -67,6 +67,7 @@ built.
 | Your global `CLAUDE.md`, hooks, memory, MCP | A scratch home and a minimal settings file |
 | The launching session's environment | Its variables, editor, active interpreter and credentials are removed; the names removed are recorded |
 | The model | Pinned by exact id; effort fixed |
+| The CLI | Its updater off in every trial; its version recorded on every trial. `--cli` pins one file, so an update the launcher takes mid-round reaches no trial |
 | The builder's vendor | Never the judge's: each round names its builder models in its registration, none from the vendor of the rounds' judge |
 | The web | Web tools disallowed. The shell keeps its network, because every trial installs packages |
 | The templates repository | Not mounted |
