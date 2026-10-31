@@ -154,6 +154,20 @@ def arm_of(name):
         return None
 
 
+def blocks_of(names, arm):
+    """The blocks of `arm` that `names` hold, each once however it is
+    spelled: round 1's `A1` and its word `none-1` are one trial."""
+    found = set()
+    for name in names:
+        try:
+            other, block = split_name(name)
+        except TrialError:
+            continue
+        if other == arm:
+            found.add(block)
+    return found
+
+
 def live_scorer(claim):
     """Whether the scorer a marker names is still running."""
     try:
@@ -212,8 +226,8 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     total = len(arms) * k
     done = 0
     for name in arms:
-        scored = sum(1 for trial in scores if arm_of(trial) == name)
-        read = sum(1 for trial in readings if arm_of(trial) == name)
+        scored = len(blocks_of(scores, name))
+        read = len(blocks_of(readings, name))
         done += scored
         line = "%-10s %s %2d/%d" % (name, bar(scored, k), scored, k)
         if read:
@@ -229,9 +243,12 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     if claim and alive(claim):
         scoring = in_progress(os.path.join(area, "scoring"), scores)
         reading = in_progress(os.path.join(area, "security"), readings)
+        phase = None
         if scoring and (not reading or scoring > reading):
+            phase = "scoring"
             summary += "  scoring %s" % scoring[1]
         elif reading:
+            phase = "security"
             summary += "  reading %s for security" % reading[1]
         try:
             begun = datetime.datetime.fromisoformat(claim["started"])
@@ -242,16 +259,17 @@ def scoring_lines(root, arms, k, alive=live_scorer):
         # started. What is left is known only for a plain run, which scores
         # every trial without a score; a rescore keeps the scores it has not
         # yet replaced, and a run of named trials or of one record holds only
-        # those. The estimate covers the scoring alone: the security readings
-        # that follow it run at a pace of their own, so once every trial is
-        # scored no estimate is shown.
+        # those. The estimate covers the scoring alone, so it is shown only
+        # while a trial is being scored: the security readings that follow
+        # run at a pace of their own, and a refused trial leaves the bar short
+        # with no scoring left to do.
         plain = plain_scoring(claim.get("argv"))
         if begun is not None:
             fresh = sum(1 for written in scores.values()
                         if written >= begun.timestamp())
             elapsed = time.time() - begun.timestamp()
             summary += "  %.1f h in" % (elapsed / 3600)
-            if fresh and plain and done < total:
+            if fresh and plain and phase == "scoring" and done < total:
                 left = elapsed / fresh * (total - done)
                 summary += ", about %.1f h of scoring left" % (left / 3600)
     lines.extend(["", summary])
@@ -340,6 +358,9 @@ def self_test():
     for name, minutes in (("none-1", 5), ("inline-1", 10), ("inline-2", 30)):
         dated(os.path.join(area, "scores", "%s.json" % name), minutes)
     dated(os.path.join(area, "security-scores", "none-1.json"), 6)
+
+    # Round 1's spelling of none-1, left beside the word a rescore wrote.
+    dated(os.path.join(area, "scores", "A1.json"), 4)
     dated(os.path.join(area, "scoring", "inline-2"), 20, folder=True)
     dated(os.path.join(area, "scoring", "hybrid-1"), 40, folder=True)
     dated(os.path.join(area, "scoring", "tools"), 50, folder=True)
@@ -422,6 +443,10 @@ def self_test():
         ("a refused trial's directory does not hide the security reading",
          any("reading inline-1 for security" in line for line in securing)
          and not any("  scoring " in line for line in securing)),
+        ("the security pass shows no scoring estimate, bar short or not",
+         not any("left" in line for line in securing)),
+        ("a trial scored under two spellings counts once",
+         " 1/15" in scored.get("none", "")),
         ("a rescore shows its time in and no time left",
          any(" h in" in line for line in rescore_pace)
          and not any("h left" in line for line in rescore_pace)),
