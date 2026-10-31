@@ -1,60 +1,44 @@
 {
   "arm": "short",
+  "kind": "model",
   "output_model": "inline",
-  "budget": [
-    40,
-    88
-  ],
-  "ref": "v2.90.0",
-  "commit": "4b1be7d8dec1186cc63d22f01969fc0c93ac822b",
+  "ref": "9086e0ff",
+  "source": {
+    "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
+    "ref": "9086e0ff",
+    "commit": "9086e0ffc454fbff1d234601822257ce5e40a004"
+  },
   "roots": [
-    "stack-flask",
-    "stack-htmx",
+    "backend-api",
+    "backend-auth",
+    "backend-database",
     "frontend-ux",
-    "frontend-quality"
+    "base-security",
+    "base-data-governance"
   ],
+  "started_at": "2026-10-31T13:22:29",
+  "commit": "9086e0ffc454fbff1d234601822257ce5e40a004",
   "resolved_files": [
-    "templates/base/core/quality.md",
-    "templates/base/core/git.md",
-    "templates/base/core/docs.md",
-    "templates/base/core/readme.md",
-    "templates/base/core/testing.md",
-    "templates/base/core/review.md",
-    "templates/base/core/oop.md",
-    "templates/base/core/config.md",
+    "templates/core/quality.md",
+    "templates/core/git.md",
+    "templates/core/docs.md",
+    "templates/core/testing.md",
+    "templates/core/review.md",
     "templates/backend/http.md",
+    "templates/backend/api.md",
+    "templates/security/security.md",
+    "templates/backend/auth.md",
     "templates/backend/database.md",
-    "templates/backend/observability.md",
-    "templates/base/security/security.md",
-    "templates/base/infra/containers.md",
-    "templates/backend/quality.md",
-    "templates/backend/features.md",
-    "templates/backend/messaging.md",
-    "templates/base/infra/cicd.md",
-    "templates/base/security/devsecops.md",
-    "templates/base/data/data-modeling.md",
-    "templates/base/data/data-quality.md",
-    "templates/base/language/python.md",
-    "templates/base/core/cli.md",
-    "templates/base/workflow/quality-gates.md",
-    "templates/base/core/examples.md",
-    "templates/stack/python-lib.md",
-    "templates/stack/python-service.md",
-    "templates/stack/python-flask.md",
-    "templates/backend/templating.md",
-    "templates/stack/htmx.md",
     "templates/frontend/ux.md",
-    "templates/frontend/quality.md"
+    "templates/data/data-modeling.md",
+    "templates/data/data-governance.md"
   ],
-  "prompt_chars": 586564,
-  "model": "claude-sonnet-5",
-  "effort": "high",
-  "started_at": "2026-09-26T14:28:59",
+  "prompt_chars": 83803,
   "prompt_leak": null,
-  "prompt_file": "C:/efficacy/gen-r3-short-3\\arm-short-prompt.txt",
+  "prompt_file": "C:/efficacy/gen-short\\arm-short-prompt.txt",
   "auth_probe": "ready",
   "command": [
-    "C:\\Users\\braboj\\AppData\\Roaming\\npm\\claude.CMD",
+    "C:\\Users\\bgeorgiev\\.local\\bin\\claude.EXE",
     "-p",
     "--output-format",
     "json",
@@ -67,26 +51,28 @@
     "--setting-sources",
     "",
     "--settings",
-    "C:/efficacy/gen-r3-short-3\\home\\settings.json",
+    "C:/efficacy/gen-short\\home\\settings.json",
     "--strict-mcp-config",
     "--disallowed-tools",
     "WebSearch",
     "WebFetch"
   ],
-  "elapsed_s": 11.7,
+  "model": "claude-sonnet-5",
+  "effort": "high",
+  "elapsed_s": 200.3,
   "exit_status": 0,
   "result": {
-    "duration_api_ms": 9944,
+    "duration_api_ms": 193738,
     "stop_reason": "end_turn",
-    "session_id": "4d857594-2f51-4a34-a266-6a766229ab49",
-    "total_cost_usd": 0.941656,
+    "session_id": "d648277b-ed48-47a3-8e32-165e689f9c29",
+    "total_cost_usd": 0.5512856,
     "usage": {
-      "input_tokens": 2,
-      "cache_creation_input_tokens": 233598,
-      "cache_read_input_tokens": 0,
-      "output_tokens": 726,
+      "input_tokens": 14,
+      "cache_creation_input_tokens": 60568,
+      "cache_read_input_tokens": 495278,
+      "output_tokens": 20993,
       "output_tokens_details": {
-        "thinking_tokens": 0
+        "thinking_tokens": 17757
       },
       "server_tool_use": {
         "web_search_requests": 0,
@@ -94,36 +80,39 @@
       },
       "service_tier": "standard",
       "cache_creation": {
-        "ephemeral_1h_input_tokens": 233598,
+        "ephemeral_1h_input_tokens": 60568,
         "ephemeral_5m_input_tokens": 0
       },
-      "inference_geo": "not_available",
+      "inference_geo": "global",
       "iterations": [
         {
           "input_tokens": 2,
-          "output_tokens": 726,
-          "cache_read_input_tokens": 0,
-          "cache_creation_input_tokens": 233598,
+          "output_tokens": 1058,
+          "cache_read_input_tokens": 84624,
+          "cache_creation_input_tokens": 1044,
           "cache_creation": {
             "ephemeral_5m_input_tokens": 0,
-            "ephemeral_1h_input_tokens": 233598
+            "ephemeral_1h_input_tokens": 1044
           },
           "type": "message"
         }
       ],
-      "speed": "standard"
+      "speed": "standard",
+      "fallback_credit": null
     },
     "modelUsage": {
       "claude-sonnet-5": {
-        "inputTokens": 2,
-        "outputTokens": 726,
-        "cacheReadInputTokens": 0,
-        "cacheCreationInputTokens": 233598,
+        "inputTokens": 14,
+        "outputTokens": 20993,
+        "cacheReadInputTokens": 495278,
+        "cacheCreationInputTokens": 60568,
         "webSearchRequests": 0,
-        "costUSD": 0.941656,
+        "costUSD": 0.5512856,
         "contextWindow": 1000000,
-        "maxOutputTokens": 128000,
-        "thinkingTokens": 0,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 17757,
+        "cacheCreationEphemeral5mInputTokens": 0,
+        "cacheCreationEphemeral1hInputTokens": 60568,
         "canonicalModel": "claude-sonnet-5",
         "provider": "firstParty",
         "costBasis": "list"
@@ -157,26 +146,29 @@
       },
       "by_type": {}
     },
+    "safety_stops": 0,
     "is_error": false,
-    "num_turns": 1,
+    "num_turns": 7,
     "subtype": "success",
     "api_error_status": null,
-    "result": "# tariff \u2014 CLAUDE.md\n\nOwner: Imbra Ltd. Pricing and invoicing web app: catalog, discounts, tax, invoices.\nStack: Python 3.12, Flask 3, Jinja, HTMX, SQLite. Tools: uv, ruff, mypy strict, pytest.\nRuns locally; no deployment target; nothing reaches the network.\n\n## Structure\n- The pricing engine is a library that imports without Flask; Flask is one caller.\n- Flask app uses `create_app()`, blueprints, thin routes; logic lives in services.\n- Layout is in README.md; do not duplicate it here.\n\n## Personal data (GDPR)\n- Customers hold name, email, postal address; invoices name them.\n- Support erasure and export of one customer's data; keep invoice totals intact.\n- Never log or print personal data; never put it in fixtures, commits or errors.\n- One administrator signs in; CSRF on every state-changing request.\n\n## Code\n- Money is integer cents or Decimal, never float; timestamps in UTC.\n- Errors raised on purpose derive from one package base error.\n- Parameterized SQL only; migrations versioned, never edited once merged.\n- HTMX endpoints return partials when `HX-Request` is set; 422 on invalid forms.\n- Config from environment, validated at startup; `.env` is never committed.\n- Names carry meaning; no debug prints, no commented-out code.\n\n## Quality\n- Gates: `ruff check`, `ruff format`, `mypy --strict`, `pytest`; all must pass.\n- Test the engine without Flask; use a real SQLite file, not a mock.\n- Every public function has type hints and a Google-style docstring.\n\n## Git\n- Work on a branch, never on `main`; conventional commit prefixes, subject under 80.\n- Update README, CLAUDE.md and docs in the same commit as the change.\n\n## Off-limits without an approved plan\n- Auth and session code, migrations, `.env*`, and invoice export formats.\n- Propose the change with rollback and test coverage first.\n\n<!-- Generated with solid-ai-templates (github.com/braboj/solid-ai-templates) -->",
-    "ttft_ms": 9999,
+    "result": "# tariff\nPricing and invoicing web app for Imbra Ltd: catalog, discounts, tax\njurisdictions, customers, invoices. Python 3.12, Flask 3, Jinja, HTMX,\nSQLite, uv. One administrator; runs locally only, no deployment target.\nThe pricing engine is a library another program may import directly.\n- Model: inline\n## 1. Project\nSee README.md for the directory map; place code beside its layer.\n```bash\nuv run flask run                                    # start the app\nuv run ruff check . && uv run ruff format --check . # lint\nuv run mypy --strict . && uv run pytest             # types + tests\n```\n## 2. Code conventions\n- Work on a branch; never commit to `main`. Commit `uv.lock`, never\n  `.env`, secrets, or build output.\n- Off-limits without approval: auth/session code, migrations, `.env*`.\n- Parameterize every SQL query; never interpolate input into SQL.\n- Store money as integer minor units or `Decimal`, never `float`.\n- Hash the administrator's password with bcrypt, scrypt, or Argon2.\n- Regenerate the session ID on login; expire idle sessions; set\n  `HttpOnly`, `Secure`, `SameSite=Lax` cookies.\n- Give every state-changing HTMX/form request a CSRF token.\n- Encode all template output for context; never bypass autoescaping.\n- Run schema changes through a migration with up/down steps; never\n  edit the SQLite file by hand.\n- Never log a customer's name, email, address, or any secret value.\n- Classify customer PII (name, email, postal address); export or erase\n  it on request: hard delete or anonymize, never soft-delete alone.\n- Cover pricing, discount, and tax logic with edge-case unit tests.\n## 3. Review process\nReview in order: security, correctness, clarity, conventions.\n- [ ] No secret or PII value in a committed file or log.\n- [ ] Every SQL query parameterized; every migration has up/down.\n- [ ] Money uses integer minor units or `Decimal`, never `float`.\n## 4. Session protocol\n- Approver: the repository owner. Tracking: open, no tracker named.\n- Release: a tagged commit on `main` after lint, types, tests pass.\n- End of session, run in order: `ruff check .`, `mypy --strict .`,\n  `pytest`; report any that did not run as not run, never as passed.",
+    "ttft_ms": 128419,
     "type": "result",
-    "duration_ms": 10068,
-    "uuid": "6303e425-2c4c-4318-a754-54f062a8aa2d",
-    "ttft_stream_ms": 3125,
-    "time_to_request_ms": 121,
-    "first_content_frame_ms": 3125,
+    "duration_ms": 197972,
+    "uuid": "b711c13a-688b-4a75-a566-6125baae94ef",
+    "ttft_stream_ms": 1871,
+    "time_to_request_ms": 419,
+    "first_content_frame_ms": 1871,
     "queued_turn_count": 0,
     "result_index": 0
   },
+  "budget": [
+    40,
+    88
+  ],
   "output_leak": null,
-  "over_budget": [],
   "outcome": "generated",
-  "output": "C:\\Workspace\\solid-ai-templates\\tests\\efficacy\\arms\\short\\CLAUDE.md",
-  "output_chars": 1896,
-  "output_lines": 39,
-  "output_width": 87
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\short\\CLAUDE.md",
+  "output_lines": 40,
+  "output_words": 352
 }

@@ -87,7 +87,7 @@ Every arm starts from an empty git repository holding `SPEC.md`. All but
 |---|---|---|---|
 | `none` | nothing: the bare agent | — | the baseline every file is compared with |
 | `full` | the file the interview generates, inline | none | do the templates help as shipped |
-| `short` | the file the interview generates, inline, under a budget | ≤ 40 lines, ≤ 88 characters wide | does a short generated file help |
+| `short` | one generation from `agents.md`, inline, under a budget | ≤ 40 lines, ≤ 88 characters wide | does a short generated file help |
 | `hybrid` | the file the interview generates in its hybrid model, with the templates vendored into the workspace | none | does the model the owner's projects use help |
 | `hand` | a hand-written file | ≤ 40 lines | is the effect the templates, or merely having a file |
 

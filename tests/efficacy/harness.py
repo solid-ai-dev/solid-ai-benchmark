@@ -127,13 +127,13 @@ SKILLS_INTO = ".claude/skills"
 # `arms/`. Arm `none` carries no file: it is the bare agent. The two files
 # round 1 ran keep the directories its generation record names. `inline`,
 # `reference` and `skills` are round 5's; `hybrid` was regenerated for it,
-# and an arm's vendored ref comes from its generation record. `short5` is
-# `short` made again from round 5's chain, so `short`'s own file stays.
+# and an arm's vendored ref comes from its generation record. `short` was
+# made again from round 5's chain, under round 3's budget.
 ARMS = {
     "none": {"label": "no context file", "context": None},
     "full": {"label": "the templates' file, inline",
              "context": "full/CLAUDE.md"},
-    "short": {"label": "the templates' file, 40 lines",
+    "short": {"label": "the templates' file, inline, 40 lines",
               "context": "short/CLAUDE.md"},
     "hybrid": {"label": "the templates' file, hybrid",
                "context": "hybrid/CLAUDE.md", "vendor": VENDORED},
@@ -145,8 +145,6 @@ ARMS = {
                "context": "inline/CLAUDE.md"},
     "skills": {"label": "the emitted root file and task skills",
                "context": "skills/CLAUDE.md", "skills": "skills/skills"},
-    "short5": {"label": "the templates' file, 40 lines, from round 5's chain",
-               "context": "short5/CLAUDE.md"},
 }
 
 # Round 1 named its arms by letter and its trials `A1`, `B2`, `C3`. Its run

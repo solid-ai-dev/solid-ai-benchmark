@@ -6,7 +6,7 @@ the arms differ only in how they deliver it. This module makes them:
 - `reference` is fixed text naming each template of the chain
 - `inline` and `hybrid` are one non-interactive generation each, following
   `templates/core/agents.md` with no interview
-- `short5` is the same generation in the inline model, held to 40 lines of
+- `short` is the same generation in the inline model, held to 40 lines of
   88 characters
 - `skills` is what `resolve_chain.py --emit` builds, the facts filled from
   the brief
@@ -48,18 +48,16 @@ BRIEF = os.path.join(HERE, "brief.txt")
 # The arms this module makes, each with the directory under `arms/` its file
 # and record live in, and how it is made: fixed text, a model generation in
 # one of `agents.md`'s models, or the emitter, and a model arm's budget as
-# (lines, width) where it has one. Round 3's arms (`full`, `short`, `hand`)
-# keep their committed files and records; they were made through an
-# interview that no longer ships upstream. `short5` is `short` made again
-# from round 5's chain under the same budget, in a directory of its own, so
-# `short`'s file and record stay as round 3 left them.
+# (lines, width) where it has one. Round 3's `full` and `hand` keep their
+# committed files and records; they were made through an interview that no
+# longer ships upstream.
 GENERATED = {
     "reference": {"dir": "reference", "kind": "fixed"},
     "inline": {"dir": "inline", "kind": "model", "model": "inline"},
     "hybrid": {"dir": "hybrid", "kind": "model", "model": "hybrid"},
     "skills": {"dir": "skills", "kind": "emit"},
-    "short5": {"dir": "short5", "kind": "model", "model": "inline",
-               "budget": (40, 88)},
+    "short": {"dir": "short", "kind": "model", "model": "inline",
+              "budget": (40, 88)},
 }
 
 
@@ -484,7 +482,7 @@ def self_test():
         pass
     print("every known fact slot is filled, and an unknown one is refused")
 
-    budget = GENERATED["short5"]["budget"]
+    budget = GENERATED["short"]["budget"]
     lines, width = budget
     at_bounds = "\n".join(["x" * width] * lines) + "\n"
     if over_budget(at_bounds, budget):
@@ -500,13 +498,13 @@ def self_test():
         return 1
     print("the budget keeps a file at %d lines of %d characters and refuses "
           "one over either" % (lines, width))
-    if "MUST be at most %d lines" % lines not in arm_clause("short5") \
+    if "MUST be at most %d lines" % lines not in arm_clause("short") \
             or "measure every line against %d" % width \
-            not in arm_clause("short5") \
+            not in arm_clause("short") \
             or "budget" in arm_clause("inline").lower():
-        print("FAIL: the budget clause is not in short5's instruction alone")
+        print("FAIL: the budget clause is not in short's instruction alone")
         return 1
-    print("the budget is stated in short5's instruction and no other")
+    print("the budget is stated in short's instruction and no other")
     return 0
 
 
