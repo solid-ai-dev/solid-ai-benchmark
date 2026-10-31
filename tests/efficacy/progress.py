@@ -1,11 +1,14 @@
-"""Show a run's progress, one bar per arm, read from its run records.
+"""Show a run's progress, one bar per arm, read from its run records, and
+its scoring's, read from the scoring area.
 
-Read-only: it opens the run root's `run-*.json` and nothing else, so it can
-watch a live run from a console of its own without touching a trial. It
-redraws every `--every` seconds until stopped, or once with `--once`.
+Read-only: it opens the run root's `run-*.json` and lists the scoring area,
+so it can watch a live run or a live scoring from a console of its own
+without touching a trial. It redraws every `--every` seconds until stopped,
+or once with `--once`.
 """
 
 import argparse
+import contextlib
 import datetime
 import glob
 import io
@@ -19,8 +22,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
-from harness import (ROUND5_K, SCORABLE, VOIDING, arm_name,  # noqa: E402
-                     now, result_of)
+from harness import (ROUND5_K, SCORABLE, VOIDING, LiveRunError,  # noqa: E402
+                     TrialError, arm_name, claim_path, now, read_claim,
+                     result_of, running_as, scoring_area, split_name)
 from report import ROUND5_RUN  # noqa: E402
 
 WIDTH = 30
@@ -127,6 +131,148 @@ def render(root, arms=ROUND5_RUN, k=ROUND5_K, moment=None):
         summary += "  %.1f h in, about %.0f h left" % (
             elapsed.total_seconds() / 3600, left.total_seconds() / 3600)
     lines.append(summary)
+    return lines + scoring_lines(root, arms, k)
+
+
+def names_in(directory):
+    """The trial names a directory holds a `<name>.json` for, each with when
+    it was written."""
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return {}
+    return {entry[:-len(".json")]:
+            os.path.getmtime(os.path.join(directory, entry))
+            for entry in entries if entry.endswith(".json")}
+
+
+def arm_of(name):
+    """A trial name's arm, or None where the name is not a trial's."""
+    try:
+        return split_name(name)[0]
+    except TrialError:
+        return None
+
+
+def blocks_of(names, arm):
+    """The blocks of `arm` that `names` hold, each once however it is
+    spelled: round 1's `A1` and its word `none-1` are one trial."""
+    found = set()
+    for name in names:
+        try:
+            other, block = split_name(name)
+        except TrialError:
+            continue
+        if other == arm:
+            found.add(block)
+    return found
+
+
+def live_scorer(claim):
+    """Whether the scorer a marker names is still running."""
+    try:
+        return running_as(claim["pid"], "score.py")
+    except LiveRunError:
+        return False
+
+
+def in_progress(work, written):
+    """The trial a tool is working on in `work`, as (when it changed, its
+    name), or None.
+
+    A tool rebuilds a trial's directory there before it writes the trial's
+    result, so the trial in hand is the newest directory changed since its
+    result was last written; one never written counts as changed. A rescore
+    keeps the old result until the new one is ready, so the old result's
+    presence alone does not say the trial is done. Directories that are not
+    a trial's, such as the scorer's tools, are never the trial in hand.
+    """
+    try:
+        entries = [entry for entry in os.listdir(work) if arm_of(entry)]
+    except OSError:
+        return None
+    changed = [(os.path.getmtime(os.path.join(work, entry)), entry)
+               for entry in entries]
+    changed = [(when, entry) for when, entry in changed
+               if when > written.get(entry, 0)]
+    return max(changed) if changed else None
+
+
+def plain_scoring(argv):
+    """Whether a scorer's command line scores every build trial still
+    without a score, read with the scorer's own parser."""
+
+    # Imported here: the scorer's module is only needed once one runs.
+    import score
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            options = score.parse_args(list(argv or [])[1:])
+    except SystemExit:
+        return False
+    return (options.task == "build" and not options.rescore
+            and not options.trial and not options.run)
+
+
+def scoring_lines(root, arms, k, alive=live_scorer):
+    """The scoring's lines: one bar per arm of trials scored, with their
+    security readings, and the trial being scored; none before scoring
+    starts."""
+    area = scoring_area(root)
+    if not os.path.isdir(area):
+        return []
+    scores = names_in(os.path.join(area, "scores"))
+    readings = names_in(os.path.join(area, "security-scores"))
+    lines = ["", "Scored"]
+    total = len(arms) * k
+    done = 0
+    for name in arms:
+        scored = len(blocks_of(scores, name))
+        read = len(blocks_of(readings, name))
+        done += scored
+        line = "%-10s %s %2d/%d" % (name, bar(scored, k), scored, k)
+        if read:
+            line += "  %d read for security" % read
+        lines.append(line)
+    summary = "%-10s %s %2d/%d" % ("all", bar(done, total), done, total)
+
+    # The scorer marks the area while it runs, scores each trial and then
+    # reads the scored ones for security. Whichever of the two changed last is
+    # the one in hand, so a refused trial's directory, left without a result,
+    # does not hide the readings that follow it.
+    claim = read_claim(claim_path(area, "score.py"))
+    if claim and alive(claim):
+        scoring = in_progress(os.path.join(area, "scoring"), scores)
+        reading = in_progress(os.path.join(area, "security"), readings)
+        phase = None
+        if scoring and (not reading or scoring > reading):
+            phase = "scoring"
+            summary += "  scoring %s" % scoring[1]
+        elif reading:
+            phase = "security"
+            summary += "  reading %s for security" % reading[1]
+        try:
+            begun = datetime.datetime.fromisoformat(claim["started"])
+        except (KeyError, TypeError, ValueError):
+            begun = None
+
+        # The pace is this scorer's own, from the scores it wrote since it
+        # started. What is left is known only for a plain run, which scores
+        # every trial without a score; a rescore keeps the scores it has not
+        # yet replaced, and a run of named trials or of one record holds only
+        # those. The estimate covers the scoring alone, so it is shown only
+        # while a trial is being scored: the security readings that follow
+        # run at a pace of their own, and a refused trial leaves the bar short
+        # with no scoring left to do.
+        plain = plain_scoring(claim.get("argv"))
+        if begun is not None:
+            fresh = sum(1 for written in scores.values()
+                        if written >= begun.timestamp())
+            elapsed = time.time() - begun.timestamp()
+            summary += "  %.1f h in" % (elapsed / 3600)
+            if fresh and plain and phase == "scoring" and done < total:
+                left = elapsed / fresh * (total - done)
+                summary += ", about %.1f h of scoring left" % (left / 3600)
+    lines.extend(["", summary])
     return lines
 
 
@@ -194,7 +340,68 @@ def self_test():
             return ["raised %r" % error]
 
     lines, old = drawn(scratch), drawn(legacy)
+
+    # A scoring under way: two arms scored, one read for security, the
+    # scorer's tools, a scored trial's directory, the trial in hand, and the
+    # scorer's marker. Each file and directory is dated, newest last.
+    area = scoring_area(scratch)
+    clock = time.time() - 3600
+
+    def dated(path, minutes, folder=False):
+        if folder:
+            os.makedirs(path, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            io.open(path, "w").close()
+        os.utime(path, (clock + minutes * 60,) * 2)
+
+    for name, minutes in (("none-1", 5), ("inline-1", 10), ("inline-2", 30)):
+        dated(os.path.join(area, "scores", "%s.json" % name), minutes)
+    dated(os.path.join(area, "security-scores", "none-1.json"), 6)
+
+    # Round 1's spelling of none-1, left beside the word a rescore wrote.
+    dated(os.path.join(area, "scores", "A1.json"), 4)
+    dated(os.path.join(area, "scoring", "inline-2"), 20, folder=True)
+    dated(os.path.join(area, "scoring", "hybrid-1"), 40, folder=True)
+    dated(os.path.join(area, "scoring", "tools"), 50, folder=True)
+    started_at = datetime.datetime.now() - datetime.timedelta(hours=1)
+    with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "score.py",
+                   "started": started_at.isoformat(timespec="seconds")}, handle)
+
+    def scoring_now(alive=True):
+        return scoring_lines(scratch, ROUND5_RUN, ROUND5_K,
+                             alive=lambda claim: alive)
+
+    live, stale = scoring_now(), scoring_now(alive=False)
+
+    # A rescore of none-1 rebuilds its directory while its old score stays.
+    dated(os.path.join(area, "scoring", "none-1"), 45, folder=True)
+    rescoring = scoring_now()
+
+    # Every trial in the scorer's directory scored; inline-1 in the security
+    # reader's directory with no reading yet.
+    # A refused trial, skills-1, leaves its directory without a score.
+    for name, minutes in (("hybrid-1", 55), ("none-1", 56)):
+        dated(os.path.join(area, "scores", "%s.json" % name), minutes)
+    dated(os.path.join(area, "scoring", "skills-1"), 56.5, folder=True)
+    dated(os.path.join(area, "security", "inline-1"), 57, folder=True)
+    securing = scoring_now()
+
+    # A plain run with every trial scored, as one of one arm: only the
+    # security readings are left, and they have no estimate.
+    all_scored = scoring_lines(scratch, ("none",), 1, alive=lambda claim: True)
+
+    # A rescore keeps the scores it has not replaced, so what is left of it
+    # cannot be told from the area.
+    with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "score.py",
+                   "argv": ["tests/efficacy/score.py", "--rescore"],
+                   "started": started_at.isoformat(timespec="seconds")}, handle)
+    rescore_pace = scoring_now()
+    shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
+    scored = {line.split()[0]: line for line in live[2:] if line.strip()}
     by_arm = {line.split()[0]: line for line in lines[2:] if line.strip()}
     old_by_arm = {line.split()[0]: line for line in old[2:] if line.strip()}
     checks = [
@@ -219,6 +426,44 @@ def self_test():
         ("a root without offsets draws its counts and reads no time",
          " 2/75 " in old_by_arm.get("all", "")
          and not any("min" in line or "h left" in line for line in old)),
+        ("before scoring starts, no scoring lines are drawn",
+         "Scored" not in lines and "Scored" not in old),
+        ("each arm's scored trials count toward its bar",
+         " 1/15" in scored.get("none", "") and " 2/15" in scored.get("inline", "")
+         and " 0/15" in scored.get("skills", "")),
+        ("an arm's security readings are counted beside it",
+         "1 read for security" in scored.get("none", "")
+         and "read for security" not in scored.get("inline", "")),
+        ("the trial being scored is named, not one already scored",
+         "scoring hybrid-1" in scored.get("all", "")),
+        ("the scorer's tools are never named as the trial in hand",
+         not any("tools" in line for line in live + rescoring + securing)),
+        ("a trial being rescored is named while its old score stays",
+         any("scoring none-1" in line for line in rescoring)),
+        ("a refused trial's directory does not hide the security reading",
+         any("reading inline-1 for security" in line for line in securing)
+         and not any("  scoring " in line for line in securing)),
+        ("the security pass shows no scoring estimate, bar short or not",
+         not any("left" in line for line in securing)),
+        ("a trial scored under two spellings counts once",
+         " 1/15" in scored.get("none", "")),
+        ("a rescore shows its time in and no time left",
+         any(" h in" in line for line in rescore_pace)
+         and not any("h left" in line for line in rescore_pace)),
+        ("once every trial is scored, the security pass shows no time left",
+         any(" h in" in line for line in all_scored)
+         and not any("left" in line for line in all_scored)),
+        ("only a plain scoring run, in any spelling, estimates what is left",
+         plain_scoring(["score.py", "--root", "r"])
+         and not any(plain_scoring(["score.py", "--root", "r"] + extra)
+                     for extra in (["--rescore"], ["--trial=none-1"],
+                                   ["--trial", "none-1"], ["--run=run-1.json"],
+                                   ["--run", "run-1.json"],
+                                   ["--task", "change"], ["--bogus"]))),
+        ("the scoring's line counts every arm and estimates what is left",
+         " 3/75" in scored.get("all", "") and "h of scoring left" in scored.get("all", "")),
+        ("a scorer that has ended names no trial and no pace",
+         not any("scoring " in line or " h in" in line for line in stale)),
     ]
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
