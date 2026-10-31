@@ -162,7 +162,8 @@ def live_scorer(claim):
 
 
 def in_progress(work, written):
-    """The trial a tool is working on in `work`, or None.
+    """The trial a tool is working on in `work`, as (when it changed, its
+    name), or None.
 
     A tool rebuilds a trial's directory there before it writes the trial's
     result, so the trial in hand is the newest directory changed since its
@@ -179,7 +180,7 @@ def in_progress(work, written):
                for entry in entries]
     changed = [(when, entry) for when, entry in changed
                if when > written.get(entry, 0)]
-    return max(changed)[1] if changed else None
+    return max(changed) if changed else None
 
 
 def scoring_lines(root, arms, k, alive=live_scorer):
@@ -205,26 +206,33 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     summary = "%-10s %s %2d/%d" % ("all", bar(done, total), done, total)
 
     # The scorer marks the area while it runs, scores each trial and then
-    # reads the scored ones for security; the pace is this scorer's own, from
-    # the scores it wrote since it started.
+    # reads the scored ones for security. Whichever of the two changed last is
+    # the one in hand, so a refused trial's directory, left without a result,
+    # does not hide the readings that follow it.
     claim = read_claim(claim_path(area, "score.py"))
     if claim and alive(claim):
         scoring = in_progress(os.path.join(area, "scoring"), scores)
         reading = in_progress(os.path.join(area, "security"), readings)
-        if scoring:
-            summary += "  scoring %s" % scoring
+        if scoring and (not reading or scoring > reading):
+            summary += "  scoring %s" % scoring[1]
         elif reading:
-            summary += "  reading %s for security" % reading
+            summary += "  reading %s for security" % reading[1]
         try:
             begun = datetime.datetime.fromisoformat(claim["started"])
         except (KeyError, TypeError, ValueError):
             begun = None
+
+        # The pace is this scorer's own, from the scores it wrote since it
+        # started. What is left is known only for a plain run, which scores
+        # every trial without a score; a rescore keeps the scores it has not
+        # yet replaced, and a run of named trials holds only those.
+        plain = not {"--rescore", "--trial"} & set(claim.get("argv") or [])
         if begun is not None:
             fresh = sum(1 for written in scores.values()
                         if written >= begun.timestamp())
             elapsed = time.time() - begun.timestamp()
             summary += "  %.1f h in" % (elapsed / 3600)
-            if fresh:
+            if fresh and plain:
                 left = elapsed / fresh * (total - done)
                 summary += ", about %.1f h left" % (left / 3600)
     lines.extend(["", summary])
@@ -333,10 +341,20 @@ def self_test():
 
     # Every trial in the scorer's directory scored; inline-1 in the security
     # reader's directory with no reading yet.
+    # A refused trial, skills-1, leaves its directory without a score.
     for name, minutes in (("hybrid-1", 55), ("none-1", 56)):
         dated(os.path.join(area, "scores", "%s.json" % name), minutes)
+    dated(os.path.join(area, "scoring", "skills-1"), 56.5, folder=True)
     dated(os.path.join(area, "security", "inline-1"), 57, folder=True)
     securing = scoring_now()
+
+    # A rescore keeps the scores it has not replaced, so what is left of it
+    # cannot be told from the area.
+    with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "score.py",
+                   "argv": ["tests/efficacy/score.py", "--rescore"],
+                   "started": started_at.isoformat(timespec="seconds")}, handle)
+    rescore_pace = scoring_now()
     shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
     scored = {line.split()[0]: line for line in live[2:] if line.strip()}
@@ -378,9 +396,12 @@ def self_test():
          not any("tools" in line for line in live + rescoring + securing)),
         ("a trial being rescored is named while its old score stays",
          any("scoring none-1" in line for line in rescoring)),
-        ("once every trial is scored, the one read for security is named",
+        ("a refused trial's directory does not hide the security reading",
          any("reading inline-1 for security" in line for line in securing)
          and not any("scoring " in line for line in securing)),
+        ("a rescore shows its time in and no time left",
+         any(" h in" in line for line in rescore_pace)
+         and not any("h left" in line for line in rescore_pace)),
         ("the scoring's line counts every arm and estimates what is left",
          " 3/75" in scored.get("all", "") and "h left" in scored.get("all", "")),
         ("a scorer that has ended names no trial and no pace",
