@@ -6,11 +6,14 @@ the arms differ only in how they deliver it. This module makes them:
 - `reference` is fixed text naming each template of the chain
 - `inline` and `hybrid` are one non-interactive generation each, following
   `templates/core/agents.md` with no interview
+- `short` is the same generation in the inline model, held to 40 lines of
+  88 characters
 - `skills` is what `resolve_chain.py --emit` builds, the facts filled from
   the brief
 
 It writes `arms/<arm>/CLAUDE.md` (and, for `skills`, the skills beside it),
-and refuses to keep a result the specification leaked into.
+and refuses to keep a result the specification leaked into, or one over its
+arm's budget.
 
 Run it once per arm. Re-running it produces a different file and therefore
 a different arm, so it refuses to overwrite an existing one without
@@ -44,14 +47,17 @@ BRIEF = os.path.join(HERE, "brief.txt")
 
 # The arms this module makes, each with the directory under `arms/` its file
 # and record live in, and how it is made: fixed text, a model generation in
-# one of `agents.md`'s models, or the emitter. Round 3's arms (`full`,
-# `short`, `hand`) keep their committed files and records; they were made
-# through an interview that no longer ships upstream.
+# one of `agents.md`'s models, or the emitter, and a model arm's budget as
+# (lines, width) where it has one. Round 3's `full` and `hand` keep their
+# committed files and records; they were made through an interview that no
+# longer ships upstream.
 GENERATED = {
     "reference": {"dir": "reference", "kind": "fixed"},
     "inline": {"dir": "inline", "kind": "model", "model": "inline"},
     "hybrid": {"dir": "hybrid", "kind": "model", "model": "hybrid"},
     "skills": {"dir": "skills", "kind": "emit"},
+    "short": {"dir": "short", "kind": "model", "model": "inline",
+              "budget": (40, 88)},
 }
 
 
@@ -195,9 +201,46 @@ FACTS = {
 SLOT = re.compile(r"\{\{[^}]+\}\}")
 
 
+# The budget clause. The width keeps a line from carrying a paragraph. The
+# closing check adds no content; it asks the model to hold a bound it is
+# already given, since a file over it is refused whole.
+BUDGET = """\
+The finished `CLAUDE.md` MUST be at most {lines} lines, blank lines counted,
+and no line may be longer than {width} characters. Keep the rules that matter
+most for this project and leave the rest out; a rule that does not fit is left
+out, not squeezed onto another rule's line.
+
+Before you answer, measure every line against {width} characters and shorten
+or split each one over it, then count the lines again. A file over either
+bound is refused whole, never trimmed."""
+
+
 def arm_clause(arm):
-    """The model paragraph for one model arm's instruction."""
-    return "## The output model\n\n%s\n" % MODELS[GENERATED[arm]["model"]]
+    """The model and budget paragraphs for one model arm's instruction."""
+    entry = GENERATED[arm]
+    lines = ["## The output model", "", MODELS[entry["model"]]]
+    if entry.get("budget"):
+        count, width = entry["budget"]
+        lines.extend(["", "## The budget", "",
+                      BUDGET.format(lines=count, width=width)])
+    return "\n".join(lines) + "\n"
+
+
+def over_budget(document, budget):
+    """Every way a file exceeds its (lines, width) budget, as sentences;
+    empty where it fits or has no budget."""
+    if not budget:
+        return []
+    lines, width = budget
+    text = document.rstrip("\n").split("\n")
+    findings = []
+    if len(text) > lines:
+        findings.append("%d lines, over the budget of %d" % (len(text), lines))
+    widest = max((len(line) for line in text), default=0)
+    if widest > width:
+        findings.append("a line of %d characters, over the width of %d"
+                        % (widest, width))
+    return findings
 
 
 def read_brief(path=BRIEF):
@@ -396,13 +439,15 @@ def parse_args(argv):
 
 
 def self_test():
-    """A scan that cannot fail is not a control, and neither is a fill.
+    """A scan that cannot fail is not a control, and neither is a fill or a
+    budget.
 
     Plants a specification-only token and requires the scan to report it,
     and a clean text to scan clean. Requires the reference text to name
     every file under the vendored path and to be the same twice. Requires a
     fact slot the brief does not fill to be refused, and every known slot
-    filled.
+    filled. Requires a file one line over the budget, and one a character
+    too wide, refused, and a file at both bounds kept.
     """
     clean = "A pricing and invoicing web application with discount rules."
     if scan(clean, "clean", PROMPT_TOKENS) is not None:
@@ -436,6 +481,30 @@ def self_test():
     except TrialError:
         pass
     print("every known fact slot is filled, and an unknown one is refused")
+
+    budget = GENERATED["short"]["budget"]
+    lines, width = budget
+    at_bounds = "\n".join(["x" * width] * lines) + "\n"
+    if over_budget(at_bounds, budget):
+        print("FAIL: a file at both bounds was refused")
+        return 1
+    long = "\n".join(["x"] * (lines + 1)) + "\n"
+    wide = "\n".join(["x" * (width + 1)] + ["x"] * (lines - 1)) + "\n"
+    if not over_budget(long, budget) or not over_budget(wide, budget):
+        print("FAIL: a file over the budget was kept")
+        return 1
+    if over_budget(long, None):
+        print("FAIL: an arm with no budget refused a file")
+        return 1
+    print("the budget keeps a file at %d lines of %d characters and refuses "
+          "one over either" % (lines, width))
+    if "MUST be at most %d lines" % lines not in arm_clause("short") \
+            or "measure every line against %d" % width \
+            not in arm_clause("short") \
+            or "budget" in arm_clause("inline").lower():
+        print("FAIL: the budget clause is not in short's instruction alone")
+        return 1
+    print("the budget is stated in short's instruction and no other")
     return 0
 
 
@@ -495,6 +564,17 @@ def main(argv):
         if document is None:
             write_record(options.root, record, started_at)
             return 0 if record.get("outcome") == "dry-run" else 1
+
+    # A file over its budget is refused whole rather than trimmed, since
+    # trimming would put a person's judgement into the arm.
+    record["budget"] = entry.get("budget")
+    over = over_budget(document, entry.get("budget"))
+    if over:
+        record["outcome"] = "refused: over budget"
+        record["over_budget"] = over
+        print("refused: the generated file is over its budget: %s"
+              % "; ".join(over))
+        return write_record(options.root, record, started_at) or 1
 
     texts = [document] + list(skills.values())
     leak = scan("\n".join(texts), "generated files", NON_INVENTABLE)
