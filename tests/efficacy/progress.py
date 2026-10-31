@@ -8,6 +8,7 @@ or once with `--once`.
 """
 
 import argparse
+import contextlib
 import datetime
 import glob
 import io
@@ -183,6 +184,21 @@ def in_progress(work, written):
     return max(changed) if changed else None
 
 
+def plain_scoring(argv):
+    """Whether a scorer's command line scores every build trial still
+    without a score, read with the scorer's own parser."""
+
+    # Imported here: the scorer's module is only needed once one runs.
+    import score
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            options = score.parse_args(list(argv or [])[1:])
+    except SystemExit:
+        return False
+    return (options.task == "build" and not options.rescore
+            and not options.trial and not options.run)
+
+
 def scoring_lines(root, arms, k, alive=live_scorer):
     """The scoring's lines: one bar per arm of trials scored, with their
     security readings, and the trial being scored; none before scoring
@@ -225,8 +241,9 @@ def scoring_lines(root, arms, k, alive=live_scorer):
         # The pace is this scorer's own, from the scores it wrote since it
         # started. What is left is known only for a plain run, which scores
         # every trial without a score; a rescore keeps the scores it has not
-        # yet replaced, and a run of named trials holds only those.
-        plain = not {"--rescore", "--trial"} & set(claim.get("argv") or [])
+        # yet replaced, and a run of named trials or of one record holds only
+        # those.
+        plain = plain_scoring(claim.get("argv"))
         if begun is not None:
             fresh = sum(1 for written in scores.values()
                         if written >= begun.timestamp())
@@ -402,6 +419,13 @@ def self_test():
         ("a rescore shows its time in and no time left",
          any(" h in" in line for line in rescore_pace)
          and not any("h left" in line for line in rescore_pace)),
+        ("only a plain scoring run, in any spelling, estimates what is left",
+         plain_scoring(["score.py", "--root", "r"])
+         and not any(plain_scoring(["score.py", "--root", "r"] + extra)
+                     for extra in (["--rescore"], ["--trial=none-1"],
+                                   ["--trial", "none-1"], ["--run=run-1.json"],
+                                   ["--run", "run-1.json"],
+                                   ["--task", "change"], ["--bogus"]))),
         ("the scoring's line counts every arm and estimates what is left",
          " 3/75" in scored.get("all", "") and "h left" in scored.get("all", "")),
         ("a scorer that has ended names no trial and no pace",
