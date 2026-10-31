@@ -1783,7 +1783,7 @@ def run_agent(workspace, name, prompt, record, root, home, options):
         "command": argv,
         "model": options.model,
         "effort": options.effort,
-        "cli_version": getattr(options, "cli_version", None),
+        "cli_version": cli_version(argv[0]),
         "budget_usd": options.budget,
         "timeout_s": options.timeout,
         "environment_removed": {"names": inherited_names(os.environ),
@@ -2442,9 +2442,17 @@ def dry_run_checks():
     os.makedirs(stand_in)
     claude = os.path.join(stand_in,
                           "claude.cmd" if os.name == "nt" else "claude")
+    # The stand-in answers each call with a new version, as a CLI updated
+    # between two trials would, so a version read once per run shows.
     with io.open(claude, "w", encoding="utf-8") as handle:
-        handle.write("@echo off\r\necho 0.0.0 (stand-in)\r\n" if os.name == "nt"
-                     else "#!/bin/sh\necho '0.0.0 (stand-in)'\n")
+        handle.write(
+            '@echo off\r\nset n=0\r\n'
+            'if exist "%~dp0calls" set /p n=<"%~dp0calls"\r\n'
+            'set /a n=n+1\r\n>"%~dp0calls" echo %n%\r\n'
+            'echo 0.0.%n% (stand-in)\r\n' if os.name == "nt" else
+            '#!/bin/sh\ncalls="$(dirname "$0")/calls"\n'
+            'n=$(($(cat "$calls" 2>/dev/null || echo 0) + 1))\n'
+            'echo $n > "$calls"\necho "0.0.$n (stand-in)"\n')
     os.chmod(claude, 0o755)
     saved = {key: os.environ.get(key) for key in ("PATH", "HOME", "USERPROFILE")}
     os.environ["PATH"] = stand_in + os.pathsep + saved["PATH"]
@@ -2461,6 +2469,8 @@ def dry_run_checks():
             outcomes.append((task, code == 0
                              and os.path.isdir(os.path.join(dry, prepared)),
                              listing(root) == before))
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(["--root", root, "--arms", "none", "--k", "2", "--dry-run"])
         recorded = []
         for run in glob.glob(os.path.join(dry, "run-*.json")):
             with io.open(run, encoding="utf-8") as handle:
@@ -2508,8 +2518,10 @@ def dry_run_checks():
     remove_tree(scratch)
     checks = [("the root holds a frozen build and its run record",
                "none-1.tar" in before and "run-planted.json" in before),
-              ("every dry-run trial records the CLI's version",
-               bool(recorded) and set(recorded) == {"0.0.0 (stand-in)"}),
+              ("every trial records the CLI's version, read as it starts",
+               len(recorded) == 2 and len(set(recorded)) == 2
+               and all(str(version).endswith("(stand-in)")
+                       for version in recorded)),
               ("a pinned CLI is the file a trial runs", pinned),
               ("a pinned CLI that is not there refuses the run",
                missing_refused),
