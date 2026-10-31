@@ -4,7 +4,7 @@ Registered on 2026-10-31, while round 5c ran and before any round-5d trial ran.
 Round 5c keeps its registration as it was when its first trial ran; this one is
 a registration of its own.
 
-## 13d. Round 5d: the hand-written file, against round 5c
+## 13d. Round 5d: a person's file and a 40-line file, against round 5c
 
 ### 13d.1 What it takes from round 5c
 
@@ -20,19 +20,40 @@ Three things differ: the arms, the order, and a reuse of round 5c's `none`.
 | Arm | Trials | Where they come from |
 | --- | --- | --- |
 | `hand` | 15, fresh | `tests/efficacy/arms/hand/CLAUDE.md` as it is at `010ee36` |
+| `short5` | 15, fresh | `tests/efficacy/arms/short5/CLAUDE.md`, made for 5d |
 | `none` | 3, fresh | The bare agent, as a check on drift |
 | `none`, from 5c | 15, reused | Round 5c's `none-1` to `none-15`, scored and read |
 
-- The `hand` file is 39 lines and 1,376 bytes, sha256
+**`hand`** is a person's file, written for round 3's brief.
+
+- 39 lines and 1,376 bytes, sha256
   `25459854949f648837ac5ef37fca5d7472923b544dffb694cd40f8b8a53ec748`.
-- It is kept verbatim, as it was written for round 3's brief. It is not edited
-  for round 5's.
-- The reused trials come with round 5c's tool lock, so both rounds are measured
-  with one ruler.
+- Kept verbatim. It is not edited for round 5's brief.
+
+**`short5`** is round 3's `short` made again from round 5's chain.
+
+- One generation by `claude-sonnet-5` at effort `high`, in `agents.md`'s inline
+  model, from the templates at `9086e0ff`, the brief and round 5's roots, with
+  no interview: the way `inline` was made.
+- Held to `short`'s budget: at most 40 lines, none over 88 characters. The
+  generator refuses a file over either bound rather than trimming it.
+- 40 lines and 2,291 bytes, sha256
+  `a028d5ee6e44b35329b580ea2b5ecda3c0823b4a1c30f22667dcadb652f220a8`, with its
+  generation record beside it.
+- Round 3's `short` keeps its own file and record, made from round 1's
+  templates.
+
+**The reused `none`** comes with round 5c's tool lock, so both rounds are
+measured with one ruler.
 
 Why `hand`: it is the only arm that separates the templates from having a file
 at all (the decision of 2026-09-12). Round 5 left it out because each of its
 arms is made from the templates at `9086e0ff`, and a person's file is not.
+
+Why `short5`: round 5c's templates files are 22 to 57 KB, and `hand` is 1.4 KB,
+so `hand` against them changes the content and the size at once. `short5` and
+`hand` sit within a line of each other, so `short5` minus `hand` compares the
+content at one length, as round 2's `short` minus `hand` did.
 
 ### 13d.3 The order
 
@@ -40,26 +61,30 @@ Two runs, in one run root of round 5d's own:
 
 | Run | Arms | Trials, in order |
 | --- | --- | --- |
-| 1 | `none`, `hand` | `none-1`, `hand-1`, `hand-2`, `none-2`, `none-3`, `hand-3` |
-| 2 | `hand`, from `hand-4` | `hand-4` to `hand-15` |
+| 1 | `none`, `hand`, `short5`, K = 3 | the rotated order, 9 trials |
+| 2 | `hand`, `short5`, K = 15, from `short5-4` | blocks 4 to 15, 24 trials |
 
-- The fresh `none` trials share blocks 1 to 3 with `hand`, so they see the same
-  days as the start of `hand`.
-- Drift after block 3 goes unchecked. The CLI is pinned (13d.5), which holds
-  the one source of drift known to have moved.
+- Run 1 starts `none-1`, `hand-1`, `short5-1`, and each block starts one arm
+  later.
+- `hand` and `short5` share every block, so `short5` minus `hand` is paired.
+- The fresh `none` trials share blocks 1 to 3 with them, so they see the same
+  days as the round's start.
+- Drift after block 3 goes unchecked for the contrasts with round 5c. The CLI
+  is pinned (13d.5), which holds the one source of drift known to have moved.
 
 Why the pin: the Claude CLI updated itself from 2.1.312 to 2.1.314 at 03:13 on
 2026-10-30, in the middle of round 5c. Round 5c's interleaving spreads that
-across its arms. Round 5d's `hand` runs days later and on its own, so nothing
-would spread a further update.
+across its arms. Round 5d runs days later, so nothing would spread a further
+update across the two rounds.
 
 ### 13d.4 Hypotheses
 
-Every contrast here is unpaired: `hand` and the 5c arms never ran in one block.
-An unpaired interval is wider than the paired one round 5 sized K on, so at
-K = 15 a row is harder to show as held.
+A contrast with a round 5c arm is unpaired: they never ran in one block. An
+unpaired interval is wider than the paired one round 5 sized K on, so at K = 15
+a row is harder to show as held.
 
-**The drift check.** Round 5c's `none` stands in for a `none` run beside `hand`.
+**The drift check.** Round 5c's `none` stands in for a `none` run beside the
+round's arms.
 
 | | |
 | --- | --- |
@@ -88,28 +113,47 @@ delivers.
 | Supported, per arm | every primary row is held or better |
 | Refuted, per arm | any primary row is worse |
 
+**H6, the templates' content at a person's length.** A 40-line file from the
+templates delivers at least what a person's file of the same length delivers.
+
+| | |
+| --- | --- |
+| Contrast | `short5` minus `hand`, paired within the block |
+| Primary rows | as round 5's H1 |
+| Supported | every primary row is held or better |
+| Refuted | any primary row is worse |
+
 **Secondary, no verdict:** every metric of [ch.
-8.6](../architecture/08-crosscutting-concepts.md) for `hand` against round 5c's
-`none`; the fresh `none` against round 5c's `none`; cost, turns, tokens and wall
-time; and the words `hand` puts in context on every turn, beside each 5c arm's.
+8.6](../architecture/08-crosscutting-concepts.md) for `hand` and `short5`
+against round 5c's `none`; `short5` against round 5c's `inline`, the same
+generation without the budget; the fresh `none` against round 5c's `none`;
+cost, turns, tokens and wall time; and the words each arm puts in context on
+every turn, beside each 5c arm's.
 
 ### 13d.5 Before the first trial
 
-The harness and the report gain, each with a self-test:
+Done with this registration:
 
-- K up to 15 for a run of `hand`, with round 5's spec check; today a run with no
-  round-5 arm is capped at K = 5 and its spec is not checked
+- `generate_arm.py` makes `short5` under its budget, and refuses a file over it
+- `short5` is generated and committed with its record
+- the harness knows `short5` as an arm
+
+The harness and the report still gain, each with a self-test:
+
+- K up to 15 for a run of `hand` and `short5`, with round 5's spec check; today
+  a run with no round-5 arm is capped at K = 5 and its spec is not checked
 - the Claude CLI pinned at 2.1.314 for the round, with auto-update off and the
   version recorded on every trial
 - round 5c's `none` trials read with their scores, judgings, security readings
   and tool lock, kept apart from round 5d's `none-1` to `none-3`, whose names
   they share
-- the unpaired contrasts of H4 and H5, and the drift check
+- the paired contrast of H6, the unpaired contrasts of H4 and H5, and the drift
+  check
 
 ### 13d.6 When it runs
 
-After round 5c's last trial is in, scored and judged. Its 18 trials take about
-12 hours at round 5c's pace and spend the plan's limit, so the run waits for
+After round 5c's last trial is in, scored and judged. Its 33 trials take about
+22 hours at round 5c's pace and spend the plan's limit, so the run waits for
 the owner's go.
 
 Nothing in this registration changes once a round-5d trial has run.
