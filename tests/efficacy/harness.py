@@ -80,6 +80,10 @@ K_CEILING = 5
 ROUND5_ARMS = ("inline", "reference", "skills")
 ROUND5_K = 15
 
+# Round 5d runs `hand` and `short` under round 5's design: its K, its spec
+# at its registered content, against round 5c's arms.
+ROUND5D_ARMS = ("hand", "short")
+
 # The release every generated arm is produced from, and the one the hybrid
 # arm's vendored templates are taken at, fixed before the first round: the
 # last 2.x, before the v3.0 split moves any template.
@@ -338,6 +342,23 @@ class TrialError(Exception):
     """A trial could not be set up or run as the protocol requires."""
 
 
+# The CLI a run pins with `--cli`: one file, run as it is. The launcher on
+# PATH updates itself in place, and an update in the middle of a round would
+# change every trial after it without a trace in the records.
+PINNED_CLI = {"path": None}
+
+
+def cli_version(executable):
+    """What the CLI says its version is, as `2.1.314 (Claude Code)`."""
+    proc = subprocess.run([executable, "--version"], capture_output=True,
+                          text=True, encoding="utf-8", timeout=60)
+    version = proc.stdout.strip()
+    if proc.returncode != 0 or not version:
+        raise TrialError("%s did not say its version: %s"
+                         % (executable, proc.stderr.strip()[:300]))
+    return version
+
+
 def agent_executable():
     """The generator CLI's absolute path.
 
@@ -345,8 +366,13 @@ def agent_executable():
     command is a `.CMD` shim and `CreateProcess` resolves no extension: the
     run dies with "the system cannot find the file specified" before a
     single trial starts. Resolving it here fails with a sentence naming the
-    problem instead.
+    problem instead. A run given `--cli` uses that file and no other.
     """
+    if PINNED_CLI["path"]:
+        if not os.path.isfile(PINNED_CLI["path"]):
+            raise TrialError("the pinned CLI %s is not a file, so no trial "
+                             "can run" % PINNED_CLI["path"])
+        return PINNED_CLI["path"]
     found = shutil.which("claude")
     if found is None:
         raise TrialError(
@@ -954,6 +980,10 @@ def agent_environment(home, environ=None, temp=None):
     env["USERPROFILE"] = home
     env["XDG_CONFIG_HOME"] = os.path.join(home, ".config")
     env.update(GIT_WITHOUT_CREDENTIALS)
+
+    # A trial never updates the CLI it runs under, so the version a run
+    # starts with is the one every trial records.
+    env["DISABLE_AUTOUPDATER"] = "1"
     if temp:
         env.update((name, temp) for name in TEMP_NAMES)
     return env
@@ -1551,10 +1581,11 @@ def spec_digest(path):
 def spec_problem(arms, spec_name, digest):
     """Why a run of these arms may not build from this spec, or None.
 
-    A run holding a round-5 arm builds from the spec round 5 registers, at
-    the content it registers; any other run is not checked here.
+    A run holding a round-5 or round-5d arm builds from the spec round 5
+    registers, at the content it registers; any other run is not checked
+    here.
     """
-    if not set(arms) & set(ROUND5_ARMS):
+    if not set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS):
         return None
     name, registered = ROUND5_SPEC
     if spec_name != name:
@@ -1752,6 +1783,7 @@ def run_agent(workspace, name, prompt, record, root, home, options):
         "command": argv,
         "model": options.model,
         "effort": options.effort,
+        "cli_version": cli_version(argv[0]),
         "budget_usd": options.budget,
         "timeout_s": options.timeout,
         "environment_removed": {"names": inherited_names(os.environ),
@@ -1838,7 +1870,8 @@ def order(arms, k):
 
 def k_ceiling(arms):
     """The most blocks a run of these arms may hold."""
-    return ROUND5_K if set(arms) & set(ROUND5_ARMS) else K_CEILING
+    return (ROUND5_K if set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS)
+            else K_CEILING)
 
 
 def pending_trials(arms, k, start=None):
@@ -2173,7 +2206,7 @@ def resume_checks():
     except TrialError:
         checks.append(("--from an unknown trial refuses", True))
     try:
-        pending_trials(arms, K_CEILING + 1)
+        pending_trials(["none", "hybrid"], K_CEILING + 1)
         checks.append(("a K past the escalation's ceiling refuses", False))
     except TrialError:
         checks.append(("a K past the escalation's ceiling refuses", True))
@@ -2206,6 +2239,12 @@ def resume_checks():
         refused = True
     checks.append(("a round-5 run takes K = %d and refuses more" % ROUND5_K,
                    held == 5 * ROUND5_K and refused))
+    try:
+        later = len(pending_trials(["hand", "short"], ROUND5_K))
+    except TrialError:
+        later = None
+    checks.append(("a round-5d run of hand and short takes K = %d too"
+                   % ROUND5_K, later == 2 * ROUND5_K))
 
     blocked = {"outcome": "blocked", "reason": "planted",
                "void": {"dir": os.path.join("void", "none-1-planted")}}
@@ -2403,8 +2442,17 @@ def dry_run_checks():
     os.makedirs(stand_in)
     claude = os.path.join(stand_in,
                           "claude.cmd" if os.name == "nt" else "claude")
+    # The stand-in answers each call with a new version, as a CLI updated
+    # between two trials would, so a version read once per run shows.
     with io.open(claude, "w", encoding="utf-8") as handle:
-        handle.write("@echo off\r\n" if os.name == "nt" else "#!/bin/sh\n")
+        handle.write(
+            '@echo off\r\nset n=0\r\n'
+            'if exist "%~dp0calls" set /p n=<"%~dp0calls"\r\n'
+            'set /a n=n+1\r\n>"%~dp0calls" echo %n%\r\n'
+            'echo 0.0.%n% (stand-in)\r\n' if os.name == "nt" else
+            '#!/bin/sh\ncalls="$(dirname "$0")/calls"\n'
+            'n=$(($(cat "$calls" 2>/dev/null || echo 0) + 1))\n'
+            'echo $n > "$calls"\necho "0.0.$n (stand-in)"\n')
     os.chmod(claude, 0o755)
     saved = {key: os.environ.get(key) for key in ("PATH", "HOME", "USERPROFILE")}
     os.environ["PATH"] = stand_in + os.pathsep + saved["PATH"]
@@ -2421,6 +2469,13 @@ def dry_run_checks():
             outcomes.append((task, code == 0
                              and os.path.isdir(os.path.join(dry, prepared)),
                              listing(root) == before))
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(["--root", root, "--arms", "none", "--k", "2", "--dry-run"])
+        recorded = []
+        for run in glob.glob(os.path.join(dry, "run-*.json")):
+            with io.open(run, encoding="utf-8") as handle:
+                recorded.extend(trial.get("cli_version")
+                                for trial in json.load(handle)["trials"])
     finally:
         for key, value in saved.items():
             if value is None:
@@ -2446,9 +2501,32 @@ def dry_run_checks():
         thin = handle.read()
     with io.open(SPEC, "rb") as handle:
         normal = handle.read()
+
+    # A pinned CLI is the one file every trial runs, and a missing one stops
+    # the run before a trial rather than falling back to PATH's.
+    try:
+        PINNED_CLI["path"] = claude
+        pinned = agent_executable() == claude
+        PINNED_CLI["path"] = os.path.join(scratch, "missing", "claude.exe")
+        try:
+            agent_executable()
+            missing_refused = False
+        except TrialError:
+            missing_refused = True
+    finally:
+        PINNED_CLI["path"] = None
     remove_tree(scratch)
     checks = [("the root holds a frozen build and its run record",
-               "none-1.tar" in before and "run-planted.json" in before)]
+               "none-1.tar" in before and "run-planted.json" in before),
+              ("every trial records the CLI's version, read as it starts",
+               len(recorded) == 2 and len(set(recorded)) == 2
+               and all(str(version).endswith("(stand-in)")
+                       for version in recorded)),
+              ("a pinned CLI is the file a trial runs", pinned),
+              ("a pinned CLI that is not there refuses the run",
+               missing_refused),
+              ("a trial's environment turns the CLI's updater off",
+               agent_environment(scratch).get("DISABLE_AUTOUPDATER") == "1")]
     for task, prepared, untouched in outcomes:
         checks.append(("a %s dry run prepares beside the root" % task,
                        prepared))
@@ -3426,6 +3504,8 @@ def spec_checks():
          spec_problem(round5, "thin", spec_digest(SPECS["thin"])) is not None),
         ("a run without a round-5 arm is not checked",
          spec_problem(["none", "hybrid"], "thin", "0" * 64) is None),
+        ("a round-5d run on other content is refused",
+         spec_problem(["hand", "short"], name, "0" * 64) is not None),
     ]
 
     # The spec edited after the run started: the next trial is refused before
@@ -3530,6 +3610,10 @@ def parse_args(argv):
                              "escalation's ceiling, or %d for a run holding "
                              "a round-5 arm)"
                              % (K_PRIMARY, K_CEILING, ROUND5_K))
+    parser.add_argument("--cli",
+                        help="the Claude CLI file every trial runs, in place "
+                             "of `claude` on PATH; its version is recorded "
+                             "on every trial")
     parser.add_argument("--model", default="claude-sonnet-5",
                         help="exact generator model id, recorded in the report")
     parser.add_argument("--effort", default="high")
@@ -3575,10 +3659,14 @@ def main(argv):
     try:
         templates_root()
         assert_outside_repository(options.root)
-    except TrialError as error:
+        PINNED_CLI["path"] = (os.path.abspath(options.cli) if options.cli
+                              else None)
+        options.cli_version = cli_version(agent_executable())
+    except (TrialError, OSError, subprocess.TimeoutExpired) as error:
         print("refused: %s" % error)
         lib.print_verdict(False, "0 trial(s), 0 done, 1 refused")
         return 1
+    print("CLI: %s, %s" % (agent_executable(), options.cli_version))
 
     # A dry run prepares its workspaces, home and record beside the root
     # rather than in it. A workspace is never reused, so one a dry run left
