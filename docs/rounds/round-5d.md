@@ -137,6 +137,8 @@ Done with this registration:
 - `generate_arm.py` makes `short` under its budget, and refuses a file over it
 - `short` is generated and committed with its record
 - the harness reads `short` from its new file
+- the report already computes H6's contrast, `short` minus `hand`, paired, as
+  it did for round 2
 
 The harness and the report still gain, each with a self-test:
 
@@ -147,8 +149,7 @@ The harness and the report still gain, each with a self-test:
 - round 5c's `none` trials read with their scores, judgings, security readings
   and tool lock, kept apart from round 5d's `none-1` to `none-3`, whose names
   they share
-- the paired contrast of H6, the unpaired contrasts of H4 and H5, and the drift
-  check
+- the unpaired contrasts of H4 and H5, and the drift check
 
 ### 13d.6 When it runs
 
