@@ -1,8 +1,10 @@
-"""Show a run's progress, one bar per arm, read from its run records.
+"""Show a run's progress, one bar per arm, read from its run records, and
+its scoring's, read from the scoring area.
 
-Read-only: it opens the run root's `run-*.json` and nothing else, so it can
-watch a live run from a console of its own without touching a trial. It
-redraws every `--every` seconds until stopped, or once with `--once`.
+Read-only: it opens the run root's `run-*.json` and lists the scoring area,
+so it can watch a live run or a live scoring from a console of its own
+without touching a trial. It redraws every `--every` seconds until stopped,
+or once with `--once`.
 """
 
 import argparse
@@ -19,8 +21,9 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
-from harness import (ROUND5_K, SCORABLE, VOIDING, arm_name,  # noqa: E402
-                     now, result_of)
+from harness import (ROUND5_K, SCORABLE, VOIDING, LiveRunError,  # noqa: E402
+                     TrialError, arm_name, claim_path, now, read_claim,
+                     result_of, running_as, scoring_area, split_name)
 from report import ROUND5_RUN  # noqa: E402
 
 WIDTH = 30
@@ -127,6 +130,87 @@ def render(root, arms=ROUND5_RUN, k=ROUND5_K, moment=None):
         summary += "  %.1f h in, about %.0f h left" % (
             elapsed.total_seconds() / 3600, left.total_seconds() / 3600)
     lines.append(summary)
+    return lines + scoring_lines(root, arms, k)
+
+
+def names_in(directory):
+    """The trial names a directory holds a `<name>.json` for, each with when
+    it was written."""
+    try:
+        entries = os.listdir(directory)
+    except OSError:
+        return {}
+    return {entry[:-len(".json")]:
+            os.path.getmtime(os.path.join(directory, entry))
+            for entry in entries if entry.endswith(".json")}
+
+
+def arm_of(name):
+    """A trial name's arm, or None where the name is not a trial's."""
+    try:
+        return split_name(name)[0]
+    except TrialError:
+        return None
+
+
+def live_scorer(claim):
+    """Whether the scorer a marker names is still running."""
+    try:
+        return running_as(claim["pid"], "score.py")
+    except LiveRunError:
+        return False
+
+
+def scoring_lines(root, arms, k, alive=live_scorer):
+    """The scoring's lines: one bar per arm of trials scored, with their
+    security readings, and the trial being scored; none before scoring
+    starts."""
+    area = scoring_area(root)
+    if not os.path.isdir(area):
+        return []
+    scores = names_in(os.path.join(area, "scores"))
+    readings = names_in(os.path.join(area, "security-scores"))
+    lines = ["", "Scored"]
+    total = len(arms) * k
+    done = 0
+    for name in arms:
+        scored = sum(1 for trial in scores if arm_of(trial) == name)
+        read = sum(1 for trial in readings if arm_of(trial) == name)
+        done += scored
+        line = "%-10s %s %2d/%d" % (name, bar(scored, k), scored, k)
+        if read:
+            line += "  %d read for security" % read
+        lines.append(line)
+    summary = "%-10s %s %2d/%d" % ("all", bar(done, total), done, total)
+
+    # The scorer marks the area while it runs. The trial it is on is the one
+    # whose working directory is there without a score yet; the pace is this
+    # scorer's own, from the scores it wrote since it started.
+    claim = read_claim(claim_path(area, "score.py"))
+    if claim and alive(claim):
+        work = os.path.join(area, "scoring")
+        try:
+            pending = [entry for entry in os.listdir(work)
+                       if entry not in scores]
+        except OSError:
+            pending = []
+        if pending:
+            current = max(pending, key=lambda entry: os.path.getmtime(
+                os.path.join(work, entry)))
+            summary += "  scoring %s" % current
+        try:
+            begun = datetime.datetime.fromisoformat(claim["started"])
+        except (KeyError, TypeError, ValueError):
+            begun = None
+        if begun is not None:
+            fresh = sum(1 for written in scores.values()
+                        if written >= begun.timestamp())
+            elapsed = time.time() - begun.timestamp()
+            summary += "  %.1f h in" % (elapsed / 3600)
+            if fresh:
+                left = elapsed / fresh * (total - done)
+                summary += ", about %.1f h left" % (left / 3600)
+    lines.extend(["", summary])
     return lines
 
 
@@ -194,7 +278,28 @@ def self_test():
             return ["raised %r" % error]
 
     lines, old = drawn(scratch), drawn(legacy)
+
+    # A scoring under way: two arms scored, one read for security, a trial
+    # in the scorer's working directory, and the scorer's marker.
+    area = scoring_area(scratch)
+    for folder, names in (("scores", ["none-1", "inline-1", "inline-2"]),
+                          ("security-scores", ["none-1"])):
+        os.makedirs(os.path.join(area, folder))
+        for name in names:
+            io.open(os.path.join(area, folder, "%s.json" % name), "w").close()
+    for name in ("inline-2", "hybrid-1"):
+        os.makedirs(os.path.join(area, "scoring", name))
+    started_at = datetime.datetime.now() - datetime.timedelta(hours=1)
+    with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "score.py",
+                   "started": started_at.isoformat(timespec="seconds")}, handle)
+    live = scoring_lines(scratch, ROUND5_RUN, ROUND5_K,
+                         alive=lambda claim: True)
+    stale = scoring_lines(scratch, ROUND5_RUN, ROUND5_K,
+                          alive=lambda claim: False)
+    shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
+    scored = {line.split()[0]: line for line in live[2:] if line.strip()}
     by_arm = {line.split()[0]: line for line in lines[2:] if line.strip()}
     old_by_arm = {line.split()[0]: line for line in old[2:] if line.strip()}
     checks = [
@@ -219,6 +324,20 @@ def self_test():
         ("a root without offsets draws its counts and reads no time",
          " 2/75 " in old_by_arm.get("all", "")
          and not any("min" in line or "h left" in line for line in old)),
+        ("before scoring starts, no scoring lines are drawn",
+         "Scored" not in lines and "Scored" not in old),
+        ("each arm's scored trials count toward its bar",
+         " 1/15" in scored.get("none", "") and " 2/15" in scored.get("inline", "")
+         and " 0/15" in scored.get("skills", "")),
+        ("an arm's security readings are counted beside it",
+         "1 read for security" in scored.get("none", "")
+         and "read for security" not in scored.get("inline", "")),
+        ("the trial being scored is named, not one already scored",
+         "scoring hybrid-1" in scored.get("all", "")),
+        ("the scoring's line counts every arm and estimates what is left",
+         " 3/75" in scored.get("all", "") and "h left" in scored.get("all", "")),
+        ("a scorer that has ended names no trial and no pace",
+         not any("scoring " in line or " h in" in line for line in stale)),
     ]
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
