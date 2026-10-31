@@ -161,6 +161,27 @@ def live_scorer(claim):
         return False
 
 
+def in_progress(work, written):
+    """The trial a tool is working on in `work`, or None.
+
+    A tool rebuilds a trial's directory there before it writes the trial's
+    result, so the trial in hand is the newest directory changed since its
+    result was last written; one never written counts as changed. A rescore
+    keeps the old result until the new one is ready, so the old result's
+    presence alone does not say the trial is done. Directories that are not
+    a trial's, such as the scorer's tools, are never the trial in hand.
+    """
+    try:
+        entries = [entry for entry in os.listdir(work) if arm_of(entry)]
+    except OSError:
+        return None
+    changed = [(os.path.getmtime(os.path.join(work, entry)), entry)
+               for entry in entries]
+    changed = [(when, entry) for when, entry in changed
+               if when > written.get(entry, 0)]
+    return max(changed)[1] if changed else None
+
+
 def scoring_lines(root, arms, k, alive=live_scorer):
     """The scoring's lines: one bar per arm of trials scored, with their
     security readings, and the trial being scored; none before scoring
@@ -183,21 +204,17 @@ def scoring_lines(root, arms, k, alive=live_scorer):
         lines.append(line)
     summary = "%-10s %s %2d/%d" % ("all", bar(done, total), done, total)
 
-    # The scorer marks the area while it runs. The trial it is on is the one
-    # whose working directory is there without a score yet; the pace is this
-    # scorer's own, from the scores it wrote since it started.
+    # The scorer marks the area while it runs, scores each trial and then
+    # reads the scored ones for security; the pace is this scorer's own, from
+    # the scores it wrote since it started.
     claim = read_claim(claim_path(area, "score.py"))
     if claim and alive(claim):
-        work = os.path.join(area, "scoring")
-        try:
-            pending = [entry for entry in os.listdir(work)
-                       if entry not in scores]
-        except OSError:
-            pending = []
-        if pending:
-            current = max(pending, key=lambda entry: os.path.getmtime(
-                os.path.join(work, entry)))
-            summary += "  scoring %s" % current
+        scoring = in_progress(os.path.join(area, "scoring"), scores)
+        reading = in_progress(os.path.join(area, "security"), readings)
+        if scoring:
+            summary += "  scoring %s" % scoring
+        elif reading:
+            summary += "  reading %s for security" % reading
         try:
             begun = datetime.datetime.fromisoformat(claim["started"])
         except (KeyError, TypeError, ValueError):
@@ -279,24 +296,47 @@ def self_test():
 
     lines, old = drawn(scratch), drawn(legacy)
 
-    # A scoring under way: two arms scored, one read for security, a trial
-    # in the scorer's working directory, and the scorer's marker.
+    # A scoring under way: two arms scored, one read for security, the
+    # scorer's tools, a scored trial's directory, the trial in hand, and the
+    # scorer's marker. Each file and directory is dated, newest last.
     area = scoring_area(scratch)
-    for folder, names in (("scores", ["none-1", "inline-1", "inline-2"]),
-                          ("security-scores", ["none-1"])):
-        os.makedirs(os.path.join(area, folder))
-        for name in names:
-            io.open(os.path.join(area, folder, "%s.json" % name), "w").close()
-    for name in ("inline-2", "hybrid-1"):
-        os.makedirs(os.path.join(area, "scoring", name))
+    clock = time.time() - 3600
+
+    def dated(path, minutes, folder=False):
+        if folder:
+            os.makedirs(path, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            io.open(path, "w").close()
+        os.utime(path, (clock + minutes * 60,) * 2)
+
+    for name, minutes in (("none-1", 5), ("inline-1", 10), ("inline-2", 30)):
+        dated(os.path.join(area, "scores", "%s.json" % name), minutes)
+    dated(os.path.join(area, "security-scores", "none-1.json"), 6)
+    dated(os.path.join(area, "scoring", "inline-2"), 20, folder=True)
+    dated(os.path.join(area, "scoring", "hybrid-1"), 40, folder=True)
+    dated(os.path.join(area, "scoring", "tools"), 50, folder=True)
     started_at = datetime.datetime.now() - datetime.timedelta(hours=1)
     with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
         json.dump({"pid": 4242, "tool": "score.py",
                    "started": started_at.isoformat(timespec="seconds")}, handle)
-    live = scoring_lines(scratch, ROUND5_RUN, ROUND5_K,
-                         alive=lambda claim: True)
-    stale = scoring_lines(scratch, ROUND5_RUN, ROUND5_K,
-                          alive=lambda claim: False)
+
+    def scoring_now(alive=True):
+        return scoring_lines(scratch, ROUND5_RUN, ROUND5_K,
+                             alive=lambda claim: alive)
+
+    live, stale = scoring_now(), scoring_now(alive=False)
+
+    # A rescore of none-1 rebuilds its directory while its old score stays.
+    dated(os.path.join(area, "scoring", "none-1"), 45, folder=True)
+    rescoring = scoring_now()
+
+    # Every trial in the scorer's directory scored; inline-1 in the security
+    # reader's directory with no reading yet.
+    for name, minutes in (("hybrid-1", 55), ("none-1", 56)):
+        dated(os.path.join(area, "scores", "%s.json" % name), minutes)
+    dated(os.path.join(area, "security", "inline-1"), 57, folder=True)
+    securing = scoring_now()
     shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
     scored = {line.split()[0]: line for line in live[2:] if line.strip()}
@@ -334,6 +374,13 @@ def self_test():
          and "read for security" not in scored.get("inline", "")),
         ("the trial being scored is named, not one already scored",
          "scoring hybrid-1" in scored.get("all", "")),
+        ("the scorer's tools are never named as the trial in hand",
+         not any("tools" in line for line in live + rescoring + securing)),
+        ("a trial being rescored is named while its old score stays",
+         any("scoring none-1" in line for line in rescoring)),
+        ("once every trial is scored, the one read for security is named",
+         any("reading inline-1 for security" in line for line in securing)
+         and not any("scoring " in line for line in securing)),
         ("the scoring's line counts every arm and estimates what is left",
          " 3/75" in scored.get("all", "") and "h left" in scored.get("all", "")),
         ("a scorer that has ended names no trial and no pace",
