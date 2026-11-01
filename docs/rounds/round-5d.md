@@ -12,6 +12,9 @@ Amended again on 2026-11-01, before any round-5d trial ran: the verdict rules of
 13d.7 replace round 5's one-strike reading, and the radar plots how far each row
 moved (13d.8).
 
+Amended a third time on 2026-11-01, before any round-5d trial ran: adherence
+leaves the primary rows, and the hidden tests take its place (13d.4).
+
 ## 13d. Round 5d: a person's file and a 40-line file, against round 5c
 
 ### 13d.1 What it takes from round 5c
@@ -97,7 +100,7 @@ and H5.
 | | |
 | --- | --- |
 | Contrast | `hand` minus round 5c's `none`, unpaired |
-| Primary rows | as round 5's H1 |
+| Primary rows | the round's primary rows, below |
 | Supported | some primary row is better, and none is worse |
 | Refuted | any primary row is worse |
 | Otherwise | inconclusive |
@@ -109,7 +112,7 @@ delivers.
 | | |
 | --- | --- |
 | Contrast | each templates arm of round 5c, minus `hand`, unpaired |
-| Primary rows | as round 5's H1 |
+| Primary rows | the round's primary rows, below |
 | Supported, per arm | every primary row is held or better |
 | Refuted, per arm | any primary row is worse |
 
@@ -119,9 +122,19 @@ templates delivers at least what a person's file of the same length delivers.
 | | |
 | --- | --- |
 | Contrast | `short` minus `hand`, paired within the block |
-| Primary rows | as round 5's H1 |
+| Primary rows | the round's primary rows, below |
 | Supported | every primary row is held or better |
 | Refuted | any primary row is worse |
+
+**The primary rows** are outcomes:
+
+- task success, the hidden suite's pass rate, on working builds;
+- the security and data-protection probe pass rates, on working builds;
+- the judge's security and data-protection rows.
+
+Adherence is not among them. It scores the templates' own checklist, which
+only the templates arms were given, so it shows whether the rules reached the
+code, not whether the code is better. It is printed without a verdict.
 
 H4 to H6 are read under the rules of 13d.7, and each verdict is printed with
 its confidence and the arm's profile.
@@ -202,7 +215,7 @@ failure once and lets only a difference past the margin decide.
 - **Better:** the whole interval lies past the margin, on the improving side.
 - **Held:** the whole interval lies inside the margin, as in ch. 8.1.2.
 - Otherwise the row is unsettled, and it decides nothing.
-- The margins are round 5's: ch. 8.1.2, round 5's adherence and app-code rows,
+- The margins are round 5's: ch. 8.1.2, round 5's app-code rows,
   and reliability's above.
 
 **Economy has margins, and two rows on the radar.**

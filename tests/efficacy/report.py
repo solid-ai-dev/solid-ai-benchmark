@@ -812,7 +812,7 @@ def collect(trials, metrics=METRICS):
     working_only = is_round5d(trials)
     table = {}
     for key, label, direction, accessor in metrics:
-        if key in superseded:
+        if key in superseded or (working_only and key == "adherence"):
             direction = NEUTRAL
         row = {}
         for name, trial in sorted(trials.items()):
@@ -2448,6 +2448,12 @@ SUITE_DIP = 0.05
 # that hybrid is the delivery floor, when every row is held or better.
 ROUND5_ROWS = ("adherence",) + PROBE_RATES + ("judge_security",
                                               "judge_data_protection")
+
+# Round 5d's primary rows are outcomes. Adherence scores the templates' own
+# checklist, which only the templates arms were given, so it shows whether
+# the rules arrived and decides nothing; the hidden tests decide instead.
+ROUND5D_ROWS = ("task_success",) + PROBE_RATES + ("judge_security",
+                                                  "judge_data_protection")
 ROUND5_HYPOTHESES = (
     ("H1, skills deliver what hybrid does", "skills-hybrid", "held"),
     ("H3, a reference alone delivers less", "reference-hybrid", "worse"),
@@ -2639,7 +2645,7 @@ def round5d_hypothesis(results, label, wanted):
     # At K = 15 reliability's interval is too wide to show it held, so it
     # can refute a hypothesis and never has to hold for one.
     rows = {key: row_reading(results.get(key, {}).get(label))
-            for key in ROUND5_ROWS}
+            for key in ROUND5D_ROWS}
     reliability = row_reading(results.get("reliability", {}).get(label))
     outcomes = set(rows.values())
     if "worse" in outcomes or reliability == "worse":
@@ -2669,7 +2675,7 @@ def leave_two_out(table, label, wanted, seed, margins, results=None,
     out, or with every two trials where the contrast is `unpaired`; fragile
     where any such reading differs; None where it was not read. A verdict
     `results` withholds stays withheld in every reading."""
-    keys = ROUND5_ROWS + ("reliability",)
+    keys = ROUND5D_ROWS + ("reliability",)
     crossed = (label,) if unpaired else ()
     withheld = {key: (results or {}).get(key, {}).get(label, {}).get(
         "verdict") for key in keys}
@@ -2812,6 +2818,13 @@ def round5d_checks(seed):
     checks.append(("round 5d reads task success on working builds only",
                    got == (None, 0.0, 0.0), got))
 
+    # Round 5d prints adherence without a verdict and decides on the hidden
+    # tests; round 5 still reads adherence.
+    got = (later["adherence"]["direction"], earlier["adherence"]["direction"],
+           "adherence" in ROUND5D_ROWS, "task_success" in ROUND5D_ROWS)
+    checks.append(("round 5d decides on outcomes, and adherence decides "
+                   "nothing", got == (NEUTRAL, UP, False, True), got))
+
     # A judge row's margin is 0.3 points.
     readings = [margined_verdict({"low": low, "high": high}, UP, 0.3)
                 for low, high in ((0.05, 0.25), (0.35, 0.6), (-0.6, -0.35),
@@ -2844,10 +2857,10 @@ def round5d_checks(seed):
 
     def planted_rows(verdicts, reliability):
         planted = {key: {"short-hand": {"verdict": verdict}}
-                   for key, verdict in zip(ROUND5_ROWS, verdicts)}
+                   for key, verdict in zip(ROUND5D_ROWS, verdicts)}
         planted["reliability"] = {"short-hand": {"verdict": reliability}}
         return planted
-    held = ["held"] * len(ROUND5_ROWS)
+    held = ["held"] * len(ROUND5D_ROWS)
     got = (round5d_hypothesis(planted_rows(held, "no improvement shown"),
                               "short-hand", "held")[0],
            round5d_hypothesis(planted_rows(held, "worse"), "short-hand",
@@ -2867,7 +2880,7 @@ def round5d_checks(seed):
         rows = {key: {"label": key, "direction": UP, "values": {
             "short": {index: 1.0 for index in range(1, 7)},
             "hand": {index: 1.0 for index in range(1, 7)}}}
-            for key in ROUND5_ROWS + ("reliability",)}
+            for key in ROUND5D_ROWS + ("reliability",)}
         rows["judge_security"]["values"]["short"].update(security)
         return rows
     got = (leave_two_out(table({}), "short-hand", "held", seed,
@@ -2879,9 +2892,9 @@ def round5d_checks(seed):
 
     # Security two points worse in every block refutes in every reading;
     # withheld by the cross-check, it stays withheld, so the two blocks
-    # losing adherence decide, and the reading is fragile.
+    # losing task success decide, and the reading is fragile.
     planted_table = table({index: -1.0 for index in range(1, 7)})
-    planted_table["adherence"]["values"]["short"].update({1: 0.0, 2: 0.0})
+    planted_table["task_success"]["values"]["short"].update({1: 0.0, 2: 0.0})
     shown = contrasts(planted_table, seed, (), ROUND5D_MARGINS, True,
                       only=("short-hand",))
     published = round5d_hypothesis(shown, "short-hand", "held")[0]
@@ -2898,7 +2911,7 @@ def round5d_checks(seed):
     # is compared with what the report printed, so the reading is fragile.
     printed = contrasts(table({}), seed, (), ROUND5D_MARGINS, True,
                         only=("short-hand",))
-    printed["adherence"]["short-hand"]["verdict"] = "no improvement shown"
+    printed["task_success"]["short-hand"]["verdict"] = "no improvement shown"
     got = (leave_two_out(table({}), "short-hand", "held", seed,
                          ROUND5D_MARGINS),
            leave_two_out(table({}), "short-hand", "held", seed,
@@ -2961,7 +2974,7 @@ def round5d_checks(seed):
     apart = {key: {"label": key, "direction": UP, "values": {
         "short": {index: 1.0 for index in range(1, 7)},
         "hand": {index: 1.0 for index in range(7, 13)}}}
-        for key in ROUND5_ROWS + ("reliability",)}
+        for key in ROUND5D_ROWS + ("reliability",)}
     printed_apart = contrasts(apart, seed, ("short-hand",), ROUND5D_MARGINS,
                               True, only=("short-hand",))
     got = (round5d_hypothesis(printed_apart, "short-hand", "held")[0],
