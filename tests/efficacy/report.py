@@ -19,6 +19,7 @@ import datetime
 import glob
 import io
 import json
+import math
 import os
 import random
 import re
@@ -28,6 +29,7 @@ import statistics
 import sys
 import tempfile
 import textwrap
+import xml.etree.ElementTree as ElementTree
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1353,12 +1355,17 @@ def write_report(root, trials, table, results, seed, escalation,
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
     k = max((index_of(name) for name in names), default=0)
-    any_scores = trials[names[0]]["scores"] if names else {}
     generation = generation_records()
 
+    stem = "%s-efficacy" % datetime.date.today().isoformat()
+    report, appendix, record = (stem + ".md", stem + "-appendix.md",
+                                stem + "-record.md")
     lines = []
-    lines.append("# Efficacy benchmark — %s"
+    lines.append("# Efficacy benchmark — %s, full record"
                  % datetime.date.today().isoformat())
+    lines.append("")
+    lines.append("Every number behind [the report](%s) and its [technical "
+                 "appendix](%s), trial by trial." % (report, appendix))
     lines.append("")
     lines.append("Does a generated context file improve the result? The "
                  "question, the verdict rule and the metric directions were "
@@ -1380,64 +1387,23 @@ def write_report(root, trials, table, results, seed, escalation,
     lost = lost_trials(root)
     scans = reaches(root)
     active = active_contrasts(trials)
+    os.makedirs(out_dir, exist_ok=True)
+    panels = radar_panels(table, results, active)
+    radar = {}
+    if panels:
+        for theme in RADAR_THEMES:
+            image = "%s-radar-%s.svg" % (stem, theme)
+            with io.open(os.path.join(out_dir, image), "w", encoding="utf-8",
+                         newline="\n") as handle:
+                handle.write(radar_svg(panels, theme))
+            radar[theme] = image
     lines.extend(executive_section(trials, table, results, escalation,
-                                   withdrawn or {}, lost, scans))
+                                   withdrawn or {}, lost, scans, radar))
     lines.append("")
 
-    lines.append("## What produced these numbers")
-    lines.append("")
-    lines.append("| | |")
-    lines.append("|---|---|")
-    lines.append("| Trials | %d, arms %s, K = %d |"
-                 % (len(names), ", ".join(arms), k))
-    lines.append("| Generator | `%s` |" % any_scores.get("model", "unknown"))
-    judgings = [t["judge"] for t in trials.values() if t["judge"]]
-    if judgings:
-        lines.append("| Judge | `%s` at effort `%s`, %s |"
-                     % (judgings[0].get("model"), judgings[0].get("effort"),
-                        judgings[0].get("cli")))
-        lines.append("| Blinding | condition markers stripped, order shuffled "
-                     "at seed %s |" % judgings[0].get("seed"))
-
-        # One judging of a tree is not reproducible, so a contrast is computed
-        # from the mean of several and the report says how many it had. A
-        # round that judged unevenly says so rather than averaging the fact
-        # away.
-        counts = sorted({len(readings(trial)) for trial in trials.values()
-                         if readings(trial)})
-        lines.append("| Judgings per trial | %s, meaned |"
-                     % (counts[0] if len(counts) == 1
-                        else "%d to %d, uneven" % (counts[0], counts[-1])))
-    else:
-        lines.append("| Judge | not run |")
-    # A trial's record names the benchmark tree that ran it under the key
-    # `templates_tree`, from when the benchmark lived in the templates
-    # repository; the templates an arm was made from are its generation
-    # record's, in the arm rows below.
-    for label, key in (("Benchmark revision, per trial", "templates_tree"),
-                       ("Hidden suite", "suite_revision")):
-        seen = sorted({str(trial["scores"].get(key) or "unknown")
-                       for trial in trials.values()}) or ["unknown"]
-        lines.append("| %s | %s |" % (label, ", ".join(
-            "`%s`" % value for value in seen)))
-    lines.append("| Bootstrap | %d resamples, %d%%, seed %s |"
-                 % (RESAMPLES, int(100 * CONFIDENCE), seed))
-    for arm in arms:
-        if arm not in GENERATED:
-            continue
-        record = generation.get(arm)
-        if record:
-            made_from = (record.get("commit") or record.get("ref")
-                         or "unknown")[:8]
-            lines.append("| Arm %s's file | generated %s from the templates "
-                         "at `%s`, %s lines, leak scan: %s |"
-                         % (arm, record.get("started_at", "unknown"),
-                            made_from, record.get("output_lines", "?"),
-                            "clean" if not (record.get("output_leak") or {})
-                            .get("hits") else "HITS"))
-        else:
-            lines.append("| Arm %s's file | no generation record beside it |"
-                         % arm)
+    lines.extend(["## What produced these numbers", ""])
+    lines.extend(provenance_lines(trials, names, arms, k, seed,
+                                  generation))
     lines.append("")
 
     if withdrawn:
@@ -1575,8 +1541,89 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.extend(cross_check_section(cross))
     lines.append("")
 
-    lines.append("## Verdict vector")
+    lines.extend(["## Verdict vector", ""])
+    lines.extend(vector_lines(results, active, escalation, k))
     lines.append("")
+
+    os.makedirs(out_dir, exist_ok=True)
+    width = markdown_width()
+    documents = {
+        record: lines,
+        appendix: appendix_lines(trials, table, results, escalation, k, seed,
+                                 generation, report, record),
+        report: plain_report_lines(root, trials, table, results, radar,
+                                   appendix, k)}
+    for document, text in documents.items():
+        with io.open(os.path.join(out_dir, document), "w", encoding="utf-8",
+                     newline="\n") as handle:
+            handle.write(report_text(text, width))
+    return os.path.join(out_dir, report)
+
+
+def provenance_lines(trials, names, arms, k, seed, generation):
+    """What produced a round's numbers, as a table: the trials, the models,
+    the blinding, the revisions, the bootstrap and each generated file."""
+    any_scores = trials[names[0]]["scores"] if names else {}
+    lines = []
+    lines.append("| | |")
+    lines.append("|---|---|")
+    lines.append("| Trials | %d, arms %s, K = %d |"
+                 % (len(names), ", ".join(arms), k))
+    lines.append("| Generator | `%s` |" % any_scores.get("model", "unknown"))
+    judgings = [t["judge"] for t in trials.values() if t["judge"]]
+    if judgings:
+        lines.append("| Judge | `%s` at effort `%s`, %s |"
+                     % (judgings[0].get("model"), judgings[0].get("effort"),
+                        judgings[0].get("cli")))
+        lines.append("| Blinding | condition markers stripped, order shuffled "
+                     "at seed %s |" % judgings[0].get("seed"))
+
+        # One judging of a tree is not reproducible, so a contrast is computed
+        # from the mean of several and the report says how many it had. A
+        # round that judged unevenly says so rather than averaging the fact
+        # away.
+        counts = sorted({len(readings(trial)) for trial in trials.values()
+                         if readings(trial)})
+        lines.append("| Judgings per trial | %s, meaned |"
+                     % (counts[0] if len(counts) == 1
+                        else "%d to %d, uneven" % (counts[0], counts[-1])))
+    else:
+        lines.append("| Judge | not run |")
+    # A trial's record names the benchmark tree that ran it under the key
+    # `templates_tree`, from when the benchmark lived in the templates
+    # repository; the templates an arm was made from are its generation
+    # record's, in the arm rows below.
+    for label, key in (("Benchmark revision, per trial", "templates_tree"),
+                       ("Hidden suite", "suite_revision")):
+        seen = sorted({str(trial["scores"].get(key) or "unknown")
+                       for trial in trials.values()}) or ["unknown"]
+        lines.append("| %s | %s |" % (label, ", ".join(
+            "`%s`" % value for value in seen)))
+    lines.append("| Bootstrap | %d resamples, %d%%, seed %s |"
+                 % (RESAMPLES, int(100 * CONFIDENCE), seed))
+    for arm in arms:
+        if arm not in GENERATED:
+            continue
+        record = generation.get(arm)
+        if record:
+            made_from = (record.get("commit") or record.get("ref")
+                         or "unknown")[:8]
+            lines.append("| Arm %s's file | generated %s from the templates "
+                         "at `%s`, %s lines, leak scan: %s |"
+                         % (arm, record.get("started_at", "unknown"),
+                            made_from, record.get("output_lines", "?"),
+                            "clean" if not (record.get("output_leak") or {})
+                            .get("hits") else "HITS"))
+        else:
+            lines.append("| Arm %s's file | no generation record beside it |"
+                         % arm)
+    return lines
+
+
+def vector_lines(results, active, escalation, k):
+    """The verdict vector: every metric's verdict in every contrast, the
+    first three blocks' beside them where the run escalated."""
+    lines = []
     lines.append("The whole vector, which the summary's scores digest "
                  "and never replace.")
     lines.append("")
@@ -1600,14 +1647,310 @@ def write_report(root, trials, table, results, seed, escalation,
                 cells.append(earlier[key][name]["verdict"])
             cells.append(results[key][name]["verdict"])
         lines.append("| %s | %s |" % (label, " | ".join(cells)))
-    lines.append("")
+    return lines
 
-    os.makedirs(out_dir, exist_ok=True)
-    target = os.path.join(out_dir, "%s-efficacy.md"
-                          % datetime.date.today().isoformat())
-    with io.open(target, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(report_text(lines, markdown_width()))
-    return target
+
+# Each approach as a reader knows it, in plain words.
+PLAIN_ARMS = {
+    "none": "no rules file: the AI gets only the specification",
+    "reference": "a short file that points the AI to the templates, which "
+                 "it reads itself",
+    "inline": "every rule of the templates copied into one file",
+    "hybrid": "the most important rules copied in, the rest pointed to",
+    "skills": "a root file plus one skill per kind of task",
+    "hand": "a short file a person wrote",
+    "short": "the templates' rules cut down to 40 lines",
+    "full": "the templates' full file, from an earlier round",
+}
+
+# Each radar axis in plain words, as a sentence names it.
+PLAIN_AXES = {
+    "Reliability": "reliability",
+    "Security": "security",
+    "Data protection": "data protection",
+    "Design": "design",
+    "Maintainability": "maintainability",
+    "Tests": "the tests it wrote",
+    "Economy": "cost and time",
+}
+
+# The measures that decide a verdict, in plain words.
+PLAIN_DECIDING = {
+    "judge_design": "the AI judge's design score",
+    "judge_readability": "the AI judge's readability score",
+    "judge_maintainability": "the AI judge's maintainability score",
+    "judge_security": "the AI judge's security score",
+    "judge_data_protection": "the AI judge's data-protection score",
+    "security_probe_pass_rate": "the security checks",
+    "data_protection_probe_pass_rate": "the data-protection checks",
+    "task_success": "the hidden tests",
+}
+
+# What the verdict looks at, said once above the approaches.
+PLAIN_VERDICT_RULE = (
+    "Each verdict looks only at the measures chosen before the run to decide "
+    "it: the hidden tests, the security and data-protection checks, and the "
+    "AI judge's scores for design, readability, maintainability, security "
+    "and data protection. One of them clearly worse makes the verdict "
+    "worse, whatever the rest gained.")
+
+# Round 5's questions, as a reader would ask them.
+PLAIN_QUESTIONS = {
+    "skills-hybrid": "Does the skills approach do as well as the hybrid "
+                     "file?",
+    "reference-hybrid": "Does a file that only points to the templates do "
+                        "worse than the hybrid file?",
+}
+PLAIN_ANSWERS = {"supported": "yes", "refuted": "no",
+                 "inconclusive": "not settled: the runs could not tell "
+                                 "either way"}
+
+
+def consistency_reading(trials):
+    """Round 5's consistency hypothesis: whether the skills arm's trials
+    agree with each other at least as much as the hybrid arm's."""
+    hybrid, _ = conventions_agreement(trials, "hybrid")
+    skills, _ = conventions_agreement(trials, "skills")
+    if hybrid is None or skills is None:
+        return "not computed"
+    if skills >= hybrid:
+        return "supported"
+    if hybrid - skills >= 0.15:
+        return "refuted"
+    return "inconclusive"
+
+
+def plain_arm_lines(trials, table, results, arm, length):
+    """One approach against the bare arm, in plain words: what it did
+    better, what it did worse with the numbers a reader would ask for, and
+    its verdict."""
+    name = "%s-%s" % (arm, BARE)
+    scores = cluster_scores(results, name)
+    verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
+    better = [PLAIN_AXES[axis] for axis, value in scores
+              if value is not None and value > 0]
+    # The runs that fell short are counted whatever the reliability axis
+    # reads, because one broken build among many can leave it neutral.
+    low = low_runs(table, arm)
+    errors, count = boot_failures(trials, arm)
+    shortfall = []
+    if low:
+        shortfall.append("%d of %d runs passed clearly fewer of the hidden "
+                         "tests" % (len(low), count))
+    if errors:
+        shortfall.append("%d %s because the app would not start after a "
+                         "clean install" % (len(errors), "of them" if low
+                                            else "runs"))
+    worse = []
+    noted = False
+    for axis, value in scores:
+        if value is None or value >= 0:
+            continue
+        if axis == "Reliability":
+            worse.append("reliability (%s)" % ", ".join(shortfall)
+                         if shortfall else "reliability")
+            noted = True
+        elif axis == "Economy":
+            mean = arm_mean(table, "cost_usd", arm)
+            bare = arm_mean(table, "cost_usd", BARE)
+            worse.append("cost and time (about $%.2f a run, against $%.2f "
+                         "with no rules file)" % (mean, bare)
+                         if mean is not None and bare is not None
+                         else "cost and time")
+        else:
+            worse.append(PLAIN_AXES[axis])
+    size = ("%s lines" % format(length, ",")) if length else "no file"
+    lines = ["### `%s`" % arm, "",
+             "%s (%s)." % (sentence_case(PLAIN_ARMS.get(
+                 arm, ARMS[arm]["label"])), size), ""]
+    lines.append("- Better than no rules file at: %s."
+                 % (spoken(better) if better else "nothing clearly"))
+    lines.append("- Worse at: %s." % ("; ".join(worse) if worse
+                                      else "nothing clearly"))
+    if shortfall and not noted:
+        lines.append("- Noted, though reliability was not clearly worse "
+                     "overall: %s." % ", ".join(shortfall))
+    lines.extend(["", plain_verdict(results, name, verdict)])
+    return lines
+
+
+def plain_verdict(results, name, verdict):
+    """A verdict in plain words, naming the deciding measures behind it."""
+    def moved(direction):
+        return [PLAIN_DECIDING[key] for key in ANSWERED
+                if results[key][name]["verdict"] == direction]
+    if verdict == "Worse":
+        return "**Verdict: worse**, because of %s." % spoken(moved("worse"))
+    if verdict == "Yes":
+        return ("**Verdict: better**, on %s, with none of the deciding "
+                "measures worse." % spoken(moved("better")))
+    if verdict == "No":
+        return ("**Verdict: no clear gain.** None of the deciding measures "
+                "moved clearly.")
+    if any(results[key][name]["verdict"] == CROSSING_VERDICT
+           for key in ANSWERED):
+        return ("**Verdict: not given.** Its runs come from an earlier round, "
+                "and comparing them with this round's would mix two rounds.")
+    return "**Verdict: not measured.** Too few runs were scored to compare it."
+
+
+def sentence_case(text):
+    """Text with its first letter capital and the rest as written."""
+    return text[:1].upper() + text[1:]
+
+
+# Said wherever an interval is shown from fewer blocks than can decide.
+DESCRIPTIVE_NOTE = ("**Every interval below is descriptive.** At K = %d no "
+                    "arrangement of paired differences reaches conventional "
+                    "significance, so no difference here is established.")
+
+
+def runs_per_arm(trials):
+    """How many scored runs each arm has, in the arms' declared order."""
+    counts = {}
+    for name in trials:
+        counts[arm_of(name)] = counts.get(arm_of(name), 0) + 1
+    return {arm: counts[arm] for arm in ARMS if arm in counts}
+
+
+def times(runs, arms):
+    """How many times the arms ran, as a sentence says it: 15 times, or
+    between 12 and 15 times where they differ."""
+    counts = sorted({runs[arm] for arm in arms if arm in runs})
+    if not counts:
+        return "no times"
+    if len(counts) == 1:
+        return "%d %s" % (counts[0], "time" if counts[0] == 1 else "times")
+    return "between %d and %d times" % (counts[0], counts[-1])
+
+
+def sureness_lines(trials, k):
+    """The qualifications the full record states, in plain words: a round
+    too small to decide anything, and a round not yet complete."""
+    lines = []
+    if k < FEWEST_DECIDING:
+        lines.append("- With only %d runs per approach, no difference here can "
+                     "be called established. Read every result as a hint."
+                     % k)
+    if is_round5(trials):
+        owed = owed_blocks(trials)
+        if owed:
+            lines.append("- The round is not complete: %s still miss a run, so "
+                         "every answer here is provisional."
+                         % blocks_named(owed))
+    return lines
+
+
+def plain_report_lines(root, trials, table, results, radar, appendix, k):
+    """The report a reader opens: the radars, each approach in plain words,
+    the round's questions answered, and how sure the answers are."""
+    names = ordered(trials)
+    active = active_contrasts(trials)
+    arms = by_cost(table, [pair[0] for pair in active if pair[1] == BARE])
+    judgings = [trial["judge"] for trial in trials.values() if trial["judge"]]
+    model = next((trial["scores"].get("model") for trial in trials.values()
+                  if trial["scores"].get("model")), "unknown")
+    runs = runs_per_arm(trials)
+    lines = ["# Efficacy benchmark — %s" % datetime.date.today().isoformat(),
+             "",
+             "We asked an AI to build the same small web app %s with each "
+             "approach to giving it our templates, and %s with no rules file "
+             "at all (`%s`). Each radar compares one approach with `%s`."
+             % (times(runs, [arm for arm in runs if arm != BARE]),
+                times(runs, [BARE]), BARE, BARE), ""]
+    if radar:
+        for theme, image in sorted(radar.items()):
+            lines.append("![Radar per approach](%s#gh-%s-mode-only)"
+                         % (image, theme))
+        lines.append("")
+    lines.extend(["How to read it: the dashed ring is `%s`. A point outside "
+                  "the ring means the approach did better on that axis, "
+                  "inside it means worse. Each axis groups several "
+                  "measurements; the appendix lists them." % BARE, "",
+                  "## Each approach", "", PLAIN_VERDICT_RULE, ""])
+    for arm in arms:
+        lines.extend(plain_arm_lines(trials, table, results, arm,
+                                     context_lines(arm)))
+        lines.append("")
+    if is_round5(trials):
+        lines.extend(["## The questions this round asked", ""])
+        for _, label, wanted in ROUND5_HYPOTHESES:
+            state, _ = hypothesis(results, label, wanted)
+            lines.append("- %s **%s.**" % (PLAIN_QUESTIONS[label],
+                                           sentence_case(PLAIN_ANSWERS[state])))
+        state = consistency_reading(trials)
+        lines.append("- Are the skills approach's runs at least as alike "
+                     "each other as the hybrid file's? **%s.**"
+                     % sentence_case(PLAIN_ANSWERS.get(state, state)))
+        lines.append("")
+    lines.extend(["## How sure we are", ""])
+    lines.extend(sureness_lines(trials, k))
+    lines.extend([
+        "- Each approach ran %s on one small web app, built by one AI "
+        "model, `%s`." % (times(runs, list(runs)), model),
+        "- Automatic tests and tools measured most of it. %s"
+        % ("Another AI, `%s`, read the code and scored its design, security "
+           "and tests." % judgings[0].get("model") if judgings
+           else "No AI read the code this round."),
+        "- A difference counts only when it shows clearly across the runs. "
+        "Small or mixed differences count as none."])
+    lines.extend(rerun_lines(lost_trials(root)))
+    lines.extend([
+        "- %d runs were scored in all." % len(names), "",
+        "Every number behind this page is in the [technical appendix](%s)."
+        % appendix])
+    return lines
+
+
+def rerun_lines(lost):
+    """What happened to the runs that were stopped, in plain words: those run
+    again, and those still missing."""
+    redone = sum(1 for entry in lost if entry.get("rerun"))
+    pending = len(lost) - redone
+    if not lost:
+        return ["- No run had to be run again."]
+    lines = []
+    if redone:
+        lines.append("- %d %s stopped part-way, for example by a usage "
+                     "limit, and run again from the start. Only complete "
+                     "runs count." % (redone, "run was" if redone == 1
+                                      else "runs were"))
+    if pending:
+        lines.append("- %d stopped %s not been run again yet, so %s missing."
+                     % (pending, "runs have" if pending != 1 else "run has",
+                        "they are" if pending != 1 else "it is"))
+    return lines
+
+
+def appendix_lines(trials, table, results, escalation, k, seed, generation,
+                   report, record):
+    """The technical appendix: what produced the results, the radar's axes
+    row by row, and the verdict vector."""
+    names = ordered(trials)
+    arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
+    active = active_contrasts(trials)
+    against = [pair for pair in active if pair[1] == BARE]
+    lines = ["# Efficacy benchmark — %s, technical appendix"
+             % datetime.date.today().isoformat(), "",
+             "The numbers behind [the report](%s). Everything else, trial by "
+             "trial, is in [the full record](%s)." % (report, record), ""]
+    if k < FEWEST_DECIDING:
+        lines.extend([DESCRIPTIVE_NOTE % k, ""])
+    lines.extend(["## What produced the results", ""])
+    lines.extend(provenance_lines(trials, names, arms, k, seed, generation))
+    lines.extend(["", "## The radar's axes, row by row", "",
+                  "Each table is one axis of the radar: every measurement it "
+                  "groups, each approach's mean, and each approach against "
+                  "`%s`. %s" % (BARE, CONTRAST_LEGEND), "", DEGENERATE_NOTE,
+                  ""])
+    for axis, keys in RADAR_AXES:
+        lines.extend(["### %s" % axis, ""])
+        lines.extend(contrast_table(table, results, keys, active=against,
+                                    blocks=k, legend=False))
+        lines.append("")
+    lines.extend(["## The verdict vector", ""])
+    lines.extend(vector_lines(results, active, escalation, k))
+    return lines
 
 
 def report_text(lines, width):
@@ -1869,16 +2212,11 @@ def round5_section(trials, table, results):
         detail = ", ".join("%s %s" % (SHORT.get(key, key), outcome)
                            for key, outcome in rows.items())
         lines.append("- %s, %s: %s (%s)" % (name, label, state, detail))
-    hybrid, _ = conventions_agreement(trials, "hybrid")
-    skills, _ = conventions_agreement(trials, "skills")
-    if hybrid is None or skills is None:
-        h2 = "not computed"
-    elif skills >= hybrid:
-        h2 = "skills agrees at least as much as hybrid"
-    elif hybrid - skills >= 0.15:
-        h2 = "refuted: skills agrees less by 0.15 or more"
-    else:
-        h2 = "skills agrees less, by under 0.15"
+    h2 = {"not computed": "not computed",
+          "supported": "skills agrees at least as much as hybrid",
+          "refuted": "refuted: skills agrees less by 0.15 or more",
+          "inconclusive": "skills agrees less, by under 0.15"}[
+              consistency_reading(trials)]
     lines.append("- H2, consistency: %s" % h2)
     return lines
 
@@ -2313,17 +2651,216 @@ def why_line(trials, results, arm, name, answered, length):
     return "**`%s`, %s.** %s" % (arm, answered, text)
 
 
+# The radar's axes: the verdict vector's rows, clustered by what a reader
+# asks of a build, in a fixed order. A radar's shape depends on the order of
+# its axes, so the order is the code's and never the data's. Per-KLOC rows
+# stand for their totals, so one measure counts once.
+RADAR_AXES = (
+    ("Reliability", ("task_success", "install")),
+    ("Security", ("judge_security", "security_probe_pass_rate",
+                  "csrf_refused", "xss_inert", "bandit_per_kloc")),
+    ("Data protection", ("judge_data_protection",
+                         "data_protection_probe_pass_rate")),
+    ("Design", ("judge_design", "judge_srp", "judge_ocp", "judge_lsp",
+                "judge_isp", "judge_dip", "judge_errors", "judge_naming",
+                "patterns_missed", "layering_violations", "mutual_imports")),
+    ("Maintainability", ("judge_maintainability", "judge_readability",
+                         "mypy_per_kloc", "ruff_per_kloc", "complexity_max",
+                         "complexity_over_15_per_kloc", "mean_cc",
+                         "unused_per_kloc")),
+    ("Tests", ("judge_tests", "coverage")),
+    ("Economy", ("cost_usd", "output_tokens", "turns", "wall_seconds")),
+)
+
+# The verdicts an axis counts: a withheld or uncomputed one is no evidence
+# either way, so it is left out of the share rather than read as no change.
+COUNTED_VERDICTS = ("better", "worse", "held", "no improvement shown")
+
+# The radar's two themes, from the reference palette: GitHub shows the one
+# matching the reader's theme, by the suffix on each image's address.
+RADAR_THEMES = {
+    "light": {"surface": "#fcfcfb", "text": "#0b0b0b", "secondary": "#52514e",
+              "muted": "#898781", "grid": "#c8c7c0", "series": "#2a78d6"},
+    "dark": {"surface": "#1a1a19", "text": "#f0efec", "secondary": "#c3c2b7",
+             "muted": "#898781", "grid": "#55544f", "series": "#3987e5"},
+}
+
+
+def cluster_scores(results, name):
+    """Per radar axis, in order: the share of its rows better than the bare
+    arm minus the share worse, from -1 to +1, or None where no row has a
+    verdict."""
+    scores = []
+    for axis, keys in RADAR_AXES:
+        verdicts = [results[key][name]["verdict"] for key in keys
+                    if name in results.get(key, {})]
+        counted = [verdict for verdict in verdicts
+                   if verdict in COUNTED_VERDICTS]
+        scores.append((axis, (counted.count("better") - counted.count("worse"))
+                       / len(counted) if counted else None))
+    return scores
+
+
+def radar_svg(panels, theme):
+    """One SVG of small radars, one per arm, two to a row: `panels` holds
+    (arm, title, scores) with scores as `cluster_scores` gives them."""
+    colors = RADAR_THEMES[theme]
+    width, size, radius = 1000, 370, 108
+    rows = (len(panels) + 1) // 2
+    top = 50
+    height = top + rows * size
+    count = len(RADAR_AXES)
+
+    def point(cx, cy, value, index):
+        # -1 sits at the centre, 0 (the bare arm) halfway, +1 on the rim.
+        angle = -math.pi / 2 + 2 * math.pi * index / count
+        reach = radius * (value + 1) / 2
+        return cx + reach * math.cos(angle), cy + reach * math.sin(angle)
+
+    out = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
+           'viewBox="0 0 %d %d" font-family="-apple-system, Segoe UI, '
+           'Helvetica, Arial, sans-serif">' % (width, height, width, height),
+           '<rect width="100%%" height="100%%" fill="%s"/>' % colors["surface"]]
+
+    # One key for every panel: the dashed ring is the bare arm.
+    out.append('<line x1="%d" y1="25" x2="%d" y2="25" stroke="%s" '
+               'stroke-width="1.5" stroke-dasharray="4 3"/>'
+               % (width / 2 - 210, width / 2 - 180, colors["secondary"]))
+    out.append('<text x="%d" y="25" dominant-baseline="middle" font-size="14" '
+               'fill="%s">%s, the ring at 0</text>'
+               % (width / 2 - 172, colors["secondary"], BARE))
+    out.append('<line x1="%d" y1="25" x2="%d" y2="25" stroke="%s" '
+               'stroke-width="2"/>' % (width / 2 + 10, width / 2 + 40,
+                                       colors["series"]))
+    out.append('<text x="%d" y="25" dominant-baseline="middle" font-size="14" '
+               'fill="%s">the arm; outside the ring is better</text>'
+               % (width / 2 + 48, colors["secondary"]))
+    for place, (arm, title, scores) in enumerate(panels):
+        cx = (place % 2) * (width / 2) + width / 4
+        cy = top + (place // 2) * size + size / 2 + 12
+        out.append('<text x="%.1f" y="%.1f" text-anchor="middle" '
+                   'font-size="18" font-weight="600" fill="%s">%s</text>'
+                   % (cx, cy - radius - 50, colors["text"], escape(title)))
+        for ring in (-0.5, 0.5, 1.0):
+            ring_points = [point(cx, cy, ring, index) for index in range(count)]
+            out.append('<polygon points="%s" fill="none" stroke="%s" '
+                       'stroke-width="1"/>' % (" ".join(
+                           "%.1f,%.1f" % xy for xy in ring_points),
+                           colors["grid"]))
+        for index, (axis, _) in enumerate(scores):
+            x, y = point(cx, cy, 1.0, index)
+            out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" '
+                       'stroke="%s" stroke-width="1"/>'
+                       % (cx, cy, x, y, colors["grid"]))
+            lx, ly = point(cx, cy, 1.32, index)
+            anchor = ("middle" if abs(lx - cx) < 8
+                      else "start" if lx > cx else "end")
+            out.append('<text x="%.1f" y="%.1f" text-anchor="%s" '
+                       'dominant-baseline="middle" font-size="15" '
+                       'fill="%s">%s</text>'
+                       % (lx, ly, anchor, colors["secondary"], escape(axis)))
+
+        # The bare arm is the ring at zero, dashed, so outside it is better.
+        zero = [point(cx, cy, 0.0, index) for index in range(count)]
+        out.append('<polygon points="%s" fill="none" stroke="%s" '
+                   'stroke-width="1.5" stroke-dasharray="4 3"/>'
+                   % (" ".join("%.1f,%.1f" % xy for xy in zero),
+                      colors["secondary"]))
+        shape = [point(cx, cy, value if value is not None else 0.0, index)
+                 for index, (_, value) in enumerate(scores)]
+        out.append('<polygon points="%s" fill="%s" fill-opacity="0.22" '
+                   'stroke="%s" stroke-width="2" stroke-linejoin="round"/>'
+                   % (" ".join("%.1f,%.1f" % xy for xy in shape),
+                      colors["series"], colors["series"]))
+        for (x, y), (_, value) in zip(shape, scores):
+            out.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" '
+                       'stroke="%s" stroke-width="2"/>'
+                       % (x, y, colors["surface"] if value is None
+                          else colors["series"], colors["series"]))
+    out.append("</svg>")
+    return "\n".join(out) + "\n"
+
+
+def radar_table(results, arms):
+    """The radar's scores as a table, one row per axis and a column per arm,
+    with the rows each axis clusters: the radar's text view."""
+    labels = {key: label for key, label, _, _ in METRICS}
+    scored = {arm: dict(cluster_scores(results, "%s-%s" % (arm, BARE)))
+              for arm in arms}
+    lines = ["| Axis | %s | Rows |" % " | ".join("`%s`" % arm for arm in arms),
+             "| --- | %s | --- |" % " | ".join("---" for _ in arms)]
+    for axis, keys in RADAR_AXES:
+        lines.append("| %s | %s | %s |" % (
+            axis, " | ".join(axis_score(scored[arm][axis]) for arm in arms),
+            "; ".join(labels.get(key, key) for key in keys)))
+    return lines
+
+
+def axis_score(value):
+    """An axis score as the radar's table prints it: signed, two places,
+    zero unsigned, a dash where the axis has no verdict."""
+    if value is None:
+        return "—"
+    return "0.00" if value == 0 else "%+.2f" % value
+
+
+def escape(text):
+    """Text as an SVG element holds it."""
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def by_cost(table, arms):
+    """The arms from the cheapest to the dearest, any without a cost last."""
+    def cost(arm):
+        mean = arm_mean(table, "cost_usd", arm)
+        return (mean is None, mean or 0.0)
+    return sorted(arms, key=cost)
+
+
+# How to read the radar, under it.
+RADAR_READING = (
+    "One radar per arm, from the cheapest to the dearest. Each axis is a "
+    "cluster of the verdict vector's rows: the share of them better than "
+    "`%s` minus the share worse, from -1 at the centre to +1 at the rim. The "
+    "dashed ring is `%s`, so outside it is better. A hollow point is an axis "
+    "with no verdict. The rows behind each axis, and every number, are in "
+    "the sections below." % (BARE, BARE))
+
+
+def radar_panels(table, results, active):
+    """The radar's panels: each file arm against the bare arm, from the
+    cheapest to the dearest, with its verdict in the title."""
+    arms = [pair[0] for pair in active if pair[1] == BARE]
+    panels = []
+    for arm in by_cost(table, arms):
+        name = "%s-%s" % (arm, BARE)
+        verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
+        panels.append((arm, "%s — %s" % (arm, verdict),
+                       cluster_scores(results, name)))
+    return panels
+
+
 def executive_section(trials, table, results, escalation=None,
-                      withdrawn=None, lost=(), scans=()):
-    """The report's first section: one column per context file against no
-    file, each cell read off a verdict or a mean below it, one line per
-    file on why it scored so, the reading, the contrasts between files
-    scored, and the caveats.
+                      withdrawn=None, lost=(), scans=(), radar=None):
+    """The report's first sections: the summary, a radar per file arm read
+    against no file where `radar` names its two images, light and dark;
+    then the arms against no file: the finding table, one line per file on
+    why it scored so, the reading, the contrasts between files scored, and
+    the caveats.
 
     Like the score, it digests the verdict vector and decides nothing.
     """
     active = active_contrasts(trials)
-    lines = finding_lines(trials, table, results, active)
+    lines = ["## Executive summary", ""]
+    if radar:
+        for theme, image in sorted(radar.items()):
+            lines.append("![Radar per arm](%s#gh-%s-mode-only)"
+                         % (image, theme))
+        lines.extend(["", RADAR_READING, ""])
+    else:
+        lines.extend(["No radar was drawn for this run.", ""])
+    lines.extend(finding_lines(trials, table, results, active))
     scored = between_files(results, active)
     if scored:
         lines.extend(["", scored])
@@ -2338,7 +2875,7 @@ def finding_lines(trials, table, results, active):
     names = ["%s-%s" % (treatment, baseline)
              for treatment, baseline in active if baseline == BARE]
     if not names:
-        return ["## Executive summary", "",
+        return ["## Arms against `%s`" % BARE, "",
                 "No file arm has a trial to read against `%s`, which has "
                 "none in this run yet." % BARE]
     arms = [name.split("-")[0] for name in names]
@@ -2349,16 +2886,15 @@ def finding_lines(trials, table, results, active):
 
     # One row per arm, the bare arm first as the line every other is read
     # against, then the files from the cheapest to the dearest.
-    def cost(arm):
-        mean = arm_mean(table, "cost_usd", arm)
-        return (mean is None, mean or 0.0)
-
-    ranked = sorted(arms, key=cost)
-    lines = ["## Executive summary", "",
-             "| Arm | File | Verdict vs `%s` | %s |"
-             % (BARE, " | ".join(heading for heading, _, _ in FINDING_COLUMNS)),
-             "| --- | --- | --- | %s |"
-             % " | ".join("---" for _ in FINDING_COLUMNS)]
+    ranked = by_cost(table, arms)
+    lines = ["## Arms against `%s`" % BARE, ""]
+    lines.extend(radar_table(results, ranked))
+    lines.extend(["",
+                  "| Arm | File | Verdict vs `%s` | %s |"
+                  % (BARE, " | ".join(heading
+                                      for heading, _, _ in FINDING_COLUMNS)),
+                  "| --- | --- | --- | %s |"
+                  % " | ".join("---" for _ in FINDING_COLUMNS)])
     for arm in [BARE] + ranked:
         lines.append("| %s |" % " | ".join(
             finding_row(table, results, arm, answers.get(arm),
@@ -2682,7 +3218,7 @@ CONTRAST_LEGEND = ("Each cell: the mean paired difference, its 95 % interval "
 
 
 def contrast_table(table, results, keys, verdicts=True, active=None,
-                   blocks=None):
+                   blocks=None, legend=True):
     """One table of contrasts: every metric, each arm's mean, and every
     comparison the run holds. `blocks` is the round's block count, against
     which a contrast over fewer pairs names its count."""
@@ -2715,14 +3251,18 @@ def contrast_table(table, results, keys, verdicts=True, active=None,
                         margins[0] if margins else "—",
                         " | ".join(number(means[arm]) for arm in arms),
                         " | ".join(cells)))
-    if verdicts:
+    if verdicts and legend:
         lines.extend(["", CONTRAST_LEGEND])
-    if degenerate:
+    if degenerate and legend:
         lines.append("")
-        lines.append("‡ the interval was not computed by BCa: the paired "
-                     "differences were identical, or the bias correction was "
-                     "undefined. `aggregate.json` carries the method per row.")
+        lines.append(DEGENERATE_NOTE)
     return lines
+
+
+# The note under a table holding an interval BCa could not compute.
+DEGENERATE_NOTE = ("‡ the interval was not computed by BCa: the paired "
+                   "differences were identical, or the bias correction was "
+                   "undefined. `aggregate.json` carries the method per row.")
 
 
 def parse_args(argv):
@@ -3196,7 +3736,8 @@ def escalation_checks(seed):
     os.makedirs(scratch)
     target = write_report(scratch, trials, table, results, seed,
                           escalation, out_dir=scratch)
-    with io.open(target, encoding="utf-8") as handle:
+    with io.open(target[:-len(".md")] + "-record.md",
+                 encoding="utf-8") as handle:
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
     checks.append(("the report carries the escalation section",
@@ -3256,7 +3797,8 @@ def posthoc_checks(seed):
     target = write_report(scratch, trials, table, results, seed,
                           assess_escalation(trials, results, seed),
                           out_dir=scratch, posthoc=posthoc)
-    with io.open(target, encoding="utf-8") as handle:
+    with io.open(target[:-len(".md")] + "-record.md",
+                 encoding="utf-8") as handle:
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
 
@@ -3308,7 +3850,8 @@ def rendered(trials, seed, withdrawn):
     target = write_report(scratch, trials, table, results, seed,
                           assess_escalation(trials, results, seed, withdrawn),
                           out_dir=scratch, withdrawn=withdrawn)
-    with io.open(target, encoding="utf-8") as handle:
+    with io.open(target[:-len(".md")] + "-record.md",
+                 encoding="utf-8") as handle:
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
     return before, table, text
@@ -3419,7 +3962,7 @@ def prose_of(text, heading):
 
 def finding_of(text):
     """The report's opening section with its wrapping undone."""
-    return prose_of(text, "## Executive summary")
+    return prose_of(text, "## Arms against `none`")
 
 
 def executive_checks(seed):
@@ -3479,6 +4022,60 @@ def executive_checks(seed):
     checks.append(("a contrast over fewer pairs than blocks names its count",
                    "(14 pairs)" in short and "pairs" not in whole,
                    (short, whole)))
+
+    # An axis counts its rows better minus worse over the rows with a
+    # verdict; a withheld or uncomputed row is left out, and an axis with
+    # none reads None.
+    planted = {key: {"skills-none": {"verdict": "no improvement shown"}}
+               for _, keys in RADAR_AXES for key in keys}
+    planted["task_success"]["skills-none"] = {"verdict": "worse"}
+    planted["install"]["skills-none"] = {"verdict": "not computed"}
+    planted["judge_tests"]["skills-none"] = {"verdict": "better"}
+    planted["coverage"]["skills-none"] = {"verdict": "better"}
+    for key in ("judge_data_protection", "data_protection_probe_pass_rate"):
+        planted[key]["skills-none"] = {"verdict": CROSSING_VERDICT}
+    got = dict(cluster_scores(planted, "skills-none"))
+    checks.append(("an axis is better minus worse over its rows with a "
+                   "verdict, None without one",
+                   got["Reliability"] == -1.0 and got["Tests"] == 1.0
+                   and got["Data protection"] is None
+                   and got["Security"] == 0.0
+                   and [axis for axis, _ in cluster_scores(planted,
+                                                           "skills-none")]
+                   == [axis for axis, _ in RADAR_AXES], got))
+
+    # The radar is well-formed SVG in both themes, a titled panel per arm,
+    # its axes in their fixed order, and the bare arm's ring in each.
+    panels = [("reference", "reference — Worse",
+               cluster_scores(planted, "skills-none")),
+              ("skills", "skills — Yes", cluster_scores(planted,
+                                                        "skills-none"))]
+    drawn = {theme: radar_svg(panels, theme) for theme in RADAR_THEMES}
+    try:
+        trees = {theme: ElementTree.fromstring(svg)
+                 for theme, svg in drawn.items()}
+    except ElementTree.ParseError as error:
+        trees = {"error": str(error)}
+    space = "{http://www.w3.org/2000/svg}"
+    shaped = all(
+        [text.text for text in tree.iter(space + "text")
+         if text.text in ("reference — Worse", "skills — Yes")]
+        == ["reference — Worse", "skills — Yes"]
+        and sum(1 for polygon in tree.iter(space + "polygon")
+                if polygon.get("stroke-dasharray")) == len(panels)
+        for tree in trees.values()) and "error" not in trees
+    labels = [text.text for text in trees.get("light", ElementTree.Element(
+        "svg")).iter(space + "text")]
+    order = [label for label in labels if label in dict(RADAR_AXES)]
+    checks.append(("the radar draws a panel per arm, with the bare ring, in "
+                   "both themes",
+                   shaped and drawn["light"] != drawn["dark"]
+                   and order[:len(RADAR_AXES)]
+                   == [axis for axis, _ in RADAR_AXES], sorted(trees)))
+    checks.append(("each axis score prints signed, zero unsigned, none as a "
+                   "dash",
+                   [axis_score(value) for value in (0.5, -1.0, 0.0, None)]
+                   == ["+0.50", "-1.00", "0.00", "—"], None))
 
     # Each verdict reads as its mark, once spelled out in the legend.
     marks = [verdict_mark({"verdict": verdict, "non_inferior": inferior})
@@ -3575,22 +4172,27 @@ def executive_checks(seed):
         ("the finding table opens the report",
          0 <= text.find("## Executive summary")
          < text.find("## What produced"), None),
+        ("the summary is the radar, one image per theme",
+         all("-radar-%s.svg#gh-%s-mode-only)" % (theme, theme) in text
+             for theme in RADAR_THEMES)
+         and text.find("## Executive summary") < text.find("![Radar per arm]")
+         < text.find("## Arms against `none`"), None),
         ("it has a row per arm, the bare arm first, with the files' lines",
          0 < text.find("| `none` | no file | — |")
-         < text.find("| `full` | ") and context_lines("full")
-         > context_lines("hand"), prose_of(text, "## Executive summary")),
+         < text.find(row_start("full", "Not measured")) and context_lines("full")
+         > context_lines("hand"), prose_of(text, "## Arms against `none`")),
         ("an unmeasured run answers Not measured in every cell",
          row_start("full", "Not measured") + " not measured |" in text
          and row_start("hand", "Not measured") + " not measured |" in text
          and "Together: not measured. K = %d," % K_PRIMARY in text,
-         prose_of(text, "## Executive summary")),
+         prose_of(text, "## Arms against `none`")),
         ("each file's why-line sits between the table and the reading",
          "▲ better and ▼ worse" in text
          and 0 < text.find("▲ better and ▼ worse")
          < text.find("**`full`, Not measured.** Every win is "
                      "something a tool counts.")
          < text.find("**`hand`, Not measured.**")
-         < text.find("Together:"), prose_of(text, "## Executive summary")),
+         < text.find("Together:"), prose_of(text, "## Arms against `none`")),
     ])
 
     # A round 2 run: five arms, `full` and `hand` reused from round 1, the
@@ -3605,7 +4207,7 @@ def executive_checks(seed):
         "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
         for arm, score in design.items() for index in range(1, K_PRIMARY + 1)}
     _, _, text = rendered(trials, seed, {})
-    finding = prose_of(text, "## Executive summary")
+    finding = prose_of(text, "## Arms against `none`")
 
     def row_start(arm, verdict):
         return "| `%s` | %s lines | %s |" % (
@@ -3764,6 +4366,85 @@ def cross_checks(seed):
     ]
 
 
+def documents_checks(seed):
+    """A run writes three documents: a plain report with the radars and a
+    verdict per approach naming its deciding measures, an appendix of three
+    sections, and the full record; each holds the declared width."""
+    trials = planted_change_run("any-revision")
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    results["task_success"]["full-none"]["verdict"] = "worse"
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-documents-self-test")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+    target = write_report(scratch, trials, table, results, seed,
+                          assess_escalation(trials, results, seed),
+                          out_dir=scratch)
+    stem = target[:-len(".md")]
+    texts = {}
+    for suffix in ("", "-appendix", "-record"):
+        with io.open(stem + suffix + ".md", encoding="utf-8") as handle:
+            texts[suffix] = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    report, appendix = texts[""], texts["-appendix"]
+    width = markdown_width()
+    over = [line for text in texts.values() for line in text.splitlines()
+            if len(line) > width and not line.startswith(("|", "#"))]
+    sections = [line for line in appendix.splitlines()
+                if line.startswith("## ")]
+    return [
+        ("the report names each approach and its verdict in plain words",
+         "### `full`" in report and "### `hand`" in report
+         and "**Verdict: worse**, because of the hidden tests." in report
+         and PLAIN_VERDICT_RULE[:40] in report, report[:400]),
+        ("the report links its appendix, and the appendix the record",
+         "-appendix.md)" in report and "-record.md)" in appendix, None),
+        ("the appendix holds what produced the results, the radar's axes "
+         "and the verdict vector, and nothing else",
+         sections == ["## What produced the results",
+                      "## The radar's axes, row by row",
+                      "## The verdict vector"]
+         and all("### %s" % axis in appendix for axis, _ in RADAR_AXES),
+         sections),
+        ("every document holds the declared width", over == [], over),
+        ("a round too small to decide says so in the report and the "
+         "appendix", "can be called established" in report
+         and "Every interval below is descriptive." in appendix, None),
+        ("a comparison across rounds reads as not given, not too few runs",
+         plain_verdict({key: {"full-none": {"verdict": CROSSING_VERDICT}}
+                        for key in ANSWERED}, "full-none", "Not measured")
+         .startswith("**Verdict: not given.**"), None),
+        ("a round 5 run short of its last block says it is provisional",
+         any("block %d still miss a run" % ROUND5_K in line
+             for line in sureness_lines(
+                 {trial_name(arm, block): {} for arm in ROUND5_RUN
+                  for block in range(1, ROUND5_K)}, ROUND5_K - 1)), None),
+        ("a run stopped and not yet run again is counted as missing",
+         rerun_lines([{"rerun": "completed"}, {"rerun": None}])
+         == ["- 1 run was stopped part-way, for example by a usage limit, "
+             "and run again from the start. Only complete runs count.",
+             "- 1 stopped run has not been run again yet, so it is missing."],
+         rerun_lines([{"rerun": "completed"}, {"rerun": None}])),
+        ("a broken build is named even where reliability reads neutral",
+         any(line.startswith("- Noted, though reliability")
+             for line in plain_arm_lines(
+                 {"full-1": {"scores": {"boot": {"value": {
+                     "factory": False}}}}, "full-2": {"scores": {}}},
+                 {"task_success": {"values": {"none": {1: 1.0, 2: 1.0},
+                                              "full": {1: 0.0, 2: 1.0}}},
+                  "cost_usd": {"values": {"none": {1: 1.0}, "full": {1: 1.0}}}},
+                 {key: {"full-none": {"verdict": "no improvement shown"}}
+                  for _, keys in RADAR_AXES for key in keys}
+                 | {key: {"full-none": {"verdict": "no improvement shown"}}
+                    for key in ANSWERED}, "full", 391)), None),
+        ("run counts come from the runs scored, a spread where they differ",
+         times({"none": 15, "skills": 12, "hybrid": 15},
+               ["skills", "hybrid"]) == "between 12 and 15 times"
+         and times({"none": 15}, ["none"]) == "15 times", None),
+    ]
+
+
 def self_test(seed):
     """Check the verdict rule, the relative margin, the escalation rule, the
     withdrawal of a metric and the reach section."""
@@ -3847,6 +4528,7 @@ def self_test(seed):
     checks.extend(posthoc_checks(seed))
     checks.extend(withdrawal_checks(seed))
     checks.extend(executive_checks(seed))
+    checks.extend(documents_checks(seed))
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
