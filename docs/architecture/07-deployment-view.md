@@ -44,8 +44,14 @@ Round 3's root held 5.5 GB after both tasks. Each scored trial's
 environment is about 290 MB.
 <!-- /measured -->
 
-Round 5's 75 build trials want about 40 GB free on the root's drive; a
-K = 3 round of five arms and both tasks wanted about 15 GB. A full disk stops
+<!-- measured: 2026-11-01 -->
+Round 5c's run root held 11.4 GB, and its scoring area 26.5 GB: 21.8 GB of
+environments, 4.3 GB of extracted trees.
+<!-- /measured -->
+
+Scoring drops each trial's environment once its scores are read, and the
+archive drops the trees, so round 5's 75 build trials want about 17 GB free on
+the root's drive: the root and about 5 GB beside it. A full disk stops
 a trial or a scoring with `No space left on device`, and that trial is not a
 result.
 

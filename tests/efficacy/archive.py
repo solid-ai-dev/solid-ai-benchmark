@@ -328,6 +328,24 @@ def stamp(root, into):
                "readings": readings_digest(root)})
 
 
+def drop_trees(root):
+    """Delete the scoring area's extracted trees and any environment left
+    beside them; return how many folders went."""
+
+    # The judge and the security reading read a trial's tree, and both are
+    # done once the round is archived: a later reading would change what the
+    # stamp holds, and a re-score extracts the tree again from its tarball.
+    area = scoring_area(root)
+    folders = []
+    for part in ("scoring", "scoring-change"):
+        for kind in ("tree", "venv"):
+            folders += glob.glob(os.path.join(area, part, "*", kind))
+    folders += glob.glob(os.path.join(area, "security", "*", "venv"))
+    for folder in folders:
+        remove_tree(folder)
+    return len(folders)
+
+
 def plant_tarball(path, name, extra=()):
     """A frozen workspace holding code, a venv, caches and a git dir."""
     entries = {"src/pkg/__init__.py": b"VALUE = 1\n",
@@ -498,6 +516,24 @@ def self_test():
                    stamp_problem(root) is not None))
     stamp(root, into)
     checks.append(("a stamped round has none", stamp_problem(root) is None))
+
+    # What scoring leaves: a trial's tree and environment, a change task's,
+    # and a security reading's environment.
+    area = scoring_area(root)
+    leftovers = [os.path.join(area, "scoring", "none-1", "tree"),
+                 os.path.join(area, "scoring", "none-1", "venv"),
+                 os.path.join(area, "scoring-change", "none-1", "tree"),
+                 os.path.join(area, "security", "full-1", "venv")]
+    for folder in leftovers:
+        os.makedirs(folder, exist_ok=True)
+        with io.open(os.path.join(folder, "left.txt"), "w") as handle:
+            handle.write("x")
+    dropped = drop_trees(root)
+    checks.append(("an archived round drops its trees and environments",
+                   dropped == len(leftovers)
+                   and not any(os.path.exists(folder) for folder in leftovers)))
+    checks.append(("its readings stand, so the stamp still holds",
+                   stamp_problem(root) is None))
     score = os.path.join(scoring_area(root), "scores", "none-1.json")
     dump_json(score, dict(load_json(score), planted=True))
     checks.append(("a reading changed after the stamp is a problem",
@@ -598,6 +634,8 @@ def main(argv):
         lib.print_verdict(False, "archive not verified; no stamp written")
         return 1
     stamp(options.root, source)
+    print("Dropped %d tree and environment folder(s) from the scoring area"
+          % drop_trees(options.root))
     lib.print_verdict(True, "archive verified; %s stamped"
                       % os.path.join(scoring_area(options.root), STAMP))
     return 0
