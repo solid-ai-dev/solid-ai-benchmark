@@ -1981,6 +1981,27 @@ def write_posthoc_rules(trials, table, results, seed, out_dir):
     lines.extend(round5d_section(
         trials, table, results, seed, ROUND5D_MARGINS, ROUND5_HYPOTHESES,
         "## The round's questions, read post-hoc"))
+
+    # Every reading above rests on a row printed below: the rows each
+    # question decides on, and each radar axis's rows against the bare arm.
+    k = max((index_of(name) for name in trials), default=0)
+    asked = [tuple(label.split("-")) for _, label, _ in ROUND5_HYPOTHESES
+             if tuple(label.split("-")) in active]
+    lines.extend(["", "## The numbers behind it, post-hoc", "",
+                  "Each cell reads by the later rules, on working builds "
+                  "where the row says so. %s" % CONTRAST_LEGEND, "",
+                  DEGENERATE_NOTE.replace("`aggregate.json`",
+                                          "`aggregate-posthoc.json`"),
+                  "", "### The rows the questions decide on",
+                  ""])
+    lines.extend(contrast_table(table, results,
+                                ROUND5D_ROWS + ("reliability",),
+                                active=asked, blocks=k, legend=False))
+    against = [pair for pair in active if pair[1] == BARE]
+    for axis, keys in ROUND5D_RADAR_AXES:
+        lines.extend(["", "### %s" % axis, ""])
+        lines.extend(contrast_table(table, results, keys, active=against,
+                                    blocks=k, legend=False))
     target = os.path.join(out_dir, stem + ".md")
     with io.open(target, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(report_text(lines, markdown_width()))
@@ -3198,6 +3219,10 @@ def round5d_checks(seed):
                    in written
                    and "H3, a reference alone delivers less, "
                    "reference-hybrid:" in written
+                   and "### The rows the questions decide on" in written
+                   and "### Economy" in written
+                   and "skills−hybrid" in written
+                   and "aggregate-posthoc.json" in written
                    and len(images) == 2
                    and "size" not in registered["judge_design"]["skills-none"]
                    and "size" in later_results["judge_design"]["skills-none"],
@@ -4242,7 +4267,7 @@ def verdict_mark(contrast):
 # The legend under a table of contrasts with verdicts.
 MARK_LEGEND = (
     "▲ better and ▼ worse: the interval is clear of zero, in the metric's "
-    "direction. = held, for a row read by its margin, and ≈ no difference "
+    "direction, and under round 5d's rules clear of the row's margin. = held, for a row read by its margin, and ≈ no difference "
     "shown: either way the interval's worse end stays within the row's "
     "margin, so it is no worse than the margin, which is not the same as "
     "equal. ○ no verdict, on purpose: a row reported without one, a pair "
@@ -5773,6 +5798,12 @@ def main(argv):
         later = posthoc_rules_reading(trials, options.seed, withdrawn, check)
         print("Post-hoc: %s" % write_posthoc_rules(
             trials, later[0], later[1], options.seed, out_dir))
+        with io.open(os.path.join(scoring_area(options.root),
+                                  "aggregate-posthoc.json"),
+                     "w", encoding="utf-8") as handle:
+            json.dump({"seed": options.seed, "rules": "round 5d, post-hoc",
+                       "table": later[0], "results": later[1]},
+                      handle, indent=2, sort_keys=True)
     judged = sum(1 for trial in trials.values() if trial["judge"])
     lib.print_verdict(True, "%d trial(s) aggregated, %d judged"
                       % (len(trials), judged))
