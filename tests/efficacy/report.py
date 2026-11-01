@@ -963,14 +963,86 @@ def row_size(key, interval, direction, baseline_mean):
     return max(-1.0, min(1.0, signed))
 
 
+def unpaired_interval(left, right, seed, resamples=RESAMPLES):
+    """A bias-corrected and accelerated bootstrap interval for the
+    difference of two independent means, each arm resampled on its own.
+
+    The acceleration comes from each arm's jackknife, combined across the
+    two samples (Efron and Tibshirani, 1993, ch. 14).
+    """
+    if len(left) < 2 or len(right) < 2:
+        return {"low": None, "high": None,
+                "method": "not computed: fewer than two trials in an arm"}
+    observed = statistics.fmean(left) - statistics.fmean(right)
+    shuffler = random.Random(seed)
+    replicates = sorted(
+        statistics.fmean(shuffler.choices(left, k=len(left)))
+        - statistics.fmean(shuffler.choices(right, k=len(right)))
+        for _ in range(resamples))
+    method = "BCa, unpaired, %d resamples, %d%%" % (resamples,
+                                                    int(100 * CONFIDENCE))
+    if replicates[0] == replicates[-1]:
+        return {"low": observed, "high": observed,
+                "method": "degenerate: every trial of each arm is identical"}
+    share = sum(1 for value in replicates if value < observed) / resamples
+    if share <= 0 or share >= 1:
+        return {"low": replicates[int((1 - CONFIDENCE) / 2 * resamples)],
+                "high": replicates[min(resamples - 1, int(
+                    (1 + CONFIDENCE) / 2 * resamples))],
+                "method": "percentile: the bias correction is undefined "
+                          "because no resample fell on one side of the mean"}
+    normal = statistics.NormalDist()
+    bias = normal.inv_cdf(share)
+    cubes, squares = 0.0, 0.0
+
+    # The baseline's mean enters the difference with a minus sign, so its
+    # influence on the difference is the negative of its influence on its
+    # own mean; the squares do not see the sign, the cubes do.
+    for sample, sign in ((left, 1.0), (right, -1.0)):
+        count = len(sample)
+        jackknife = [statistics.fmean(sample[:i] + sample[i + 1:])
+                     for i in range(count)]
+        centre = statistics.fmean(jackknife)
+        influence = [sign * (count - 1) * (centre - value)
+                     for value in jackknife]
+        cubes += sum(u ** 3 for u in influence) / count ** 3
+        squares += sum(u * u for u in influence) / count ** 2
+    acceleration = cubes / (6 * squares ** 1.5) if squares else 0.0
+    bounds = []
+    for tail in ((1 - CONFIDENCE) / 2, (1 + CONFIDENCE) / 2):
+        z = normal.inv_cdf(tail)
+        position = normal.cdf(bias + (bias + z)
+                              / (1 - acceleration * (bias + z)))
+        bounds.append(replicates[min(resamples - 1,
+                                     max(0, int(position * resamples)))])
+    return {"low": bounds[0], "high": bounds[1], "method": method}
+
+
 def strict_contrast(key, direction, left, right, seed, margins,
-                    resamples=RESAMPLES):
-    """One paired contrast read by round 5d's rules.
+                    resamples=RESAMPLES, unpaired=False):
+    """One contrast read by round 5d's rules, paired by block or, with
+    `unpaired`, as two independent samples.
 
     Better or worse needs the whole interval past the row's margin, and a
     row without one is read against zero. Reliability's interval is
     Newcombe's, as a share's. Each contrast carries its size on the radar.
     """
+    observed = [value for value in right.values() if value is not None]
+    baseline_mean = statistics.fmean(observed) if observed else None
+    if unpaired:
+        ours = [value for value in left.values() if value is not None]
+        if not ours or not observed:
+            return {"pairs": [], "mean": None, "size": None, "unpaired": True,
+                    "interval": {"low": None, "high": None,
+                                 "method": "an arm has no measured trial"},
+                    "verdict": "not computed", "non_inferior": None}
+        interval = (newcombe_unpaired(ours, observed) if key == "reliability"
+                    else unpaired_interval(ours, observed, seed, resamples))
+        mean = statistics.fmean(ours) - baseline_mean
+        return dict(margined(key, direction, interval, baseline_mean,
+                             margins), pairs=[], mean=round(mean, 4),
+                    interval=interval, unpaired=True,
+                    trials=(len(ours), len(observed)))
     measured = [(left[index], right[index])
                 for index in sorted(set(left) & set(right))
                 if left[index] is not None and right[index] is not None]
@@ -982,16 +1054,20 @@ def strict_contrast(key, direction, left, right, seed, margins,
     pairs = [first - second for first, second in measured]
     interval = (newcombe_paired(measured) if key == "reliability"
                 else bca_interval(pairs, seed, resamples))
-    observed = [value for value in right.values() if value is not None]
-    baseline_mean = statistics.fmean(observed) if observed else None
+    return dict(margined(key, direction, interval, baseline_mean, margins),
+                pairs=pairs, mean=round(statistics.fmean(pairs), 4),
+                interval=interval)
+
+
+def margined(key, direction, interval, baseline_mean, margins):
+    """An interval's verdict past the row's margin, its non-inferiority and
+    its size on the radar."""
     margin = 0.0
     if key in margins:
         _, share, kind = margins[key]
         margin = (share * abs(baseline_mean or 0.0) if kind == RELATIVE
                   else share)
-    return {"pairs": pairs, "mean": round(statistics.fmean(pairs), 4),
-            "interval": interval,
-            "verdict": margined_verdict(interval, direction, margin),
+    return {"verdict": margined_verdict(interval, direction, margin),
             "non_inferior": non_inferior(key, interval, direction,
                                          baseline_mean, margins),
             "size": row_size(key, interval, direction, baseline_mean)}
@@ -1002,8 +1078,9 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
     """The paired differences, their intervals and their verdicts, with
     each held against `margins`, by default the shared ones.
 
-    `strict` reads them by round 5d's rules, as `strict_contrast` states.
-    `only` limits the contrasts computed to the labels it names.
+    `strict` reads them by round 5d's rules, as `strict_contrast` states,
+    and a contrast in `crossed` unpaired. `only` limits the contrasts
+    computed to the labels it names.
 
     A contrast in `crossed` pairs an arm judged in an earlier round with one
     judged in this one, so its difference carries the day as well as the arm.
@@ -1025,14 +1102,12 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
                 continue
             left = entry["values"].get(treatment, {})
             right = entry["values"].get(baseline, {})
+            # Round 5d reads a contrast with an earlier round's arm unpaired,
+            # as registered: the two never ran in one block.
             if strict:
                 per_contrast[label] = strict_contrast(
                     key, entry["direction"], left, right, seed,
-                    margins or MARGINS, resamples)
-                if label in crossed:
-                    per_contrast[label]["verdict"] = CROSSING_VERDICT
-                    per_contrast[label]["non_inferior"] = None
-                    per_contrast[label]["size"] = None
+                    margins or MARGINS, resamples, label in crossed)
                 continue
             pairs = []
             for index in sorted(set(left) & set(right)):
@@ -1172,7 +1247,8 @@ def cross_check(trials, other, seed):
     metrics = [metric for metric in METRICS if metric[0] in JUDGE_ROWS]
     return {"model": first.get("model"), "trials": sorted(other),
             "rows": rows,
-            "results": contrasts(collect(other, metrics), seed, (), None,
+            "results": contrasts(collect(other, metrics), seed,
+                                 crossed_labels(trials), None,
                                  is_round5d(trials)),
             "disagreements": []}
 
@@ -1433,6 +1509,11 @@ def registration_problem(root, registration, repository=REPOSITORY):
     unchanged since."""
     moments = []
     for record in run_records(root):
+
+        # A trial reused from an earlier round ran under that round's
+        # registration, so only this round's own trials have to follow its.
+        if record.get("reused_from"):
+            continue
         try:
             moment = datetime.datetime.fromisoformat(record["started_at"])
         except (KeyError, TypeError, ValueError):
@@ -2572,28 +2653,33 @@ def round5d_hypothesis(results, label, wanted):
     return state, rows
 
 
-def without_blocks(table, keys, dropped):
-    """The rows `keys` of `table`, with the blocks in `dropped` left out."""
+def without_trials(table, keys, dropped):
+    """The rows `keys` of `table`, with the trials in `dropped`, each an
+    (arm, block), left out."""
     return {key: dict(table[key], values={
         arm: {index: value for index, value in values.items()
-              if index not in dropped}
+              if (arm, index) not in dropped}
         for arm, values in table[key]["values"].items()})
         for key in keys if key in table}
 
 
-def leave_two_out(table, label, wanted, seed, margins, results=None):
+def leave_two_out(table, label, wanted, seed, margins, results=None,
+                  unpaired=False):
     """Robust where the hypothesis reads the same with every two blocks left
-    out, fragile where any such reading differs, None where it was not
-    read. A verdict `results` withholds stays withheld in every reading."""
+    out, or with every two trials where the contrast is `unpaired`; fragile
+    where any such reading differs; None where it was not read. A verdict
+    `results` withholds stays withheld in every reading."""
     keys = ROUND5_ROWS + ("reliability",)
+    crossed = (label,) if unpaired else ()
     withheld = {key: (results or {}).get(key, {}).get(label, {}).get(
         "verdict") for key in keys}
     withheld = {key: verdict for key, verdict in withheld.items()
                 if verdict and verdict.startswith("no verdict")}
 
     def read(dropped):
-        reading = contrasts(without_blocks(table, keys, dropped), seed, (),
-                            margins, True, LEAVE_TWO_OUT_RESAMPLES, (label,))
+        reading = contrasts(without_trials(table, keys, dropped), seed,
+                            crossed, margins, True, LEAVE_TWO_OUT_RESAMPLES,
+                            (label,))
         for key, verdict in withheld.items():
             reading[key][label]["verdict"] = verdict
         return round5d_hypothesis(reading, label, wanted)[0]
@@ -2603,14 +2689,21 @@ def leave_two_out(table, label, wanted, seed, margins, results=None):
     state = (round5d_hypothesis(results, label, wanted)[0] if results
              else read(()))
     treatment, baseline = label.split("-")
-    blocks = sorted(set().union(*(
-        set(table[key]["values"].get(treatment, {}))
-        | set(table[key]["values"].get(baseline, {}))
-        for key in keys if key in table)))
-    if len(blocks) < 3:
+    held = {(arm, index) for key in keys if key in table
+            for arm in (treatment, baseline)
+            for index in table[key]["values"].get(arm, {})}
+
+    # Paired, a block drops both arms' trials; unpaired, any two trials of
+    # the two arms drop, the 435 pairs of thirty.
+    if unpaired:
+        units = [frozenset([trial]) for trial in sorted(held)]
+    else:
+        units = [frozenset(trial for trial in held if trial[1] == block)
+                 for block in sorted({index for _, index in held})]
+    if len(units) < 3:
         return None
-    for dropped in itertools.combinations(blocks, 2):
-        if read(dropped) != state:
+    for first, second in itertools.combinations(units, 2):
+        if read(first | second) != state:
             return "fragile"
     return "robust"
 
@@ -2675,8 +2768,10 @@ def round5d_section(trials, table, results, seed, margins):
         if not set(label.split("-")) <= present:
             continue
         state, rows = round5d_hypothesis(results, label, wanted)
-        sureness = leave_two_out(table, label, wanted, seed, margins,
-                                 results)
+        sureness = leave_two_out(
+            table, label, wanted, seed, margins, results,
+            any(contrast.get("unpaired") for per in results.values()
+                for name, contrast in per.items() if name == label))
         detail = ", ".join("%s %s" % (SHORT.get(key, key), outcome)
                            for key, outcome in rows.items())
         lines.append("- %s, %s: %s, %s (%s)" % (
@@ -2811,6 +2906,72 @@ def round5d_checks(seed):
     checks.append(("leave-two-out compares with the printed reading",
                    got == ("robust", "fragile"), got))
 
+    # One more security point in every trial: paired by block the difference
+    # is exact, while unpaired it is as wide as the spread of each arm.
+    left = {index: float(index) + 1.0 for index in range(1, 16)}
+    right = {index: float(index) for index in range(1, 16)}
+    paired_read = strict_contrast("judge_security", UP, left, right, seed,
+                                  ROUND5D_MARGINS)
+    unpaired_read = strict_contrast("judge_security", UP, left, right, seed,
+                                    ROUND5D_MARGINS, unpaired=True)
+    reliability = strict_contrast("reliability", UP, {1: 1.0, 2: 1.0},
+                                  {3: 1.0, 4: 0.0}, seed, ROUND5D_MARGINS,
+                                  unpaired=True)
+    got = (paired_read["interval"]["high"] - paired_read["interval"]["low"],
+           unpaired_read["interval"]["high"] - unpaired_read["interval"]["low"]
+           > 4, unpaired_read["verdict"], reliability["interval"]["method"])
+    checks.append(("a contrast across rounds is unpaired, with a verdict",
+                   got[0] == 0 and got[1] and got[2] != CROSSING_VERDICT
+                   and got[3].startswith("Newcombe's score interval, "
+                                         "unpaired"), got))
+
+    # A skewed baseline: the difference's acceleration takes the baseline's
+    # influence with a minus sign, which leaves the interval low enough to
+    # read held within 0.3 points rather than better.
+    skewed = unpaired_interval([2.0] * 15, [1.0] * 14 + [3.0], 20260912)
+    got = (round(skewed["low"], 4), margined_verdict(skewed, UP, 0.3))
+    checks.append(("the unpaired interval signs the baseline's influence",
+                   got[1] == "held" and got[0] < 0.3, got))
+
+    # The other vendor's judge read hand-1, hand-2 and none-3: no block in
+    # common, so only an unpaired reading compares them, as the main one does.
+    def judged(score, reused=False):
+        return {"scores": {"reused_from": {"name": "planted"}} if reused
+                else {}, "change": None, "security": None,
+                "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
+    ours = {"hand-1": judged(3), "hand-2": judged(3), "hand-3": judged(3),
+            "none-1": judged(2, True), "none-2": judged(2, True),
+            "none-3": judged(2, True)}
+    theirs = {name: ours[name] for name in ("hand-1", "hand-2", "none-3")}
+    got = cross_check(ours, theirs, seed)["results"]["judge_design"][
+        "hand-none"]["mean"]
+    checks.append(("the cross-check reads a contrast across rounds unpaired",
+                   got == 1.0, got))
+
+    # Two measured trials against fifteen: the cell says so.
+    cell = contrast_cell({"interval": {"low": 0.1, "high": 0.4,
+                                       "method": "BCa, unpaired"},
+                          "mean": 0.2, "verdict": "held", "pairs": [],
+                          "unpaired": True, "trials": (2, 15)}, full=15)
+    checks.append(("an unpaired cell names each arm's trials when short",
+                   cell.endswith("(2 against 15 trials)"), cell))
+
+    # Two arms that never share a block: unpaired, every reading of the
+    # thirty is supported, which a reading by blocks would never be.
+    apart = {key: {"label": key, "direction": UP, "values": {
+        "short": {index: 1.0 for index in range(1, 7)},
+        "hand": {index: 1.0 for index in range(7, 13)}}}
+        for key in ROUND5_ROWS + ("reliability",)}
+    printed_apart = contrasts(apart, seed, ("short-hand",), ROUND5D_MARGINS,
+                              True, only=("short-hand",))
+    got = (round5d_hypothesis(printed_apart, "short-hand", "held")[0],
+           leave_two_out(apart, "short-hand", "held", seed, ROUND5D_MARGINS,
+                         printed_apart, unpaired=True),
+           leave_two_out(apart, "short-hand", "held", seed, ROUND5D_MARGINS,
+                         printed_apart))
+    checks.append(("an unpaired contrast leaves out two trials, not blocks",
+                   got == ("supported", "robust", "fragile"), got))
+
     # Round 5d's appendix lists the rows its radar reads.
     got = [axis for axis in radar_axes(printed)] == list(ROUND5D_RADAR_AXES)
     checks.append(("round 5d's appendix and radar read round 5d's rows",
@@ -2878,6 +3039,25 @@ def round5d_checks(seed):
                    "short-hand: inconclusive, robust" in section
                    and "profile: Reliability not computed" in section
                    and "Design better" in section, section[-600:]))
+
+    # With round 5c's `none` reused, H4 reads `hand` against it unpaired,
+    # and the report says the contrast across rounds is unpaired.
+    design = {"none": 2, "hand": 3, "short": 4}
+    run = {trial_name(arm, index): {
+        "scores": ({"reused_from": {"name": "planted"}} if arm == "none"
+                   else {}),
+        "change": None, "security": None,
+        "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
+        for arm, score in design.items() for index in range(1, 4)}
+    text = rendered(run, seed, {})[2]
+    section = (text.split("## Round 5d")[1].split("\n## ")[0]
+               if "## Round 5d" in text else "")
+    checks.append(("a round-5d run reads H4 against a reused `none`, "
+                   "unpaired",
+                   "H4, a file at all, hand-none: inconclusive" in section
+                   and "Compared unpaired with this round's trials, as "
+                   "round 5d registered: short − none and hand − none."
+                   in " ".join(text.split()), section[-600:]))
 
     axes = dict(ROUND5D_RADAR_AXES)
     sized = {key: {"x": {"verdict": "better", "size": 0.25}}
@@ -3618,12 +3798,14 @@ def finding_lines(trials, table, results, active):
     reused = reused_arms(trials)
     if reused:
         crossed = crossing(active, reused)
+        across = ("Compared unpaired with this round's trials, as round 5d "
+                  "registered" if is_round5d(trials) else
+                  "Pairing them with this round's trials, across days")
         lines.append("Reused from an earlier round: %s. %s The model is "
                      "pinned by exact id; the day is the residual confound."
                      % (spoken(["%s (%d trials)" % pair for pair in reused]),
-                        "Pairing them with this round's trials, across "
-                        "days: %s." % spoken(["%s − %s" % pair
-                                              for pair in crossed])
+                        "%s: %s." % (across, spoken(["%s − %s" % pair
+                                                     for pair in crossed]))
                         if crossed else "No contrast pairs them with this "
                         "round's trials."))
         lines.append("")
@@ -3867,6 +4049,12 @@ def contrast_cell(contrast, verdicts=True, full=None):
     pairs = len(contrast.get("pairs") or [])
     if full and 0 < pairs < full:
         body += " (%d pairs)" % pairs
+
+    # An unpaired contrast has no pairs; it says how many trials each arm
+    # gave where either gave fewer than the round's blocks.
+    counts = contrast.get("trials")
+    if full and contrast.get("unpaired") and counts and min(counts) < full:
+        body += " (%d against %d trials)" % tuple(counts)
     return body
 
 
@@ -4280,6 +4468,16 @@ def registration_checks():
     early, late, zoneless = problem(after), problem(before), problem(naive)
     unrecorded = problem(repository)
 
+    # An earlier round's trial reused at 09:30 ran under its own round's
+    # registration, so the round's own trial at 10:30 is what is read.
+    with io.open(os.path.join(after, "run-reused.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": [{"arm": "none", "trial": 2,
+                               "outcome": "completed",
+                               "started_at": "2026-10-01T09:30:00+00:00",
+                               "reused_from": {"root": "earlier"}}]}, handle)
+    reused = problem(after)
+
     # An amendment committed on a branch at 11:00, before a trial at 12:00,
     # and merged into the main branch at 13:00, after it.
     merged = plant_run("merged", "2026-10-01T12:00:00+00:00")
@@ -4302,6 +4500,8 @@ def registration_checks():
              zoneless is not None and "no UTC offset" in zoneless),
             ("a root with no run record is refused",
              unrecorded is not None and "no run record" in unrecorded),
+            ("a trial reused from an earlier round is not read against it",
+             reused is None),
             ("an amendment on a branch of its own is refused",
              unlanded is not None and "has not landed" in unlanded),
             ("one merged after the first trial is read at the merge",

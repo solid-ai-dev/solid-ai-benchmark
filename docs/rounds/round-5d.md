@@ -84,6 +84,10 @@ A contrast with a round 5c arm is unpaired: they never ran in one block. An
 unpaired interval is wider than the paired one round 5 sized K on, so at K = 15
 a row is harder to show as held.
 
+An unpaired interval resamples each arm on its own: a bias-corrected and
+accelerated bootstrap of the difference of the two means, 10,000 resamples,
+with the acceleration from each arm's jackknife (Efron and Tibshirani, 1993).
+
 Round 5c's `none` stands in for a `none` run beside the round's arms, with no
 check that the bare agent stayed where it was. The report says so beside H4
 and H5.
