@@ -34,8 +34,9 @@ report refuses a round when:
 - its registration landed on `main` after the first trial started
   - it reads `main`'s first-parent line, so a merge counts at the merge
 - its registration differs from `main`'s copy, or has uncommitted changes
-- a trial built from a spec other than the registered one, by content
-- a trial with something to score records no spec
+- a trial built from a spec or prompt other than the registered one, by
+  content
+- a trial with something to score records no spec or no prompt
 
 The harness checks the spec before every trial too. An edit made mid-run
 refuses the trials after it, instead of building them.
@@ -195,6 +196,8 @@ flowchart LR
 - The lock leaves out anything local, editable, or named like the package
   under score, so one trial's code never installs over another's.
 - `toolconfig/` is the only configuration the tools run under.
+- Every build is scored on the spec's Python. The report refuses a round
+  whose scores ran on two.
 
 ## 8.5 Blindness
 
@@ -384,6 +387,7 @@ round 3 security and data protection (8.6.8).
 | Three judgings per tree, averaged | One judging is not reproducible |
 | Blind (8.5) | The judge must not favour an arm it can name |
 | Model and effort recorded with every judging | A reading is tied to the judge that made it |
+| Read-only: it may read the bundle and do nothing else | A judge that edits or runs the code changes what it scores |
 
 **Which judge.** From round 5, `gpt-6-astra` through `codex exec` at effort
 `high` judges every trial, and no cross-check runs
