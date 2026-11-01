@@ -944,8 +944,8 @@ def cross_check_section(check):
     lines = ["## The other vendor's judge", ""]
     if not check:
         lines.append("Not run: no other vendor's judging was read for this "
-                     "round, so the judge shares a vendor with the generator "
-                     "unchecked.")
+                     "round, so the judge is checked only by its evidence "
+                     "lines.")
         return lines
     lines.append("`%s` read %d trial(s) of this round: %s. Its scores are "
                  "never meaned with the rounds' judge's. A judge-row contrast "
@@ -1372,7 +1372,9 @@ def write_report(root, trials, table, results, seed, escalation,
                      "report repeats rather than footnotes." % k)
     else:
         lines.append("Each interval below is a 95 %% bootstrap interval over "
-                     "the K = %d paired differences of its contrast." % k)
+                     "the paired differences of its contrast, one per block "
+                     "that measured both arms: K = %d at most, and a cell "
+                     "that had fewer names its count." % k)
     lines.append("")
 
     lost = lost_trials(root)
@@ -2025,7 +2027,7 @@ def round5_checks():
     values["skills"][4] = 0.0
     got = suite_cell({"task_success": {"values": values}}, "skills-none")
     checks.append(("two dips are named as two runs",
-                   got == "90 %%, two runs of %d at 0 %%" % ROUND5_K, got))
+                   got == "90 %%, two runs of %d at 0 %% and 50 %%" % ROUND5_K, got))
     got = report_text(["# Report", "", "Body.", "", ""], 88)
     checks.append(("a report ends in one newline, however its last section "
                    "ends", got == "# Report\n\nBody.\n", got))
@@ -2143,8 +2145,8 @@ def runs(count):
 
 
 def suite_cell(table, name):
-    """The arm's hidden-suite pass rate, naming any run under the bare arm's
-    mean by more than the practical threshold."""
+    """The arm's hidden-suite pass rate, naming each run under the bare arm's
+    mean by more than the practical threshold with its own rate."""
     treatment, baseline = name.split("-")
     left = [value for value in table["task_success"]["values"]
             .get(treatment, {}).values() if value is not None]
@@ -2152,11 +2154,11 @@ def suite_cell(table, name):
     if not left or right is None:
         return NOT_MEASURED
     text = "%d %%" % round(100 * statistics.fmean(left))
-    dipped = [value for value in left if value < right - SUITE_DIP]
+    dipped = sorted(value for value in left if value < right - SUITE_DIP)
     if dipped:
-        text += ", %s %s of %s at %d %%" % (
+        text += ", %s %s of %s at %s" % (
             counted(len(dipped)), runs(len(dipped)), counted(len(left)),
-            round(100 * min(dipped)))
+            spoken(["%d %%" % round(100 * value) for value in dipped]))
     return text
 
 
@@ -2173,8 +2175,9 @@ def share_cell(table, results, key, name, held):
 
 
 def size_cell(table, results, name):
-    """Source lines and files as signed shares of the bare arm's, naming
-    only the ones the interval separated."""
+    """Source lines and files as signed shares of the bare arm's, naming the
+    ones the interval separated and, marked so, the ones held within their
+    margin."""
     parts, measured = [], False
     for word, key in SIZE:
         if key not in results:
@@ -2183,6 +2186,14 @@ def size_cell(table, results, name):
         measured = measured or cell != NOT_MEASURED
         if cell not in (None, NOT_MEASURED):
             parts.append("%s %s" % (word, cell))
+        elif results[key][name]["verdict"] == "held":
+
+            # Held means the growth stayed inside the margin, not that there
+            # was none, so the share is printed beside the word.
+            entry = results[key][name]
+            baseline = arm_mean(table, key, name.split("-")[1])
+            parts.append("%s %+d %% (held)" % (
+                word, round(100 * entry["mean"] / baseline)))
     if not measured:
         return NOT_MEASURED
     return ", ".join(parts) if parts else "no change shown"
@@ -2314,7 +2325,7 @@ def why_line(trials, results, arm, name, answered, length):
         if answered == "Yes" and length is not None and length <= SHORT_FILE:
             lead = "A few rules the agent could hold: " + lead
         if not built:
-            lead += ", and it wrote no more code than without a file"
+            lead += ", and its code grew no more than its size margin allows"
             if effort:
                 lead += " — for more %s" % spoken(effort)
     elif computed:
@@ -2618,7 +2629,7 @@ def escalation_section(escalation):
     return lines
 
 
-def contrast_cell(contrast, verdicts=True):
+def contrast_cell(contrast, verdicts=True, full=None):
     """One contrast, as the mean, its interval, its verdict and its method.
 
     Without `verdicts` the cell stops at the interval, for a row that may
@@ -2642,6 +2653,12 @@ def contrast_cell(contrast, verdicts=True):
     method = interval.get("method") or ""
     if not method.startswith("BCa"):
         body += " ‡"
+
+    # A block missing either arm's measure drops out of the pair, so an
+    # interval over fewer pairs than the round's blocks says how many.
+    pairs = len(contrast.get("pairs") or [])
+    if full and 0 < pairs < full:
+        body += ", %d pairs" % pairs
     if not verdicts:
         return body
     verdict_text = contrast["verdict"]
@@ -2665,6 +2682,9 @@ def contrast_table(table, results, keys, verdicts=True, active=None):
                 " | ".join("%s−%s" % pair for pair in active)),
              "|---|---|%s|" % "|".join("---" for _ in arms + active)]
     degenerate = False
+    full = max((len(contrast.get("pairs") or [])
+                for by_name in results.values() for contrast in by_name.values()
+                if isinstance(contrast, dict)), default=0)
     for key in keys:
         entry = table[key]
         means = {}
@@ -2675,7 +2695,7 @@ def contrast_table(table, results, keys, verdicts=True, active=None):
         cells = []
         for treatment, baseline in active:
             contrast = results[key]["%s-%s" % (treatment, baseline)]
-            cell = contrast_cell(contrast, verdicts)
+            cell = contrast_cell(contrast, verdicts, full)
             degenerate = degenerate or "‡" in cell
             cells.append(cell)
         lines.append("| %s | %s | %s | %s |"
@@ -3467,6 +3487,25 @@ def executive_checks(seed):
     got = (size_cell(bare, planted, "full-none"), size_cell(bare, planted, "hand-none"))
     checks.append(("the size cell names the separated measure as a share",
                    got == ("files +40 %", "no change shown"), got))
+    planted["source_lines"]["hand-none"] = {"mean": 14.0, "verdict": "held"}
+    got = size_cell(bare, planted, "hand-none")
+    checks.append(("growth held within its margin is printed, marked held",
+                   got == "lines +14 % (held)", got))
+
+    # An interval over fewer pairs than the round's blocks names its count;
+    # one over every block does not.
+    contrast = {"mean": 0.1, "verdict": "better", "non_inferior": None,
+                "interval": {"low": 0.05, "high": 0.2, "method": "BCa"},
+                "pairs": [0.1] * 14}
+    short, whole = (contrast_cell(contrast, True, 15),
+                    contrast_cell(dict(contrast, pairs=[0.1] * 15), True, 15))
+    checks.append(("a contrast over fewer pairs than blocks names its count",
+                   ", 14 pairs" in short and "pairs" not in whole,
+                   (short, whole)))
+    got = " ".join(cross_check_section(None))
+    checks.append(("no second judge is said to be unchecked, not same-vendor",
+                   "checked only by its evidence lines" in got
+                   and "shares a vendor" not in got, got))
 
     # A why-line says, in words, what stands on a record or verdict below:
     # the run that could not boot, the structure built beyond the task and
@@ -3521,8 +3560,8 @@ def executive_checks(seed):
     checks.append(("a short Yes file is a few rules the agent could hold",
                    got == "**Hand-written file, Yes.** A few rules the agent "
                    "could hold: the judge read its code as more readable "
-                   "and better tested, and it wrote no more code than "
-                   "without a file — for more turns and cost.", got))
+                   "and better tested, and its code grew no more than its "
+                   "size margin allows — for more turns and cost.", got))
 
     # The planted change run has no primary, suite, size or cost values, so
     # every cell reads not measured and the columns carry the arm files'
