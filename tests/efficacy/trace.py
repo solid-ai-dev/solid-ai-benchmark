@@ -83,7 +83,8 @@ def trace(text, outputs):
         if heading:
             topic = heading.group(1)
             continue
-        line = line.rstrip()
+        # Markdown allows a table row a few spaces either side.
+        line = line.strip()
 
         # A rule's row that fails to parse, such as one with an empty last
         # cell, would otherwise drop out of the trace and pass unchecked.
@@ -214,6 +215,11 @@ def self_test():
         ("a long label meets the trees' columns after one space",
          problems_of('| FR-01-01 | A rule. | '
                      '`b/b.py` "a mutation past the padding" |') == [], None),
+        ("an indented row is still traced",
+         problems_of(good[0],
+                     ' | FR-01-02 | A rule. | `a.py` "an absent check" |')
+         == ['line 6, FR-01-02: a.py prints no check "an absent check"'],
+         None),
         ("a rule naming nothing fails",
          len(problems_of("| FR-01-01 | A rule. | - |")) == 1, None),
         ("a rule with an empty last cell fails",
