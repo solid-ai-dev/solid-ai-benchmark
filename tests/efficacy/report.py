@@ -2650,6 +2650,11 @@ def verdict_mark(contrast):
     if verdict == "held":
         return " ="
 
+    # Too few complete pairs for an interval is no comparison at all, not a
+    # comparison that showed nothing.
+    if verdict == "not computed":
+        return " (not compared)"
+
     # A verdict withheld on purpose (a neutral row, a pair across rounds, two
     # judges that disagree) is not an inconclusive one, so it has its own
     # mark rather than none.
@@ -2669,8 +2674,9 @@ MARK_LEGEND = (
     "shown: either way the interval's worse end stays within the row's "
     "margin, so it is no worse than the margin, which is not the same as "
     "equal. ○ no verdict, on purpose: a row reported without one, a pair "
-    "across rounds, or two judges that disagree. No mark: no difference "
-    "shown, on a row with no margin or past the margin it has.")
+    "across rounds, or two judges that disagree. (not compared): too few "
+    "complete pairs for an interval. No mark: no difference shown, on a row "
+    "with no margin or past the margin it has.")
 CONTRAST_LEGEND = ("Each cell: the mean paired difference, its 95 % interval "
                    "in brackets, and a mark. " + MARK_LEGEND)
 
@@ -3481,10 +3487,11 @@ def executive_checks(seed):
                  ("no improvement shown", {"within": True}),
                  ("no improvement shown", {"within": False}),
                  ("reported without a verdict", None),
-                 (CROSSING_VERDICT, None), (DISAGREE_VERDICT, None))]
+                 (CROSSING_VERDICT, None), (DISAGREE_VERDICT, None),
+                 ("not computed", None))]
     checks.append(("each verdict reads as its mark, a withheld one apart",
-                   marks == [" ▲", " ▼", " =", " ≈", "", " ○", " ○", " ○"],
-                   marks))
+                   marks == [" ▲", " ▼", " =", " ≈", "", " ○", " ○", " ○",
+                             " (not compared)"], marks))
 
     # Every contrast in the table short of the round's blocks: the count is
     # read against the round's K, not the most pairs any contrast had.
