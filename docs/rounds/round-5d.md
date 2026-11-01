@@ -4,6 +4,10 @@ Registered on 2026-10-31, while round 5c ran and before any round-5d trial ran.
 Round 5c keeps its registration as it was when its first trial ran; this one is
 a registration of its own.
 
+Amended on 2026-11-01, before any round-5d trial ran: the three fresh `none`
+trials and their drift check are dropped, and the round runs in one run of
+`hand` and `short`.
+
 ## 13d. Round 5d: a person's file and a 40-line file, against round 5c
 
 ### 13d.1 What it takes from round 5c
@@ -21,7 +25,6 @@ Three things differ: the arms, the order, and a reuse of round 5c's `none`.
 | --- | --- | --- |
 | `hand` | 15, fresh | `tests/efficacy/arms/hand/CLAUDE.md` as it is at `010ee36` |
 | `short` | 15, fresh | `tests/efficacy/arms/short/CLAUDE.md`, made for 5d |
-| `none` | 3, fresh | The bare agent, as a check on drift |
 | `none`, from 5c | 15, reused | Round 5c's `none-1` to `none-15`, scored and read |
 
 **`hand`** is a person's file, written for round 3's brief.
@@ -57,20 +60,14 @@ content at one length, as round 2's `short` minus `hand` did.
 
 ### 13d.3 The order
 
-Two runs, in one run root of round 5d's own:
+One run of `hand` and `short` at K = 15, in a run root of round 5d's own: 30
+trials in the rotated order.
 
-| Run | Arms | Trials, in order |
-| --- | --- | --- |
-| 1 | `none`, `hand`, `short`, K = 3 | the rotated order, 9 trials |
-| 2 | `hand`, `short`, K = 15, from `short-4` | blocks 4 to 15, 24 trials |
-
-- Run 1 starts `none-1`, `hand-1`, `short-1`, and each block starts one arm
-  later.
+- The run starts `hand-1`, `short-1`, and each block starts one arm later.
 - `hand` and `short` share every block, so `short` minus `hand` is paired.
-- The fresh `none` trials share blocks 1 to 3 with them, so they see the same
-  days as the round's start.
-- Drift after block 3 goes unchecked for the contrasts with round 5c. The CLI
-  is pinned (13d.5), which holds the one source of drift known to have moved.
+- No fresh `none` runs beside them, so drift between round 5c and round 5d
+  goes unchecked for the contrasts with round 5c. The CLI is pinned (13d.5),
+  which holds the one source of drift known to have moved.
 
 Why the pin: the Claude CLI updated itself from 2.1.312 to 2.1.314 at 03:13 on
 2026-10-30, in the middle of round 5c. Round 5c's interleaving spreads that
@@ -83,14 +80,9 @@ A contrast with a round 5c arm is unpaired: they never ran in one block. An
 unpaired interval is wider than the paired one round 5 sized K on, so at K = 15
 a row is harder to show as held.
 
-**The drift check.** Round 5c's `none` stands in for a `none` run beside the
-round's arms.
-
-| | |
-| --- | --- |
-| Measure | each fresh `none` trial against round 5c's 15 |
-| Holds | each trial's primary rows sit within the range of 5c's 15 |
-| Fails | H4 and H5 read inconclusive, and the report says why |
+Round 5c's `none` stands in for a `none` run beside the round's arms, with no
+check that the bare agent stayed where it was. The report says so beside H4
+and H5.
 
 **H4, a file at all.** A person's short file improves on no file.
 
@@ -126,9 +118,8 @@ templates delivers at least what a person's file of the same length delivers.
 **Secondary, no verdict:** every metric of [ch.
 8.6](../architecture/08-crosscutting-concepts.md) for `hand` and `short`
 against round 5c's `none`; `short` against round 5c's `inline`, the same
-generation without the budget; the fresh `none` against round 5c's `none`;
-cost, turns, tokens and wall time; and the words each arm puts in context on
-every turn, beside each 5c arm's.
+generation without the budget; cost, turns, tokens and wall time; and the words
+each arm puts in context on every turn, beside each 5c arm's.
 
 ### 13d.5 Before the first trial
 
@@ -148,14 +139,13 @@ Done with this registration:
 The report still gains, with a self-test:
 
 - round 5c's `none` trials read with their scores, judgings, security readings
-  and tool lock, kept apart from round 5d's `none-1` to `none-3`, whose names
-  they share
-- the unpaired contrasts of H4 and H5, and the drift check
+  and tool lock, from round 5c's run root and scoring area
+- the unpaired contrasts of H4 and H5
 
 ### 13d.6 When it runs
 
-After round 5c's last trial is in, scored and judged. Its 33 trials take about
-22 hours at round 5c's pace and spend the plan's limit, so the run waits for
+After round 5c's last trial is in, scored and judged. Its 30 trials take about
+20 hours at round 5c's pace and spend the plan's limit, so the run waits for
 the owner's go.
 
 Nothing in this registration changes once a round-5d trial has run.
