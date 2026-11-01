@@ -205,7 +205,8 @@ The judge must not know which arm wrote a tree.
 
 ```mermaid
 flowchart LR
-    tree["Trial tree"] --> strip["Strip context file, templates,<br/>markers, scoring output"]
+    strip["Strip context file,<br/>templates, markers,<br/>scoring output"]
+    tree["Trial tree"] --> strip
     strip --> scan{"Leak scan:<br/>names its arm?"}
     scan -- yes --> refuse["Refused"]
     scan -- no --> order["Shuffle, at a recorded seed"]
