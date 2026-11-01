@@ -59,6 +59,11 @@ def printed(lines, label):
         rest = text[len(label):]
         if rest == "" or re.match(r"^\s+ok$", rest) or rest.startswith("  "):
             return True
+
+        # The control pads a label to a fixed width, so a long one meets its
+        # first tree's column after a single space.
+        if re.match(r"^ [\w-]+=", rest):
+            return True
     return False
 
 
@@ -171,7 +176,8 @@ def self_test():
         "a.py": ["  a planted check            ok",
                  "  a planted check, longer    ok",
                  "a label alone on its line"],
-        "b/b.py": ["  ok   a mutation landed    base-1=no  improved-1=yes"],
+        "b/b.py": ["  ok   a mutation landed    base-1=no  improved-1=yes",
+                   "  ok   a mutation past the padding base-1=yes  base-2=no"],
     }
 
     def document(*rows):
@@ -205,6 +211,9 @@ def self_test():
         ("a module with no self-test fails",
          len(problems_of('| FR-01-01 | A rule. | `c.py` "a planted check" |'))
          == 1, None),
+        ("a long label meets the trees' columns after one space",
+         problems_of('| FR-01-01 | A rule. | '
+                     '`b/b.py` "a mutation past the padding" |') == [], None),
         ("a rule naming nothing fails",
          len(problems_of("| FR-01-01 | A rule. | - |")) == 1, None),
         ("a rule with an empty last cell fails",
