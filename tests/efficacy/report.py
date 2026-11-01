@@ -2173,8 +2173,7 @@ def finding_row(table, results, arm, answered, length):
             continue
         cell = show(mean)
         if arm != BARE:
-            cell += MARKS.get(results[key]["%s-%s" % (arm, BARE)]["verdict"],
-                              "")
+            cell += verdict_mark(results[key]["%s-%s" % (arm, BARE)])
         if key == "task_success" and arm != BARE:
             low = low_runs(table, arm)
             if low:
@@ -2365,9 +2364,8 @@ def finding_lines(trials, table, results, active):
             finding_row(table, results, arm, answers.get(arm),
                         lengths.get(arm))))
     lines.append("")
-    lines.append("▲ better and ▼ worse than `%s`: the interval of the paired "
-                 "difference is clear of zero, in the metric's direction. No "
-                 "mark: no difference shown." % BARE)
+    lines.append("Each mark reads an arm against `%s`. %s"
+                 % (BARE, MARK_LEGEND))
     low = [(arm, low_runs(table, arm)) for arm in ranked]
     low = [(arm, rates) for arm, rates in low if rates]
     if low:
@@ -2651,6 +2649,13 @@ def verdict_mark(contrast):
         return MARKS[verdict]
     if verdict == "held":
         return " ="
+
+    # A verdict withheld on purpose (a neutral row, a pair across rounds, two
+    # judges that disagree) is not an inconclusive one, so it has its own
+    # mark rather than none.
+    if verdict == "reported without a verdict" or verdict.startswith(
+            "no verdict"):
+        return " ○"
     inferiority = contrast.get("non_inferior")
     if verdict == "no improvement shown" and inferiority             and inferiority["within"]:
         return " ≈"
@@ -2658,12 +2663,16 @@ def verdict_mark(contrast):
 
 
 # The legend under a table of contrasts with verdicts.
-CONTRAST_LEGEND = (
-    "Each cell: the mean paired difference, its 95 % interval in brackets, "
-    "and a mark. ▲ better and ▼ worse: the interval is clear of zero, in the "
-    "metric's direction. = held: the interval stays inside the row's margin, "
-    "for a row read by its margin. ≈ no difference shown, and the interval "
-    "stays inside the margin. No mark: no difference shown.")
+MARK_LEGEND = (
+    "▲ better and ▼ worse: the interval is clear of zero, in the metric's "
+    "direction. = held, for a row read by its margin, and ≈ no difference "
+    "shown: either way the interval's worse end stays within the row's "
+    "margin, so it is no worse than the margin, which is not the same as "
+    "equal. ○ no verdict, on purpose: a row reported without one, a pair "
+    "across rounds, or two judges that disagree. No mark: no difference "
+    "shown, on a row with no margin or past the margin it has.")
+CONTRAST_LEGEND = ("Each cell: the mean paired difference, its 95 % interval "
+                   "in brackets, and a mark. " + MARK_LEGEND)
 
 
 def contrast_table(table, results, keys, verdicts=True, active=None,
@@ -3471,9 +3480,11 @@ def executive_checks(seed):
                  ("better", None), ("worse", None), ("held", None),
                  ("no improvement shown", {"within": True}),
                  ("no improvement shown", {"within": False}),
-                 ("reported without a verdict", None))]
-    checks.append(("each verdict reads as its mark",
-                   marks == [" ▲", " ▼", " =", " ≈", "", ""], marks))
+                 ("reported without a verdict", None),
+                 (CROSSING_VERDICT, None), (DISAGREE_VERDICT, None))]
+    checks.append(("each verdict reads as its mark, a withheld one apart",
+                   marks == [" ▲", " ▼", " =", " ≈", "", " ○", " ○", " ○"],
+                   marks))
 
     # Every contrast in the table short of the round's blocks: the count is
     # read against the round's K, not the most pairs any contrast had.
