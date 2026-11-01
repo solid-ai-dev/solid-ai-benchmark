@@ -1261,7 +1261,10 @@ def disagree(results, check):
     for key in JUDGE_ROWS:
         for label, contrast in results.get(key, {}).items():
             ours = contrast["mean"]
-            theirs = check["results"][key][label]["mean"]
+
+            # A contrast the other judge's reading did not compute, as an
+            # earlier round's leaves out round 5d's, has nothing to oppose.
+            theirs = check["results"].get(key, {}).get(label, {}).get("mean")
             if (contrast["verdict"] not in ("better", "worse")
                     or ours is None or theirs is None):
                 continue
@@ -3165,6 +3168,17 @@ def round5d_checks(seed):
         "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
         for arm, score in design.items() for index in range(1, 4)}
     later_table, later_results = posthoc_rules_reading(earlier, seed)
+
+    # With the other vendor's judge, read as an earlier round's, the
+    # post-hoc reading meets contrasts that judge's reading never computed.
+    try:
+        posthoc_rules_reading(earlier, seed, None,
+                              cross_check(earlier, earlier, seed))
+        crossed_ok = True
+    except KeyError as error:
+        crossed_ok = error
+    checks.append(("the post-hoc reading takes a cross-check",
+                   crossed_ok is True, crossed_ok))
     scratch = os.path.join(tempfile.gettempdir(), "efficacy-posthoc-rules")
     shutil.rmtree(scratch, ignore_errors=True)
     page = write_posthoc_rules(earlier, later_table, later_results, seed,
