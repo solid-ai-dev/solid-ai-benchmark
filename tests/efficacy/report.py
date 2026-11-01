@@ -1018,6 +1018,11 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
             label = "%s-%s" % (treatment, baseline)
             if only and label not in only:
                 continue
+
+            # Only round 5d declares these, so no earlier round computes
+            # them, and none can owe an escalation or a finding to one.
+            if not strict and (treatment, baseline) in ROUND5D_ONLY:
+                continue
             left = entry["values"].get(treatment, {})
             right = entry["values"].get(baseline, {})
             if strict:
@@ -1159,7 +1164,9 @@ def cross_check(trials, other, seed):
     first = other[min(other)]["judge"] if other else {}
     metrics = [metric for metric in METRICS if metric[0] in JUDGE_ROWS]
     return {"model": first.get("model"), "trials": sorted(other),
-            "rows": rows, "results": contrasts(collect(other, metrics), seed),
+            "rows": rows,
+            "results": contrasts(collect(other, metrics), seed, (), None,
+                                 is_round5d(trials)),
             "disagreements": []}
 
 
@@ -1239,7 +1246,9 @@ def escalation_triggers(results):
         label, threshold = PRACTICAL[key]
         for treatment, baseline in CONTRASTS:
             name = "%s-%s" % (treatment, baseline)
-            contrast = results[key][name]
+            contrast = results[key].get(name)
+            if contrast is None:
+                continue
             low = contrast["interval"].get("low")
             high = contrast["interval"].get("high")
             if low is None or high is None or not contrast["pairs"]:
@@ -2565,14 +2574,23 @@ def without_blocks(table, keys, dropped):
         for key in keys if key in table}
 
 
-def leave_two_out(table, label, wanted, seed, margins):
+def leave_two_out(table, label, wanted, seed, margins, results=None):
     """Robust where the hypothesis reads the same with every two blocks left
     out, fragile where any such reading differs, None where it was not
-    read."""
+    read. A verdict `results` withholds stays withheld in every reading."""
     keys = ROUND5_ROWS + ("reliability",)
-    whole = contrasts(without_blocks(table, keys, ()), seed, (), margins,
-                      True, LEAVE_TWO_OUT_RESAMPLES, (label,))
-    state = round5d_hypothesis(whole, label, wanted)[0]
+    withheld = {key: (results or {}).get(key, {}).get(label, {}).get(
+        "verdict") for key in keys}
+    withheld = {key: verdict for key, verdict in withheld.items()
+                if verdict and verdict.startswith("no verdict")}
+
+    def read(dropped):
+        reading = contrasts(without_blocks(table, keys, dropped), seed, (),
+                            margins, True, LEAVE_TWO_OUT_RESAMPLES, (label,))
+        for key, verdict in withheld.items():
+            reading[key][label]["verdict"] = verdict
+        return round5d_hypothesis(reading, label, wanted)[0]
+    state = read(())
     treatment, baseline = label.split("-")
     blocks = sorted(set().union(*(
         set(table[key]["values"].get(treatment, {}))
@@ -2581,9 +2599,7 @@ def leave_two_out(table, label, wanted, seed, margins):
     if len(blocks) < 3:
         return None
     for dropped in itertools.combinations(blocks, 2):
-        reading = contrasts(without_blocks(table, keys, dropped), seed, (),
-                            margins, True, LEAVE_TWO_OUT_RESAMPLES, (label,))
-        if round5d_hypothesis(reading, label, wanted)[0] != state:
+        if read(dropped) != state:
             return "fragile"
     return "robust"
 
@@ -2600,8 +2616,11 @@ def axis_word(results, name, keys):
         return "not computed"
     better, worse = "better" in counted, "worse" in counted
     if better and worse:
+
+        # The radar's own rows: a withheld verdict's size counts nowhere.
         sizes = [results[key][name].get("size") for key in keys
-                 if name in results.get(key, {})]
+                 if name in results.get(key, {})
+                 and results[key][name]["verdict"] in COUNTED_VERDICTS]
         sizes = [size for size in sizes if size is not None]
         mean = statistics.fmean(sizes) if sizes else 0.0
         return "better" if mean > 0 else "worse" if mean < 0 else "unsettled"
@@ -2645,7 +2664,8 @@ def round5d_section(trials, table, results, seed, margins):
         if not set(label.split("-")) <= present:
             continue
         state, rows = round5d_hypothesis(results, label, wanted)
-        sureness = leave_two_out(table, label, wanted, seed, margins)
+        sureness = leave_two_out(table, label, wanted, seed, margins,
+                                 results)
         detail = ", ".join("%s %s" % (SHORT.get(key, key), outcome)
                            for key, outcome in rows.items())
         lines.append("- %s, %s: %s, %s (%s)" % (
@@ -2751,6 +2771,29 @@ def round5d_checks(seed):
     checks.append(("leave-two-out reads robust and fragile",
                    got == ("robust", "fragile"), got))
 
+    # Security two points worse in every block refutes in every reading;
+    # withheld by the cross-check, it stays withheld, so the two blocks
+    # losing adherence decide, and the reading is fragile.
+    planted_table = table({index: -1.0 for index in range(1, 7)})
+    planted_table["adherence"]["values"]["short"].update({1: 0.0, 2: 0.0})
+    shown = {"judge_security": {"short-hand": {"verdict": DISAGREE_VERDICT}}}
+    got = (leave_two_out(planted_table, "short-hand", "held", seed,
+                         ROUND5D_MARGINS),
+           leave_two_out(planted_table, "short-hand", "held", seed,
+                         ROUND5D_MARGINS, shown))
+    checks.append(("leave-two-out keeps a withheld verdict withheld",
+                   got == ("robust", "fragile"), got))
+
+    # An earlier round never computes a contrast only round 5d declares.
+    earlier_table = {"judge_design": {"label": "x", "direction": UP,
+                                      "values": {"hybrid": {1: 4.0, 2: 4.0},
+                                                 "hand": {1: 3.0, 2: 3.0}}}}
+    got = ("hybrid-hand" in contrasts(earlier_table, seed)["judge_design"],
+           "hybrid-hand" in contrasts(earlier_table, seed, (), None,
+                                      True)["judge_design"])
+    checks.append(("an earlier round computes no round-5d contrast",
+                   got == (False, True), got))
+
     def planted(*pairs):
         return {key: {"x": {"verdict": verdict, "size": size}}
                 for key, (verdict, size) in zip(("a", "b"), pairs)}
@@ -2764,6 +2807,14 @@ def round5d_checks(seed):
     checks.append(("the profile names each axis better, held, worse or "
                    "unsettled", got == ["better", "held", "better",
                                         "unsettled"], got))
+
+    # Sizes +0.1 and -0.4 read worse; a withheld +1.0 must not tip them.
+    mixed = {"a": {"x": {"verdict": "better", "size": 0.1}},
+             "b": {"x": {"verdict": "worse", "size": -0.4}},
+             "c": {"x": {"verdict": DISAGREE_VERDICT, "size": 1.0}}}
+    got = axis_word(mixed, "x", ("a", "b", "c"))
+    checks.append(("the profile's sign leaves out withheld rows",
+                   got == "worse", got))
 
     sizes = [row_size("judge_design", {"low": 0.5, "high": 0.9}, UP, 3.0),
              row_size("judge_design", {"low": -0.1, "high": 0.4}, UP, 3.0),
