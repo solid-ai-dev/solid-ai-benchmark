@@ -27,5 +27,5 @@ repository existed.
 | 4 | 2026-10-17 | Spec: thin, and builder: Haiku 4.5 | [Summary](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-round-4.md), [thin spec](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-efficacy-thin.md), [weaker model](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-efficacy-weaker.md) |
 | 5 | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
 | 5b | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
-| 5c | Not run yet | Context file: how the rules are delivered | — |
+| 5c | 2026-10-29 to 2026-10-31 | Context file: how the rules are delivered | [Report](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-11-01-efficacy.md) |
 | 5d | Not run yet | Context file: a hand-written one and a 40-line one, against 5c | — |

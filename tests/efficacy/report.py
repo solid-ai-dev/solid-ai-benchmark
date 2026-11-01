@@ -1408,7 +1408,11 @@ def write_report(root, trials, table, results, seed, escalation,
                         else "%d to %d, uneven" % (counts[0], counts[-1])))
     else:
         lines.append("| Judge | not run |")
-    for label, key in (("Templates revision", "templates_tree"),
+    # A trial's record names the benchmark tree that ran it under the key
+    # `templates_tree`, from when the benchmark lived in the templates
+    # repository; the templates an arm was made from are its generation
+    # record's, in the arm rows below.
+    for label, key in (("Benchmark revision, per trial", "templates_tree"),
                        ("Hidden suite", "suite_revision")):
         seen = sorted({str(trial["scores"].get(key) or "unknown")
                        for trial in trials.values()}) or ["unknown"]
@@ -1421,10 +1425,12 @@ def write_report(root, trials, table, results, seed, escalation,
             continue
         record = generation.get(arm)
         if record:
-            lines.append("| Arm %s's file | generated %s, %s lines, leak "
-                         "scan: %s |"
+            made_from = (record.get("commit") or record.get("ref")
+                         or "unknown")[:8]
+            lines.append("| Arm %s's file | generated %s from the templates "
+                         "at `%s`, %s lines, leak scan: %s |"
                          % (arm, record.get("started_at", "unknown"),
-                            record.get("output_lines", "?"),
+                            made_from, record.get("output_lines", "?"),
                             "clean" if not (record.get("output_leak") or {})
                             .get("hits") else "HITS"))
         else:
@@ -2006,6 +2012,10 @@ def round5_checks():
     got = suite_cell({"task_success": {"values": values}}, "skills-none")
     checks.append(("a dip among fifteen runs is named without a crash",
                    got == "97 %%, one run of %d at 50 %%" % ROUND5_K, got))
+    values["skills"][4] = 0.0
+    got = suite_cell({"task_success": {"values": values}}, "skills-none")
+    checks.append(("two dips are named as two runs",
+                   got == "90 %%, two runs of %d at 0 %%" % ROUND5_K, got))
     return checks
 
 
@@ -2114,6 +2124,11 @@ def moved_cell(results, name):
     return ", ".join(cells) if cells else "did not move"
 
 
+def runs(count):
+    """`run` or `runs`, as a count of them reads."""
+    return "run" if count == 1 else "runs"
+
+
 def suite_cell(table, name):
     """The arm's hidden-suite pass rate, naming any run under the bare arm's
     mean by more than the practical threshold."""
@@ -2126,8 +2141,9 @@ def suite_cell(table, name):
     text = "%d %%" % round(100 * statistics.fmean(left))
     dipped = [value for value in left if value < right - SUITE_DIP]
     if dipped:
-        text += ", %s run of %s at %d %%" % (
-            counted(len(dipped)), counted(len(left)), round(100 * min(dipped)))
+        text += ", %s %s of %s at %d %%" % (
+            counted(len(dipped)), runs(len(dipped)), counted(len(left)),
+            round(100 * min(dipped)))
     return text
 
 
@@ -2250,8 +2266,9 @@ def why_line(trials, results, arm, name, answered, length):
                  "the app unable to boot"
                  if errors[0].startswith("ModuleNotFoundError")
                  else "left the app unable to boot (`%s`)" % errors[0])
-        sentences.append("%s run of %s %s." % (
-            counted(len(errors)).capitalize(), counted(count), cause))
+        sentences.append("%s %s of %s %s." % (
+            counted(len(errors)).capitalize(), runs(len(errors)),
+            counted(count), cause))
 
     built = [word for word, key in STRUCTURE
              if read_as(results, name, key, "worse")]
@@ -2342,7 +2359,7 @@ def finding_lines(trials, table, results, active):
     rows = [
         ("Improves the code?",
          ["**%s**" % answers[arm] for arm in arms]),
-        ("Readability, design, maintainability",
+        ("Primary rows that moved",
          [moved_cell(results, name) for name in names]),
         (suite, [suite_cell(table, name) for name in names]),
         ("Code size", [size_cell(table, results, name) for name in names]),
