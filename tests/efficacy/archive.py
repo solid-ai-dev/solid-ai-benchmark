@@ -26,7 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 from harness import (TrialError, assert_outside_repository,  # noqa: E402
-                     project_folder, remove_tree, scoring_area, write_run)
+                     claim_path, claim_refusal_check, project_folder,
+                     read_claim, remove_tree, running_as, scoring_area,
+                     write_run)
 
 MANIFEST = "ARCHIVE.json"
 STAMP = "archived.json"
@@ -328,6 +330,22 @@ def stamp(root, into):
                "readings": readings_digest(root)})
 
 
+# The tools that read and write a scoring area while they run, each under a
+# claim of its own.
+AREA_TOOLS = ("score.py", "security.py", "judge.py")
+
+
+def live_run_problem(root):
+    """Why the round's scoring area is in use by a live run, or None."""
+    area = scoring_area(root)
+    for tool in AREA_TOOLS:
+        holder = read_claim(claim_path(area, tool))
+        if holder is not None and running_as(holder["pid"], tool):
+            return ("a %s run is live against %s: pid %d, started %s"
+                    % (tool, area, holder["pid"], holder.get("started")))
+    return None
+
+
 def drop_trees(root):
     """Delete the scoring area's extracted trees and any environment left
     beside them; return how many folders went."""
@@ -545,6 +563,11 @@ def self_test():
                    report.main(["--root", root, "--out-dir", out]) == 0
                    and bool(os.listdir(out))))
 
+    for tool in AREA_TOOLS:
+        checks.append(claim_refusal_check(
+            tool, main, root, "--into",
+            os.path.join(scratch, "runs", "live-" + tool)))
+
     for label, target in (("a non-empty target is refused", into),
                           ("a target inside this repository is refused",
                            os.path.join(lib.ROOT, "tmp", "archive-probe"))):
@@ -613,6 +636,12 @@ def main(argv):
         if not options.root:
             print("--root is required")
             return 2
+
+        # A round still being scored, read or judged is not done, and the
+        # drop after the archive would delete what that run is reading.
+        problem = live_run_problem(options.root)
+        if problem:
+            raise TrialError(problem)
         import report
         seed = (options.seed if options.seed is not None
                 else report.parse_args([]).seed)
