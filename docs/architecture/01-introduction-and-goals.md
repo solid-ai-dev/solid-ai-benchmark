@@ -52,8 +52,8 @@ What it is not:
 
 ## 1.2 Quality goals
 
-The five goals that shape the architecture most, in order. Chapter 10
-gives each its scenarios.
+The five goals that shape the architecture most, in order. The quality
+requirements in [requirements.md](../requirements.md) make each measurable.
 
 | # | Goal | What it means |
 | - | ---- | ------------- |
