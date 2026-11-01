@@ -1051,6 +1051,17 @@ def read_trial(area, name, scores_file, auditor, auditor_reason):
     where = os.path.join(area, "security", name)
     os.makedirs(where, exist_ok=True)
     venv = create_venv(os.path.join(where, "venv"))
+    try:
+        return read_installed(venv, tree, where, result, auditor,
+                              auditor_reason)
+    finally:
+
+        # About 290 MB a trial, and nothing reads it again.
+        remove_tree(venv)
+
+
+def read_installed(venv, tree, where, result, auditor, auditor_reason):
+    """The install, runtime and dependency checks of one trial, in `venv`."""
     installed = pip(venv, "install", tree, cwd=where)
     if installed["failed"] or installed["status"] != 0:
         reason = ("the trial did not install: %s"
@@ -1531,6 +1542,22 @@ def claim_self_checks(scratch):
              and not os.path.exists(os.path.join(area, "security")))]
 
 
+def leftover_self_checks(scratch):
+    """A reading leaves no environment behind, even one whose trial did not
+    install."""
+    area = os.path.join(scratch, "leftover")
+    tree = os.path.join(area, "tree")
+    os.makedirs(tree)
+    scores_file = os.path.join(area, "none-1.json")
+    with io.open(scores_file, "w", encoding="utf-8") as handle:
+        json.dump({"workspace": tree, "discovery": {"roots": []}}, handle)
+    result = read_trial(area, "none-1", scores_file, None, "not planted")
+    return [("a reading's environment is gone once it is read",
+             "probes" in result
+             and not os.path.exists(os.path.join(area, "security", "none-1",
+                                                 "venv")))]
+
+
 def self_test():
     """Prove each check counts what it names, records missing as missing,
     and that a live run refuses a second."""
@@ -1538,7 +1565,8 @@ def self_test():
     remove_tree(scratch)
     os.makedirs(scratch)
     checks = (static_self_checks(scratch) + runtime_self_checks(scratch)
-              + audit_self_checks() + claim_self_checks(scratch))
+              + audit_self_checks() + claim_self_checks(scratch)
+              + leftover_self_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     remove_tree(scratch)

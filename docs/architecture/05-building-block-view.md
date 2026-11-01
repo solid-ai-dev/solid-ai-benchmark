@@ -68,10 +68,10 @@ are still read.
 | Path | Holds |
 | ---- | ----- |
 | The hidden suite's clone | At the one revision the root is graded under |
-| `scoring/<trial>/tree/`, `venv/` | Each trial's extracted tree and clean environment |
+| `scoring/<trial>/tree/` | Each trial's extracted tree, until the round is archived; its clean environment goes once it is scored |
 | `tool-lock.txt` | The tool versions every trial is measured with |
 | `scores/`, `scores-change/` | One score per build trial and per change task |
-| `security/`, `security-scores/` | Each trial's probe environment, and its readings |
+| `security/`, `security-scores/` | Each trial's probe files, and its readings; the probe environment goes once it is read |
 | `judge/` | Each blind bundle, its judgings and the unblinding map |
 | `archived.json` | The stamp a verified archive writes, with the hash of every file the report reads |
 | `<tool>.running` | A claim that one run of that tool is working here |

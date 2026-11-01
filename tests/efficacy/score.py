@@ -300,6 +300,14 @@ def create_venv(where):
     return where
 
 
+def drop_venv(venv):
+    """Delete a trial's environment once its scores are read off it."""
+
+    # About 290 MB a trial, and nothing reads it again: a later reading
+    # makes its own from the trial's tree and the run's lock.
+    remove_tree(venv)
+
+
 def pip(venv, *args, **kwargs):
     """Run pip inside a trial's environment."""
     timeout = kwargs.pop("timeout", 1800)
@@ -1246,6 +1254,7 @@ def score_trial(record, options, suite, lock):
     scores["cost"] = cost(record)
 
     scores["flagged"] = metric_flags(scores)
+    drop_venv(venv)
     return scores
 
 
@@ -1332,6 +1341,7 @@ def score_change_trial(record, options, suite):
                                    "commit"))
     scores["cost"] = cost(record)
     scores["flagged"] = metric_flags(scores)
+    drop_venv(venv)
     return scores
 
 
@@ -1912,6 +1922,10 @@ def self_test():
               + claim_checks(scratch) + security_checks(scratch)
               + coverage_checks(scratch) + python_files_checks(scratch)
               + scope_checks(scratch))
+    dropped = create_venv(os.path.join(scratch, "dropped"))
+    drop_venv(dropped)
+    checks.append(("a scored trial's environment is dropped",
+                   not os.path.exists(dropped)))
     venv = create_venv(os.path.join(scratch, "venv"))
     checks += boot_checks(scratch, venv) + interpreter_checks(scratch, venv)
 

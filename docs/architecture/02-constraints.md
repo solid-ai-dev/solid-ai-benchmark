@@ -15,7 +15,7 @@ setting, not a choice the benchmark made. Chapter 9 records the choices.
 | 6 | The builder and the judge bill against subscriptions | A round's budget is quota, not invoice. The judge's weekly plan limit sets how fast a round is judged |
 | 7 | This repository is public | The hidden suite and the raw runs live in private repositories, `braboj/tariff-hidden-suite` and `braboj/tariff-runs` |
 | 8 | Scoring runs Python 3.12 | Every trial's environment is made on Python 3.12, the spec's version, whatever the scorer runs under; without it the scorer refuses to score |
-| 9 | A round needs about 0.5 GB free per trial: about 40 GB for round 5's 75 | Each scored trial's environment is about 290 MB |
+| 9 | A round's scoring area needs about 60 MB per trial, plus 0.5 GB for the trial being scored: about 5 GB for round 5's 75 | Each trial's environment, about 290 MB, is dropped once its scores are read; its tree stays until the round is archived |
 | 10 | GitHub refuses a file over 50 MB on push | The archive refuses one too |
 
 ## 2.2 Organisational constraints
