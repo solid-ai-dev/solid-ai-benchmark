@@ -1729,22 +1729,27 @@ def plain_arm_lines(trials, table, results, arm, length):
     verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
     better = [PLAIN_AXES[axis] for axis, value in scores
               if value is not None and value > 0]
+    # The runs that fell short are counted whatever the reliability axis
+    # reads, because one broken build among many can leave it neutral.
+    low = low_runs(table, arm)
+    errors, count = boot_failures(trials, arm)
+    shortfall = []
+    if low:
+        shortfall.append("%d of %d runs passed clearly fewer of the hidden "
+                         "tests" % (len(low), count))
+    if errors:
+        shortfall.append("%d %s because the app would not start after a "
+                         "clean install" % (len(errors), "of them" if low
+                                            else "runs"))
     worse = []
+    noted = False
     for axis, value in scores:
         if value is None or value >= 0:
             continue
         if axis == "Reliability":
-            low = low_runs(table, arm)
-            errors, count = boot_failures(trials, arm)
-            detail = []
-            if low:
-                detail.append("%d of %d runs passed clearly fewer of the "
-                              "hidden tests" % (len(low), count))
-            if errors:
-                detail.append("%d of them because the app would not start "
-                              "after a clean install" % len(errors))
-            worse.append("reliability (%s)" % ", ".join(detail)
-                         if detail else "reliability")
+            worse.append("reliability (%s)" % ", ".join(shortfall)
+                         if shortfall else "reliability")
+            noted = True
         elif axis == "Economy":
             mean = arm_mean(table, "cost_usd", arm)
             bare = arm_mean(table, "cost_usd", BARE)
@@ -1762,6 +1767,9 @@ def plain_arm_lines(trials, table, results, arm, length):
                  % (spoken(better) if better else "nothing clearly"))
     lines.append("- Worse at: %s." % ("; ".join(worse) if worse
                                       else "nothing clearly"))
+    if shortfall and not noted:
+        lines.append("- Noted, though reliability was not clearly worse "
+                     "overall: %s." % ", ".join(shortfall))
     lines.extend(["", plain_verdict(results, name, verdict)])
     return lines
 
@@ -1875,7 +1883,6 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k):
                      "each other as the hybrid file's? **%s.**"
                      % sentence_case(PLAIN_ANSWERS.get(state, state)))
         lines.append("")
-    redone = len(lost_trials(root))
     lines.extend(["## How sure we are", ""])
     lines.extend(sureness_lines(trials, k))
     lines.extend([
@@ -1886,14 +1893,32 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k):
            "and tests." % judgings[0].get("model") if judgings
            else "No AI read the code this round."),
         "- A difference counts only when it shows clearly across the runs. "
-        "Small or mixed differences count as none.",
-        "- %s" % ("%d runs were stopped part-way, for example by a usage "
-                  "limit, and run again from the start. Only complete runs "
-                  "count." % redone if redone
-                  else "No run had to be run again."),
+        "Small or mixed differences count as none."])
+    lines.extend(rerun_lines(lost_trials(root)))
+    lines.extend([
         "- %d runs were scored in all." % len(names), "",
         "Every number behind this page is in the [technical appendix](%s)."
         % appendix])
+    return lines
+
+
+def rerun_lines(lost):
+    """What happened to the runs that were stopped, in plain words: those run
+    again, and those still missing."""
+    redone = sum(1 for entry in lost if entry.get("rerun"))
+    pending = len(lost) - redone
+    if not lost:
+        return ["- No run had to be run again."]
+    lines = []
+    if redone:
+        lines.append("- %d %s stopped part-way, for example by a usage "
+                     "limit, and run again from the start. Only complete "
+                     "runs count." % (redone, "run was" if redone == 1
+                                      else "runs were"))
+    if pending:
+        lines.append("- %d stopped %s not been run again yet, so %s missing."
+                     % (pending, "runs have" if pending != 1 else "run has",
+                        "they are" if pending != 1 else "it is"))
     return lines
 
 
@@ -4395,6 +4420,24 @@ def documents_checks(seed):
              for line in sureness_lines(
                  {trial_name(arm, block): {} for arm in ROUND5_RUN
                   for block in range(1, ROUND5_K)}, ROUND5_K - 1)), None),
+        ("a run stopped and not yet run again is counted as missing",
+         rerun_lines([{"rerun": "completed"}, {"rerun": None}])
+         == ["- 1 run was stopped part-way, for example by a usage limit, "
+             "and run again from the start. Only complete runs count.",
+             "- 1 stopped run has not been run again yet, so it is missing."],
+         rerun_lines([{"rerun": "completed"}, {"rerun": None}])),
+        ("a broken build is named even where reliability reads neutral",
+         any(line.startswith("- Noted, though reliability")
+             for line in plain_arm_lines(
+                 {"full-1": {"scores": {"boot": {"value": {
+                     "factory": False}}}}, "full-2": {"scores": {}}},
+                 {"task_success": {"values": {"none": {1: 1.0, 2: 1.0},
+                                              "full": {1: 0.0, 2: 1.0}}},
+                  "cost_usd": {"values": {"none": {1: 1.0}, "full": {1: 1.0}}}},
+                 {key: {"full-none": {"verdict": "no improvement shown"}}
+                  for _, keys in RADAR_AXES for key in keys}
+                 | {key: {"full-none": {"verdict": "no improvement shown"}}
+                    for key in ANSWERED}, "full", 391)), None),
         ("run counts come from the runs scored, a spread where they differ",
          times({"none": 15, "skills": 12, "hybrid": 15},
                ["skills", "hybrid"]) == "between 12 and 15 times"
