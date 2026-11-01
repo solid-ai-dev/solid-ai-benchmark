@@ -2355,9 +2355,9 @@ COUNTED_VERDICTS = ("better", "worse", "held", "no improvement shown")
 # matching the reader's theme, by the suffix on each image's address.
 RADAR_THEMES = {
     "light": {"surface": "#fcfcfb", "text": "#0b0b0b", "secondary": "#52514e",
-              "muted": "#898781", "grid": "#e1e0d9", "series": "#2a78d6"},
+              "muted": "#898781", "grid": "#c8c7c0", "series": "#2a78d6"},
     "dark": {"surface": "#1a1a19", "text": "#f0efec", "secondary": "#c3c2b7",
-             "muted": "#898781", "grid": "#2c2c2a", "series": "#3987e5"},
+             "muted": "#898781", "grid": "#55544f", "series": "#3987e5"},
 }
 
 
@@ -2380,9 +2380,9 @@ def radar_svg(panels, theme):
     """One SVG of small radars, one per arm, two to a row: `panels` holds
     (arm, title, scores) with scores as `cluster_scores` gives them."""
     colors = RADAR_THEMES[theme]
-    width, size, radius = 940, 340, 100
+    width, size, radius = 1000, 370, 108
     rows = (len(panels) + 1) // 2
-    top = 44
+    top = 50
     height = top + rows * size
     count = len(RADAR_AXES)
 
@@ -2398,24 +2398,24 @@ def radar_svg(panels, theme):
            '<rect width="100%%" height="100%%" fill="%s"/>' % colors["surface"]]
 
     # One key for every panel: the dashed ring is the bare arm.
-    out.append('<line x1="%d" y1="22" x2="%d" y2="22" stroke="%s" '
+    out.append('<line x1="%d" y1="25" x2="%d" y2="25" stroke="%s" '
                'stroke-width="1.5" stroke-dasharray="4 3"/>'
-               % (width / 2 - 150, width / 2 - 122, colors["secondary"]))
-    out.append('<text x="%d" y="22" dominant-baseline="middle" font-size="12" '
+               % (width / 2 - 210, width / 2 - 180, colors["secondary"]))
+    out.append('<text x="%d" y="25" dominant-baseline="middle" font-size="14" '
                'fill="%s">%s, the ring at 0</text>'
-               % (width / 2 - 116, colors["secondary"], BARE))
-    out.append('<line x1="%d" y1="22" x2="%d" y2="22" stroke="%s" '
-               'stroke-width="2"/>' % (width / 2 + 20, width / 2 + 48,
+               % (width / 2 - 172, colors["secondary"], BARE))
+    out.append('<line x1="%d" y1="25" x2="%d" y2="25" stroke="%s" '
+               'stroke-width="2"/>' % (width / 2 + 10, width / 2 + 40,
                                        colors["series"]))
-    out.append('<text x="%d" y="22" dominant-baseline="middle" font-size="12" '
+    out.append('<text x="%d" y="25" dominant-baseline="middle" font-size="14" '
                'fill="%s">the arm; outside the ring is better</text>'
-               % (width / 2 + 54, colors["secondary"]))
+               % (width / 2 + 48, colors["secondary"]))
     for place, (arm, title, scores) in enumerate(panels):
         cx = (place % 2) * (width / 2) + width / 4
         cy = top + (place // 2) * size + size / 2 + 12
         out.append('<text x="%.1f" y="%.1f" text-anchor="middle" '
-                   'font-size="15" font-weight="600" fill="%s">%s</text>'
-                   % (cx, cy - radius - 40, colors["text"], escape(title)))
+                   'font-size="18" font-weight="600" fill="%s">%s</text>'
+                   % (cx, cy - radius - 50, colors["text"], escape(title)))
         for ring in (-0.5, 0.5, 1.0):
             ring_points = [point(cx, cy, ring, index) for index in range(count)]
             out.append('<polygon points="%s" fill="none" stroke="%s" '
@@ -2431,7 +2431,7 @@ def radar_svg(panels, theme):
             anchor = ("middle" if abs(lx - cx) < 8
                       else "start" if lx > cx else "end")
             out.append('<text x="%.1f" y="%.1f" text-anchor="%s" '
-                       'dominant-baseline="middle" font-size="12" '
+                       'dominant-baseline="middle" font-size="15" '
                        'fill="%s">%s</text>'
                        % (lx, ly, anchor, colors["secondary"], escape(axis)))
 
