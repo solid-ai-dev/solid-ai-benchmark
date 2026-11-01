@@ -614,30 +614,34 @@ its mean and interval and counts as neither a win nor a fail.
 
 The report is `docs/audits/YYYY-MM-DD-efficacy.md`.
 
-**It opens with the finding table.** One column per context file against
-`none`, headed by the file's line count:
+**It opens with a radar per file arm against `none`.** Its axes cluster the
+verdict vector's rows, in a fixed order: works, security, data protection,
+design, maintainability, tests and economy. An axis is the share of its rows
+better than `none` minus the share worse, from −1 to +1; a row whose verdict
+is withheld or not computed counts neither way. `none` is the ring at 0.
+The radar is two SVG files beside the report, light and dark, and GitHub
+shows the one matching the reader's theme.
 
-- **Improves the code?** Yes where a primary dimension or task success is
-  better and none worse; Worse where any is worse; No where none is better.
-- the primary dimensions that moved
-- the hidden-suite pass rate against `none`, naming any run below it by more
-  than the smallest change that matters
-- code size and cost, as signed shares of `none`'s, where the interval
-  separated them
-- a one-phrase reading
+**Then the arms against `none`:**
 
-Under the table:
-
+- the radar's scores as a table, with the rows behind each axis
+- the finding table: one row per arm, `none` first and the files from the
+  cheapest to the dearest, with the verdict (Yes where a primary dimension or
+  task success is better and none worse; Worse where any is worse; No where
+  none is better), the hidden tests, the judge's security, adherence and
+  cost, each marked by its verdict against `none`
+- the runs low on the hidden tests, by more than the smallest change that
+  matters
 - one line per file on why it scored so, in words
-- one line reading the columns together
+- one line reading the files together
 - one line scoring the contrasts between two files, 1 to 10:
   1 + 9 × wins ÷ (wins + fails). A win or fail is a metric better or worse;
   "no improvement shown" counts neither way.
 - one line of caveats: the escalation, withdrawn metrics, lost trials,
   reaches past a workspace, and the judge's evidence check
 
-The table and the score describe the verdicts and decide nothing. Every cell
-rests on a verdict or record below it.
+The radar, the tables and the score describe the verdicts and decide
+nothing. Every cell rests on a verdict or record below it.
 
 **Then the record:**
 

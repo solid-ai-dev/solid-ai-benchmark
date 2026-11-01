@@ -19,6 +19,7 @@ import datetime
 import glob
 import io
 import json
+import math
 import os
 import random
 import re
@@ -28,6 +29,7 @@ import statistics
 import sys
 import tempfile
 import textwrap
+import xml.etree.ElementTree as ElementTree
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1380,8 +1382,19 @@ def write_report(root, trials, table, results, seed, escalation,
     lost = lost_trials(root)
     scans = reaches(root)
     active = active_contrasts(trials)
+    os.makedirs(out_dir, exist_ok=True)
+    stem = "%s-efficacy" % datetime.date.today().isoformat()
+    panels = radar_panels(table, results, active)
+    radar = {}
+    if panels:
+        for theme in RADAR_THEMES:
+            image = "%s-radar-%s.svg" % (stem, theme)
+            with io.open(os.path.join(out_dir, image), "w", encoding="utf-8",
+                         newline="\n") as handle:
+                handle.write(radar_svg(panels, theme))
+            radar[theme] = image
     lines.extend(executive_section(trials, table, results, escalation,
-                                   withdrawn or {}, lost, scans))
+                                   withdrawn or {}, lost, scans, radar))
     lines.append("")
 
     lines.append("## What produced these numbers")
@@ -2313,17 +2326,216 @@ def why_line(trials, results, arm, name, answered, length):
     return "**`%s`, %s.** %s" % (arm, answered, text)
 
 
+# The radar's axes: the verdict vector's rows, clustered by what a reader
+# asks of a build, in a fixed order. A radar's shape depends on the order of
+# its axes, so the order is the code's and never the data's. Per-KLOC rows
+# stand for their totals, so one measure counts once.
+RADAR_AXES = (
+    ("Works", ("task_success", "install")),
+    ("Security", ("judge_security", "security_probe_pass_rate",
+                  "csrf_refused", "xss_inert", "bandit_per_kloc")),
+    ("Data protection", ("judge_data_protection",
+                         "data_protection_probe_pass_rate")),
+    ("Design", ("judge_design", "judge_srp", "judge_ocp", "judge_lsp",
+                "judge_isp", "judge_dip", "judge_errors", "judge_naming",
+                "patterns_missed", "layering_violations", "mutual_imports")),
+    ("Maintainability", ("judge_maintainability", "judge_readability",
+                         "mypy_per_kloc", "ruff_per_kloc", "complexity_max",
+                         "complexity_over_15_per_kloc", "mean_cc",
+                         "unused_per_kloc")),
+    ("Tests", ("judge_tests", "coverage")),
+    ("Economy", ("cost_usd", "output_tokens", "turns", "wall_seconds")),
+)
+
+# The verdicts an axis counts: a withheld or uncomputed one is no evidence
+# either way, so it is left out of the share rather than read as no change.
+COUNTED_VERDICTS = ("better", "worse", "held", "no improvement shown")
+
+# The radar's two themes, from the reference palette: GitHub shows the one
+# matching the reader's theme, by the suffix on each image's address.
+RADAR_THEMES = {
+    "light": {"surface": "#fcfcfb", "text": "#0b0b0b", "secondary": "#52514e",
+              "muted": "#898781", "grid": "#e1e0d9", "series": "#2a78d6"},
+    "dark": {"surface": "#1a1a19", "text": "#f0efec", "secondary": "#c3c2b7",
+             "muted": "#898781", "grid": "#2c2c2a", "series": "#3987e5"},
+}
+
+
+def cluster_scores(results, name):
+    """Per radar axis, in order: the share of its rows better than the bare
+    arm minus the share worse, from -1 to +1, or None where no row has a
+    verdict."""
+    scores = []
+    for axis, keys in RADAR_AXES:
+        verdicts = [results[key][name]["verdict"] for key in keys
+                    if name in results.get(key, {})]
+        counted = [verdict for verdict in verdicts
+                   if verdict in COUNTED_VERDICTS]
+        scores.append((axis, (counted.count("better") - counted.count("worse"))
+                       / len(counted) if counted else None))
+    return scores
+
+
+def radar_svg(panels, theme):
+    """One SVG of small radars, one per arm, two to a row: `panels` holds
+    (arm, title, scores) with scores as `cluster_scores` gives them."""
+    colors = RADAR_THEMES[theme]
+    width, size, radius = 940, 340, 100
+    rows = (len(panels) + 1) // 2
+    top = 44
+    height = top + rows * size
+    count = len(RADAR_AXES)
+
+    def point(cx, cy, value, index):
+        # -1 sits at the centre, 0 (the bare arm) halfway, +1 on the rim.
+        angle = -math.pi / 2 + 2 * math.pi * index / count
+        reach = radius * (value + 1) / 2
+        return cx + reach * math.cos(angle), cy + reach * math.sin(angle)
+
+    out = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
+           'viewBox="0 0 %d %d" font-family="-apple-system, Segoe UI, '
+           'Helvetica, Arial, sans-serif">' % (width, height, width, height),
+           '<rect width="100%%" height="100%%" fill="%s"/>' % colors["surface"]]
+
+    # One key for every panel: the dashed ring is the bare arm.
+    out.append('<line x1="%d" y1="22" x2="%d" y2="22" stroke="%s" '
+               'stroke-width="1.5" stroke-dasharray="4 3"/>'
+               % (width / 2 - 150, width / 2 - 122, colors["secondary"]))
+    out.append('<text x="%d" y="22" dominant-baseline="middle" font-size="12" '
+               'fill="%s">%s, the ring at 0</text>'
+               % (width / 2 - 116, colors["secondary"], BARE))
+    out.append('<line x1="%d" y1="22" x2="%d" y2="22" stroke="%s" '
+               'stroke-width="2"/>' % (width / 2 + 20, width / 2 + 48,
+                                       colors["series"]))
+    out.append('<text x="%d" y="22" dominant-baseline="middle" font-size="12" '
+               'fill="%s">the arm; outside the ring is better</text>'
+               % (width / 2 + 54, colors["secondary"]))
+    for place, (arm, title, scores) in enumerate(panels):
+        cx = (place % 2) * (width / 2) + width / 4
+        cy = top + (place // 2) * size + size / 2 + 12
+        out.append('<text x="%.1f" y="%.1f" text-anchor="middle" '
+                   'font-size="15" font-weight="600" fill="%s">%s</text>'
+                   % (cx, cy - radius - 40, colors["text"], escape(title)))
+        for ring in (-0.5, 0.5, 1.0):
+            ring_points = [point(cx, cy, ring, index) for index in range(count)]
+            out.append('<polygon points="%s" fill="none" stroke="%s" '
+                       'stroke-width="1"/>' % (" ".join(
+                           "%.1f,%.1f" % xy for xy in ring_points),
+                           colors["grid"]))
+        for index, (axis, _) in enumerate(scores):
+            x, y = point(cx, cy, 1.0, index)
+            out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" '
+                       'stroke="%s" stroke-width="1"/>'
+                       % (cx, cy, x, y, colors["grid"]))
+            lx, ly = point(cx, cy, 1.32, index)
+            anchor = ("middle" if abs(lx - cx) < 8
+                      else "start" if lx > cx else "end")
+            out.append('<text x="%.1f" y="%.1f" text-anchor="%s" '
+                       'dominant-baseline="middle" font-size="12" '
+                       'fill="%s">%s</text>'
+                       % (lx, ly, anchor, colors["secondary"], escape(axis)))
+
+        # The bare arm is the ring at zero, dashed, so outside it is better.
+        zero = [point(cx, cy, 0.0, index) for index in range(count)]
+        out.append('<polygon points="%s" fill="none" stroke="%s" '
+                   'stroke-width="1.5" stroke-dasharray="4 3"/>'
+                   % (" ".join("%.1f,%.1f" % xy for xy in zero),
+                      colors["secondary"]))
+        shape = [point(cx, cy, value if value is not None else 0.0, index)
+                 for index, (_, value) in enumerate(scores)]
+        out.append('<polygon points="%s" fill="%s" fill-opacity="0.22" '
+                   'stroke="%s" stroke-width="2" stroke-linejoin="round"/>'
+                   % (" ".join("%.1f,%.1f" % xy for xy in shape),
+                      colors["series"], colors["series"]))
+        for (x, y), (_, value) in zip(shape, scores):
+            out.append('<circle cx="%.1f" cy="%.1f" r="4" fill="%s" '
+                       'stroke="%s" stroke-width="2"/>'
+                       % (x, y, colors["surface"] if value is None
+                          else colors["series"], colors["series"]))
+    out.append("</svg>")
+    return "\n".join(out) + "\n"
+
+
+def radar_table(results, arms):
+    """The radar's scores as a table, one row per axis and a column per arm,
+    with the rows each axis clusters: the radar's text view."""
+    labels = {key: label for key, label, _, _ in METRICS}
+    scored = {arm: dict(cluster_scores(results, "%s-%s" % (arm, BARE)))
+              for arm in arms}
+    lines = ["| Axis | %s | Rows |" % " | ".join("`%s`" % arm for arm in arms),
+             "| --- | %s | --- |" % " | ".join("---" for _ in arms)]
+    for axis, keys in RADAR_AXES:
+        lines.append("| %s | %s | %s |" % (
+            axis, " | ".join(axis_score(scored[arm][axis]) for arm in arms),
+            "; ".join(labels.get(key, key) for key in keys)))
+    return lines
+
+
+def axis_score(value):
+    """An axis score as the radar's table prints it: signed, two places,
+    zero unsigned, a dash where the axis has no verdict."""
+    if value is None:
+        return "—"
+    return "0.00" if value == 0 else "%+.2f" % value
+
+
+def escape(text):
+    """Text as an SVG element holds it."""
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def by_cost(table, arms):
+    """The arms from the cheapest to the dearest, any without a cost last."""
+    def cost(arm):
+        mean = arm_mean(table, "cost_usd", arm)
+        return (mean is None, mean or 0.0)
+    return sorted(arms, key=cost)
+
+
+# How to read the radar, under it.
+RADAR_READING = (
+    "One radar per arm, from the cheapest to the dearest. Each axis is a "
+    "cluster of the verdict vector's rows: the share of them better than "
+    "`%s` minus the share worse, from -1 at the centre to +1 at the rim. The "
+    "dashed ring is `%s`, so outside it is better. A hollow point is an axis "
+    "with no verdict. The rows behind each axis, and every number, are in "
+    "the sections below." % (BARE, BARE))
+
+
+def radar_panels(table, results, active):
+    """The radar's panels: each file arm against the bare arm, from the
+    cheapest to the dearest, with its verdict in the title."""
+    arms = [pair[0] for pair in active if pair[1] == BARE]
+    panels = []
+    for arm in by_cost(table, arms):
+        name = "%s-%s" % (arm, BARE)
+        verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
+        panels.append((arm, "%s — %s" % (arm, verdict),
+                       cluster_scores(results, name)))
+    return panels
+
+
 def executive_section(trials, table, results, escalation=None,
-                      withdrawn=None, lost=(), scans=()):
-    """The report's first section: one column per context file against no
-    file, each cell read off a verdict or a mean below it, one line per
-    file on why it scored so, the reading, the contrasts between files
-    scored, and the caveats.
+                      withdrawn=None, lost=(), scans=(), radar=None):
+    """The report's first sections: the summary, a radar per file arm read
+    against no file where `radar` names its two images, light and dark;
+    then the arms against no file: the finding table, one line per file on
+    why it scored so, the reading, the contrasts between files scored, and
+    the caveats.
 
     Like the score, it digests the verdict vector and decides nothing.
     """
     active = active_contrasts(trials)
-    lines = finding_lines(trials, table, results, active)
+    lines = ["## Executive summary", ""]
+    if radar:
+        for theme, image in sorted(radar.items()):
+            lines.append("![Radar per arm](%s#gh-%s-mode-only)"
+                         % (image, theme))
+        lines.extend(["", RADAR_READING, ""])
+    else:
+        lines.extend(["No radar was drawn for this run.", ""])
+    lines.extend(finding_lines(trials, table, results, active))
     scored = between_files(results, active)
     if scored:
         lines.extend(["", scored])
@@ -2338,7 +2550,7 @@ def finding_lines(trials, table, results, active):
     names = ["%s-%s" % (treatment, baseline)
              for treatment, baseline in active if baseline == BARE]
     if not names:
-        return ["## Executive summary", "",
+        return ["## Arms against `%s`" % BARE, "",
                 "No file arm has a trial to read against `%s`, which has "
                 "none in this run yet." % BARE]
     arms = [name.split("-")[0] for name in names]
@@ -2349,16 +2561,15 @@ def finding_lines(trials, table, results, active):
 
     # One row per arm, the bare arm first as the line every other is read
     # against, then the files from the cheapest to the dearest.
-    def cost(arm):
-        mean = arm_mean(table, "cost_usd", arm)
-        return (mean is None, mean or 0.0)
-
-    ranked = sorted(arms, key=cost)
-    lines = ["## Executive summary", "",
-             "| Arm | File | Verdict vs `%s` | %s |"
-             % (BARE, " | ".join(heading for heading, _, _ in FINDING_COLUMNS)),
-             "| --- | --- | --- | %s |"
-             % " | ".join("---" for _ in FINDING_COLUMNS)]
+    ranked = by_cost(table, arms)
+    lines = ["## Arms against `%s`" % BARE, ""]
+    lines.extend(radar_table(results, ranked))
+    lines.extend(["",
+                  "| Arm | File | Verdict vs `%s` | %s |"
+                  % (BARE, " | ".join(heading
+                                      for heading, _, _ in FINDING_COLUMNS)),
+                  "| --- | --- | --- | %s |"
+                  % " | ".join("---" for _ in FINDING_COLUMNS)])
     for arm in [BARE] + ranked:
         lines.append("| %s |" % " | ".join(
             finding_row(table, results, arm, answers.get(arm),
@@ -3419,7 +3630,7 @@ def prose_of(text, heading):
 
 def finding_of(text):
     """The report's opening section with its wrapping undone."""
-    return prose_of(text, "## Executive summary")
+    return prose_of(text, "## Arms against `none`")
 
 
 def executive_checks(seed):
@@ -3479,6 +3690,60 @@ def executive_checks(seed):
     checks.append(("a contrast over fewer pairs than blocks names its count",
                    "(14 pairs)" in short and "pairs" not in whole,
                    (short, whole)))
+
+    # An axis counts its rows better minus worse over the rows with a
+    # verdict; a withheld or uncomputed row is left out, and an axis with
+    # none reads None.
+    planted = {key: {"skills-none": {"verdict": "no improvement shown"}}
+               for _, keys in RADAR_AXES for key in keys}
+    planted["task_success"]["skills-none"] = {"verdict": "worse"}
+    planted["install"]["skills-none"] = {"verdict": "not computed"}
+    planted["judge_tests"]["skills-none"] = {"verdict": "better"}
+    planted["coverage"]["skills-none"] = {"verdict": "better"}
+    for key in ("judge_data_protection", "data_protection_probe_pass_rate"):
+        planted[key]["skills-none"] = {"verdict": CROSSING_VERDICT}
+    got = dict(cluster_scores(planted, "skills-none"))
+    checks.append(("an axis is better minus worse over its rows with a "
+                   "verdict, None without one",
+                   got["Works"] == -1.0 and got["Tests"] == 1.0
+                   and got["Data protection"] is None
+                   and got["Security"] == 0.0
+                   and [axis for axis, _ in cluster_scores(planted,
+                                                           "skills-none")]
+                   == [axis for axis, _ in RADAR_AXES], got))
+
+    # The radar is well-formed SVG in both themes, a titled panel per arm,
+    # its axes in their fixed order, and the bare arm's ring in each.
+    panels = [("reference", "reference — Worse",
+               cluster_scores(planted, "skills-none")),
+              ("skills", "skills — Yes", cluster_scores(planted,
+                                                        "skills-none"))]
+    drawn = {theme: radar_svg(panels, theme) for theme in RADAR_THEMES}
+    try:
+        trees = {theme: ElementTree.fromstring(svg)
+                 for theme, svg in drawn.items()}
+    except ElementTree.ParseError as error:
+        trees = {"error": str(error)}
+    space = "{http://www.w3.org/2000/svg}"
+    shaped = all(
+        [text.text for text in tree.iter(space + "text")
+         if text.text in ("reference — Worse", "skills — Yes")]
+        == ["reference — Worse", "skills — Yes"]
+        and sum(1 for polygon in tree.iter(space + "polygon")
+                if polygon.get("stroke-dasharray")) == len(panels)
+        for tree in trees.values()) and "error" not in trees
+    labels = [text.text for text in trees.get("light", ElementTree.Element(
+        "svg")).iter(space + "text")]
+    order = [label for label in labels if label in dict(RADAR_AXES)]
+    checks.append(("the radar draws a panel per arm, with the bare ring, in "
+                   "both themes",
+                   shaped and drawn["light"] != drawn["dark"]
+                   and order[:len(RADAR_AXES)]
+                   == [axis for axis, _ in RADAR_AXES], sorted(trees)))
+    checks.append(("each axis score prints signed, zero unsigned, none as a "
+                   "dash",
+                   [axis_score(value) for value in (0.5, -1.0, 0.0, None)]
+                   == ["+0.50", "-1.00", "0.00", "—"], None))
 
     # Each verdict reads as its mark, once spelled out in the legend.
     marks = [verdict_mark({"verdict": verdict, "non_inferior": inferior})
@@ -3575,22 +3840,27 @@ def executive_checks(seed):
         ("the finding table opens the report",
          0 <= text.find("## Executive summary")
          < text.find("## What produced"), None),
+        ("the summary is the radar, one image per theme",
+         all("-radar-%s.svg#gh-%s-mode-only)" % (theme, theme) in text
+             for theme in RADAR_THEMES)
+         and text.find("## Executive summary") < text.find("![Radar per arm]")
+         < text.find("## Arms against `none`"), None),
         ("it has a row per arm, the bare arm first, with the files' lines",
          0 < text.find("| `none` | no file | — |")
-         < text.find("| `full` | ") and context_lines("full")
-         > context_lines("hand"), prose_of(text, "## Executive summary")),
+         < text.find(row_start("full", "Not measured")) and context_lines("full")
+         > context_lines("hand"), prose_of(text, "## Arms against `none`")),
         ("an unmeasured run answers Not measured in every cell",
          row_start("full", "Not measured") + " not measured |" in text
          and row_start("hand", "Not measured") + " not measured |" in text
          and "Together: not measured. K = %d," % K_PRIMARY in text,
-         prose_of(text, "## Executive summary")),
+         prose_of(text, "## Arms against `none`")),
         ("each file's why-line sits between the table and the reading",
          "▲ better and ▼ worse" in text
          and 0 < text.find("▲ better and ▼ worse")
          < text.find("**`full`, Not measured.** Every win is "
                      "something a tool counts.")
          < text.find("**`hand`, Not measured.**")
-         < text.find("Together:"), prose_of(text, "## Executive summary")),
+         < text.find("Together:"), prose_of(text, "## Arms against `none`")),
     ])
 
     # A round 2 run: five arms, `full` and `hand` reused from round 1, the
@@ -3605,7 +3875,7 @@ def executive_checks(seed):
         "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
         for arm, score in design.items() for index in range(1, K_PRIMARY + 1)}
     _, _, text = rendered(trials, seed, {})
-    finding = prose_of(text, "## Executive summary")
+    finding = prose_of(text, "## Arms against `none`")
 
     def row_start(arm, verdict):
         return "| `%s` | %s lines | %s |" % (
