@@ -1779,12 +1779,58 @@ def plain_verdict(results, name, verdict):
     if verdict == "No":
         return ("**Verdict: no clear gain.** None of the deciding measures "
                 "moved clearly.")
+    if any(results[key][name]["verdict"] == CROSSING_VERDICT
+           for key in ANSWERED):
+        return ("**Verdict: not given.** Its runs come from an earlier round, "
+                "and comparing them with this round's would mix two rounds.")
     return "**Verdict: not measured.** Too few runs were scored to compare it."
 
 
 def sentence_case(text):
     """Text with its first letter capital and the rest as written."""
     return text[:1].upper() + text[1:]
+
+
+# Said wherever an interval is shown from fewer blocks than can decide.
+DESCRIPTIVE_NOTE = ("**Every interval below is descriptive.** At K = %d no "
+                    "arrangement of paired differences reaches conventional "
+                    "significance, so no difference here is established.")
+
+
+def runs_per_arm(trials):
+    """How many scored runs each arm has, in the arms' declared order."""
+    counts = {}
+    for name in trials:
+        counts[arm_of(name)] = counts.get(arm_of(name), 0) + 1
+    return {arm: counts[arm] for arm in ARMS if arm in counts}
+
+
+def times(runs, arms):
+    """How many times the arms ran, as a sentence says it: 15 times, or
+    between 12 and 15 times where they differ."""
+    counts = sorted({runs[arm] for arm in arms if arm in runs})
+    if not counts:
+        return "no times"
+    if len(counts) == 1:
+        return "%d %s" % (counts[0], "time" if counts[0] == 1 else "times")
+    return "between %d and %d times" % (counts[0], counts[-1])
+
+
+def sureness_lines(trials, k):
+    """The qualifications the full record states, in plain words: a round
+    too small to decide anything, and a round not yet complete."""
+    lines = []
+    if k < FEWEST_DECIDING:
+        lines.append("- With only %d runs per approach, no difference here can "
+                     "be called established. Read every result as a hint."
+                     % k)
+    if is_round5(trials):
+        owed = owed_blocks(trials)
+        if owed:
+            lines.append("- The round is not complete: %s still miss a run, so "
+                         "every answer here is provisional."
+                         % blocks_named(owed))
+    return lines
 
 
 def plain_report_lines(root, trials, table, results, radar, appendix, k):
@@ -1796,12 +1842,14 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k):
     judgings = [trial["judge"] for trial in trials.values() if trial["judge"]]
     model = next((trial["scores"].get("model") for trial in trials.values()
                   if trial["scores"].get("model")), "unknown")
+    runs = runs_per_arm(trials)
     lines = ["# Efficacy benchmark — %s" % datetime.date.today().isoformat(),
              "",
-             "We asked an AI to build the same small web app %d times with "
-             "each approach to giving it our templates, and %d times with no "
-             "rules file at all (`%s`). Each radar compares one approach with "
-             "`%s`." % (k, k, BARE, BARE), ""]
+             "We asked an AI to build the same small web app %s with each "
+             "approach to giving it our templates, and %s with no rules file "
+             "at all (`%s`). Each radar compares one approach with `%s`."
+             % (times(runs, [arm for arm in runs if arm != BARE]),
+                times(runs, [BARE]), BARE, BARE), ""]
     if radar:
         for theme, image in sorted(radar.items()):
             lines.append("![Radar per approach](%s#gh-%s-mode-only)"
@@ -1828,10 +1876,11 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k):
                      % sentence_case(PLAIN_ANSWERS.get(state, state)))
         lines.append("")
     redone = len(lost_trials(root))
+    lines.extend(["## How sure we are", ""])
+    lines.extend(sureness_lines(trials, k))
     lines.extend([
-        "## How sure we are", "",
-        "- Each approach ran %d times on one small web app, built by one AI "
-        "model, `%s`." % (k, model),
+        "- Each approach ran %s on one small web app, built by one AI "
+        "model, `%s`." % (times(runs, list(runs)), model),
         "- Automatic tests and tools measured most of it. %s"
         % ("Another AI, `%s`, read the code and scored its design, security "
            "and tests." % judgings[0].get("model") if judgings
@@ -1859,8 +1908,10 @@ def appendix_lines(trials, table, results, escalation, k, seed, generation,
     lines = ["# Efficacy benchmark — %s, technical appendix"
              % datetime.date.today().isoformat(), "",
              "The numbers behind [the report](%s). Everything else, trial by "
-             "trial, is in [the full record](%s)." % (report, record), "",
-             "## What produced the results", ""]
+             "trial, is in [the full record](%s)." % (report, record), ""]
+    if k < FEWEST_DECIDING:
+        lines.extend([DESCRIPTIVE_NOTE % k, ""])
+    lines.extend(["## What produced the results", ""])
     lines.extend(provenance_lines(trials, names, arms, k, seed, generation))
     lines.extend(["", "## The radar's axes, row by row", "",
                   "Each table is one axis of the radar: every measurement it "
@@ -4332,6 +4383,22 @@ def documents_checks(seed):
          and all("### %s" % axis in appendix for axis, _ in RADAR_AXES),
          sections),
         ("every document holds the declared width", over == [], over),
+        ("a round too small to decide says so in the report and the "
+         "appendix", "can be called established" in report
+         and "Every interval below is descriptive." in appendix, None),
+        ("a comparison across rounds reads as not given, not too few runs",
+         plain_verdict({key: {"full-none": {"verdict": CROSSING_VERDICT}}
+                        for key in ANSWERED}, "full-none", "Not measured")
+         .startswith("**Verdict: not given.**"), None),
+        ("a round 5 run short of its last block says it is provisional",
+         any("block %d still miss a run" % ROUND5_K in line
+             for line in sureness_lines(
+                 {trial_name(arm, block): {} for arm in ROUND5_RUN
+                  for block in range(1, ROUND5_K)}, ROUND5_K - 1)), None),
+        ("run counts come from the runs scored, a spread where they differ",
+         times({"none": 15, "skills": 12, "hybrid": 15},
+               ["skills", "hybrid"]) == "between 12 and 15 times"
+         and times({"none": 15}, ["none"]) == "15 times", None),
     ]
 
 
