@@ -206,10 +206,10 @@ restoring it, then the report.
 | 1 | The context file, the vendored templates and every condition marker are removed. A bundle that still names its arm is not judged | [ch. 8.6.6](08-crosscutting-concepts.md) |
 | 2-3 | The rubric is a JSON Schema, so a score is read by machine. Each primary row has anchors at 1, 3 and 5 in this domain's terms | [ch. 8.6.6](08-crosscutting-concepts.md) |
 | 4 | Every quoted line is looked up in its bundle. A judge that never opened the code still returns plausible numbers | [ch. 8.6.7](08-crosscutting-concepts.md) |
-| 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | Ch. 9 |
-| 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, escalation, reach scan and lost trials are computed from both. Any difference fails | Ch. 9 |
+| 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | [ADR-019](../decisions/019-archive-before-the-report.md) |
+| 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, escalation, reach scan and lost trials are computed from both. Any difference fails | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and whether the one escalation to K = 5 is owed | [ch. 8.1](08-crosscutting-concepts.md) |
-| 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | Ch. 9 |
+| 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 10 | The finding table first, then the record behind every cell | [ch. 8.7.3](08-crosscutting-concepts.md) |
 
 ### 6.4.1 Judging notes

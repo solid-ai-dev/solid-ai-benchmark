@@ -39,6 +39,6 @@ py tests/efficacy/generate_arm.py --arm inline --root <outside this repository>
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | Retrying a refused generation until one passes would select the tersest sample. The instruction instead asks the model to measure every line before answering | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-09-26 |
+| 1 | Retrying a refused generation until one passes would select the tersest sample. The instruction instead asks the model to measure every line before answering | Settled in [ADR-002](../../decisions/002-the-arms.md), 2026-09-26 |
 | 2 | The prompt scan is broad and the output scan narrow: a spec-only token in the prompt means the wiring is wrong, and only data nobody could derive counts as an output leak | Settled in [ch. 5.5.4](../../architecture/05-building-block-view.md) |
 | 3 | Round 5's `reference` and `skills` arms are made by other means: fixed text, and `resolve_chain.py --emit` | Open in [round 5's registration, 13.4](../../rounds/round-5.md) |

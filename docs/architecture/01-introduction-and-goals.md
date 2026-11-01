@@ -47,7 +47,7 @@ What it is not:
 | 06 | Judge | Scores each trial blind, three times, on an anchored rubric, and checks every quoted line | [ch. 8.6.6](08-crosscutting-concepts.md), [ch. 8.6.7](08-crosscutting-concepts.md) |
 | 07 | Check the judge | Builds damaged and improved trees that a working judge must tell apart | [ch. 8.6.7](08-crosscutting-concepts.md) |
 | 08 | Report | Pairs trials, computes intervals and verdicts, owes or refuses the escalation, and prints the report | section 1.4, [ch. 8.7](08-crosscutting-concepts.md) |
-| 09 | Archive | Copies a round's raw data to a private store, restores it and checks the figures match | Ch. 9 |
+| 09 | Archive | Copies a round's raw data to a private store, restores it and checks the figures match | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 10 | Reuse | Copies an earlier round's trials into a new run root, with their readings | [ch. 4.2](04-solution-strategy.md) |
 
 ## 1.2 Quality goals

@@ -40,5 +40,5 @@ py tests/efficacy/report.py --root <the run root> --cross-check <that root>
 | # | Finding | Status |
 | - | ------- | ------ |
 | 1 | The report refuses a cross-check root that holds no judging of the round's trials, since an empty one would print as agreement | Settled in [ch. 6.4](../../architecture/06-runtime-view.md) |
-| 2 | Round 4 ran without the cross-check to keep the other vendor's plan free | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-15 |
-| 3 | Round 3's raw data was lost, so it cannot be re-read | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-15 |
+| 2 | Round 4 ran without the cross-check to keep the other vendor's plan free | Settled in [ADR-005](../../decisions/005-the-judge.md), 2026-10-15 |
+| 3 | Round 3's raw data was lost, so it cannot be re-read | Settled in [ADR-019](../../decisions/019-archive-before-the-report.md), 2026-10-15 |

@@ -39,6 +39,6 @@ py tests/efficacy/report.py --root <run root> --templates <the templates clone>
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | Round 3's run root and scoring area were deleted with nothing kept, so none of its readings can be re-run. Rounds are now archived before they are reported | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-15 |
+| 1 | Round 3's run root and scoring area were deleted with nothing kept, so none of its readings can be re-run. Rounds are now archived before they are reported | Settled in [ADR-019](../../decisions/019-archive-before-the-report.md), 2026-10-15 |
 | 2 | A file over 50 MB is refused, because a push would be | Settled in [ch. 6.4.2](../../architecture/06-runtime-view.md) |
 | 3 | The report lands in another repository, so this one holds no results | Settled: [the rounds index](../../rounds/README.md#reports) links every report |
