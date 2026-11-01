@@ -25,7 +25,7 @@ written and validated before any trial.
 - This repository is public, so a suite here is one search away from a future
   trial.
 - Written afterwards, the suite would be shaped by the first outputs
-  ([ch. 10.6](../architecture/10-quality-requirements.md)).
+  ([validation](../validation.md)).
 
 ## History
 
@@ -34,4 +34,4 @@ Every change to this decision, oldest first:
 | Date | Change | Why | Issue |
 | ---- | ------ | --- | ----- |
 | 2026-09-12 | The hidden suite lives in the private `braboj/tariff-hidden-suite` | This repository is public, so a suite here is one search away from a future trial | solid-ai-templates#1705 |
-| 2026-09-12 | The hidden suite is written and validated before any trial | Written afterwards, it would be shaped by the first outputs ([ch. 10.6](../architecture/10-quality-requirements.md)) | solid-ai-templates#1714, solid-ai-templates#1715 |
+| 2026-09-12 | The hidden suite is written and validated before any trial | Written afterwards, it would be shaped by the first outputs ([validation](../validation.md)) | solid-ai-templates#1714, solid-ai-templates#1715 |

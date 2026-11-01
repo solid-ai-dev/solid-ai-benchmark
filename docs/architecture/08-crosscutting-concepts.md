@@ -1,90 +1,64 @@
 # 8. Crosscutting concepts
 
-The rules that more than one script follows, and why each exists.
+Rules that hold across every script: the harness, the scorer, the security
+reader, the judge, the report and the archive. Each section says why its
+rules exist and lists them. The rules themselves are stated as requirements
+in [requirements.md](../requirements.md), and the decisions behind them are
+grouped in [chapter 9](09-architecture-decisions.md).
 
-- Each rule has an ID and a check behind it in the
-  [requirements](../requirements.md). This chapter gives the reasons.
-- A round's registration under `docs/rounds/` can add rules or tighten these.
-  Round 5d, for example, registers its own verdict rules and radar.
-- Some rules start at a given round. Earlier rounds re-read the way they were
-  reported, so the report keeps their old rules too.
+- A round's registration under `docs/rounds/` can add rules or tighten
+  these. Round 5d, for example, registers its own verdict rules and radar.
+- Some rules start at a given round. An earlier round re-reads the way it
+  was reported, so the report keeps its old rules too.
+- Section numbers stay fixed, because round registrations cite them.
 
-Where each concept acts on a trial:
+## 8.1 Rules fixed before a round
 
-```mermaid
-flowchart LR
-    reg["Register the round<br/>8.1"] --> run["Run the trials<br/>8.2 isolation"]
-    run --> score["Score<br/>8.3 missing, 8.4 one ruler, 8.6.1-8.6.4"]
-    score --> probe["Probe<br/>8.6.8"]
-    probe --> judge["Judge<br/>8.5 blind, 8.6.5-8.6.7"]
-    judge --> arch["Archive<br/>8.8"]
-    arch --> rep["Report<br/>8.1, 8.7"]
-```
+### 8.1.1 Registration and reading a result
 
-## 8.1 The registered rules
+The question, the metrics and the rule for reading a result are written down
+before any trial runs.
 
-Every rule for reading a result is fixed before the first trial. Nobody can
-then choose a metric or a threshold after seeing the numbers.
+**Why**
 
-### 8.1.1 Rules, fixed before the first run
+- Nobody can then pick the metric or the threshold that makes the templates
+  look good after seeing the numbers.
+- Arms in one block meet the same model on the same day, so a difference
+  between them is the file's, not the day's.
 
-**A round's registration comes before its first trial.** From round 5 on, the
-report refuses a round when:
+![Four example intervals of a difference in hidden-test points, against zero and a 2-point margin. One lies wholly above zero: better, and a big loss is ruled out. One crosses zero but stays above the margin: undecided, and a big loss is ruled out. One crosses both zero and the margin: undecided, and a big loss is not ruled out. One lies wholly below zero: worse](../diagrams/verdict.png)
 
-- its registration landed on `main` after the first trial started
-  - it reads `main`'s first-parent line, so a merge counts at the merge
-- its registration differs from `main`'s copy, or has uncommitted changes
-- a trial built from a spec or prompt other than the registered one, by
-  content
-- a trial with something to score records no spec or no prompt
+**Rules**
 
-The harness checks the spec before every trial too. An edit made mid-run
-refuses the trials after it, instead of building them.
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | The registration comes first | From round 5, a registration that landed on `main` after the round's first trial is refused, a merge counting at the merge | FR-01-01 |
+| 2 | The registration is the one on `main` | A copy that differs from `main`'s, or has changes not committed, is refused | FR-01-02 |
+| 3 | Every trial builds what was registered | A trial on another spec or prompt, by content, or recording none, is refused; the harness checks the spec before each trial | FR-01-03 to FR-01-05 |
+| 4 | Time is unambiguous | A trial records its start with its UTC offset; a start with none is refused | FR-01-06 |
+| 5 | A registration lands by pull request | A squash or rebase merge, since a fast-forward from a clone keeps its older commit date | FR-01-07 |
+| 6 | Arms are compared within a block | The unit is one block's difference, such as `hand-1` minus `none-1`; each block starts one arm later | FR-02-01 |
+| 7 | The interval decides | 95 % bias-corrected and accelerated bootstrap over the K differences, 10,000 resamples, seed recorded. Wholly on the improving side: better. Wholly on the other: worse. Across zero: no improvement shown | FR-02-02 |
 
-Two details keep the order honest on any machine:
+"No improvement shown" does not mean "equal". Claiming that takes a margin
+(8.1.2). A metric's direction is set in 8.7.2.
 
-- A trial records its start with its UTC offset. A start with no offset is
-  refused, not guessed.
-- Registrations land through a pull request's squash or rebase merge. A
-  fast-forward pushed from a clone keeps its branch commit's older date.
+### 8.1.2 Margins
 
-**How a result is read.**
+A trim is a change that shortens the templates. It may claim a metric held
+only when the whole interval of the change lies inside the metric's margin,
+the largest loss the round tolerates.
 
-| Step | Rule |
-|---|---|
-| Unit | One block's difference between two arms, such as `hand-1` minus `none-1`. Arms in a block meet the same model on the same day |
-| Result | The mean of the K differences, per metric and contrast |
-| Interval | 95 % bias-corrected and accelerated bootstrap over the K differences, 10,000 resamples, seed recorded |
-| Direction | Declared per metric (8.7.2), since half the metrics improve downward |
+**Why**
 
-The verdict depends only on where the interval sits against zero:
+- "No improvement shown" does not mean "no worse".
+- This is a non-inferiority test, the kind drug trials use to show a new
+  treatment is no worse than the standard by more than a set margin.
 
-```text
-                   worse side   0   improving side
-                                |
-  Better                        |   [=======]        wholly on the improving side
-  Worse          [=======]      |                    wholly on the worse side
-  No improvement           [====|====]               contains zero
-  shown
-```
-
-"No improvement shown" does not mean "equal". Claiming that needs 8.1.2.
-
-### 8.1.2 Rules for claiming "nothing got worse"
-
-A trim shortens the templates. It may claim a metric **held** only when the
-whole interval of the change lies inside the margin: the largest loss the
-round tolerates.
-
-```text
-                 -margin            0
-                    |               |
-  Held              |   [=======]   |      whole interval above -margin
-  Not shown held  [=|=====]         |      reaches past the margin
-```
+The margins:
 
 | Metric | Unit | Margin | Smallest change that matters | Since |
-|---|---|---|---|---|
+| ------ | ---- | ------ | ---------------------------- | ----- |
 | Hidden-test pass rate | pp | 2 | 5 | round 1 |
 | Adherence checklist | pp | 5 | 10 | round 1 |
 | Primary judge scores, 1–5 | points | 0.3 | 0.5 | round 1 |
@@ -94,70 +68,82 @@ round tolerates.
 | Data-protection probe pass rate | pp | 10 | 30 | round 3 |
 | App code, lines and files | relative % | 20 | 40 | round 5 |
 
-- An adherence gain counts only if the pass rate held. Following rules while
-  breaking the app is no improvement.
-- A trim is free only if every metric held.
-- The report shows every metric. Its summary score decides nothing.
-- Round 5 holds adherence within 8 pp, one checklist item of 13, as
-  [its registration](../rounds/round-5.md) states.
+**Rules**
 
-This is a non-inferiority test, the kind drug trials use to show a new
-treatment is no worse than the standard by more than a set margin. Below
-K = 6 it describes the result and proves nothing.
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Held means inside the margin | The whole interval lies inside the margin; a relative margin is a share of the baseline arm's mean | FR-02-03, FR-02-04 |
+| 2 | Adherence never trades for the app | An adherence gain counts only if the hidden-test pass rate held | FR-02-07 |
+| 3 | A trim is free only if nothing got worse | Every metric held | FR-02-08 |
+| 4 | The summary decides nothing | The report shows every metric; its summary score is a reading aid | — |
+| 5 | Round 5 holds adherence to one item | 8 pp, one checklist item of 13, as [its registration](../rounds/round-5.md) states | FR-02-05 |
+| 6 | Few blocks describe | Below K = 6, every interval is called descriptive | FR-02-09 |
 
-### 8.1.3 Few trials, and the one escalation
+### 8.1.3 Trial count and escalation
 
-**Three trials describe; they do not prove.** Three differences give the
-bootstrap only 27 distinct resamples, and no arrangement of three reaches
-conventional significance. The report says so beside every interval.
+A round fixes K, the number of blocks, before its first trial.
 
-A round sizes K one of two ways:
+**Why**
 
-```mermaid
-flowchart TD
-    k3["Registered at K = 3"] --> owed{"Escalation owed?"}
-    owed -- no --> done3["Report at K = 3"]
-    owed -- yes --> esc["Run two more blocks, once"]
-    esc --> done5["Report K = 3 and K = 5 side by side"]
-    big["Registered at a larger K"] --> full{"All K blocks run?"}
-    full -- yes --> doneK["Report the round"]
-    full -- no --> part["Part-run: no verdict is the round's"]
-```
+- Three differences give the bootstrap only 27 distinct resamples, and no
+  arrangement of three reaches conventional significance. Three trials
+  describe; they do not prove.
+- Sampling until an interval clears zero is the failure the bound on K
+  prevents.
 
-- **Owed** where a primary's interval contains zero while its mean exceeds
-  the smallest change that matters (8.1.2).
-- A result still unsettled at K = 5 is reported as inconclusive.
-- Any contrast can owe it, for an effect in either direction. The report
-  computes whether it is owed.
-- A larger K is sized before the first trial, from earlier rounds' noise.
-- K never exceeds 5 under escalation. Sampling until an interval clears zero
-  is the failure this bound prevents.
-- A round with a larger K adds no block once results are seen. Round 5
-  registers K = 15 ([its registration](../rounds/round-5.md), 13.5).
+![A round registered at K = 3 runs three blocks. If an escalation is owed it runs blocks 4 and 5 once and reports K = 3 and K = 5 side by side; otherwise it reports at K = 3. A round registered at a larger K, such as 15, runs K blocks and reports the round if all ran, and is part-run with no verdict of its own if not](../diagrams/escalation.png)
+
+**Rules**
+
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | One escalation, under fixed conditions | Owed where a primary's interval contains zero while its mean exceeds the smallest change that matters, in any contrast and either direction; the report computes it | FR-03-01 |
+| 2 | Never past K = 5 by escalation | Two more blocks, once; a row still open is reported inconclusive | FR-03-02, FR-03-03 |
+| 3 | Or a larger K, sized beforehand | From earlier rounds' per-trial noise; no block added once results are seen. Round 5 registers K = 15 ([13.5](../rounds/round-5.md)) | FR-03-04 |
+| 4 | A short run decides nothing | A run short of its K is part-run, and none of its verdicts is the round's | FR-03-05 |
 
 ### 8.1.4 Failed and lost trials
 
-A **failed** trial is the agent's doing. A **lost** trial is the provider's.
+A failed trial is the agent's doing. A lost trial is the provider's.
 
-| How the trial ended | Kind | What happens |
-|---|---|---|
+**Why**
+
+- Re-running one arm's failures would quietly improve that arm.
+- A trial the provider cut off says nothing about the agent.
+
+How each ending is handled:
+
+| Ending | Kind | What happens |
+| ------ | ---- | ------------ |
 | Completed | — | Scored |
-| Budget cap or timeout | Bound (ch. [6.1](06-runtime-view.md)) | Scored as it stands |
+| Budget cap or timeout | Bound ([ch. 6.1](06-runtime-view.md)) | Scored as it stands |
 | No installable workspace | Failed | Task success 0, quality metrics missing, never re-run |
 | Usage limit, rate limit, crash, or no result | Lost | Re-run once, in its own place in the order |
 | Lost a second time | Lost | The run stops |
 
-- Re-running one arm's failures would quietly improve that arm.
-- A lost trial's partial workspace is kept under the run's `void/` directory
-  and never scored.
+**Rules**
 
-## 8.2 Isolation in layers
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | A failure stands | Scored as it is, with missing metrics left missing, never re-run | FR-04-01 to FR-04-03 |
+| 2 | A loss is re-run once | In its own place; its partial workspace kept under `void/`, never scored | FR-04-04 to FR-04-06 |
+| 3 | Two losses stop the run | A stopped run resumes with `--from`, in the same order | FR-04-07, FR-04-08 |
 
-No single fence stops every route out of a workspace. The harness stacks
-several and records what each caught.
+## 8.2 Isolation
+
+A trial reaches nothing it is defined not to have: the templates, the hidden
+suite, the web, another trial, the owner's own setup.
+
+**Why**
+
+- A trial that read the hidden suite measures the suite.
+- No single fence stops every route out of a workspace, so the harness
+  stacks several and records what each caught.
+
+The layers:
 
 | Layer | Stops | Cannot stop |
-|---|---|---|
+| ----- | ----- | ----------- |
 | Scratch home, minimal settings | The owner's global `CLAUDE.md`, hooks, memory and MCP | |
 | Cleaned environment | The launching session's variables, interpreter and keys | |
 | Deny rules on file tools | Read and Edit outside the trial's workspace | The shell, whose paths a prefix rule cannot see |
@@ -166,74 +152,96 @@ several and records what each caught.
 | Process-stop commands denied | Stopping the harness by name | Stopping by PID or port |
 | Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record |
 
-The transcript scan is the backstop. A hit voids the trial and re-runs it
-once, and the report scans again under the current rule.
+**Rules**
 
-## 8.3 Missing is not zero
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Nothing of the owner's reaches a trial | Scratch home, minimal settings, cleaned environment | FR-05-01, FR-05-02 |
+| 2 | The tools are fenced | File tools denied outside the workspace, web tools disallowed, no Git credentials, no stop by name | FR-05-03 to FR-05-06 |
+| 3 | The transcript is the backstop | A hit voids the trial and re-runs it once; the report scans again under the current rule | FR-05-07, FR-05-08 |
+| 4 | Nothing outlives the trial | Every process started from its directories is stopped before it is frozen | FR-05-09 |
 
-A zero has to mean "measured, and none found". So:
+The decision is ADR-020.
+
+## 8.3 Missing values
+
+A zero has to mean "measured, and none found".
+
+**Why**
+
+- A tool that scanned nothing reports zero findings, and would read as a
+  clean arm.
+- A probe the trial keeps from running would drop out of the rate, so a
+  trial would score higher for not reaching it.
+
+How each case is recorded:
 
 | Case | Recorded as |
-|---|---|
+| ---- | ----------- |
 | A tool scanned nothing, failed or timed out | Missing, with the reason |
 | A grader skipped a check | Not passed |
 | The trial keeps a probe from running | Lost: the probe fails |
 | The harness could not run a probe | The rate is missing |
 
+**Rules**
+
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Unmeasured is missing | With the reason, and shown as not measured | FR-06-01, FR-06-05 |
+| 2 | Skipped is not passed | A partial suite is flagged | FR-06-02 |
+| 3 | A probe the trial blocks is lost | It counts against the rate | FR-06-03 |
+| 4 | A probe the harness could not run is missing | The rate is left missing | FR-06-04 |
+
 Each script's self-test plants these cases and fails if one reads as zero.
 
-## 8.4 One ruler
+## 8.4 Tools and interpreter
 
-Every trial is measured with the same tool versions.
+Every trial is measured with the same tool versions, configuration and
+Python.
 
-```mermaid
-flowchart LR
-    req["scoring-requirements.txt"] -- "first trial scored" --> lock["tool-lock.txt"]
-    lock -- "every later trial" --> env["Scoring environment"]
-    cfg["toolconfig/"] --> env
-```
+**Why**
 
-- The lock leaves out anything local, editable, or named like the package
-  under score, so one trial's code never installs over another's.
-- `toolconfig/` is the only configuration the tools run under.
-- Every build is scored on the spec's Python. The report refuses a round
-  whose scores ran on two.
+- A tool upgraded between trials would move a metric for every arm after it.
+- An agent's own `ruff.toml` would let each arm choose its own ruler.
 
-## 8.5 Blindness
+**Rules**
 
-The judge must not know which arm wrote a tree.
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | One lock | The first trial scored resolves `scoring-requirements.txt` into `tool-lock.txt`; every later trial installs from it | FR-07-01 |
+| 2 | The lock holds only tools | Anything local, editable or named like the package under score is left out | FR-07-02 |
+| 3 | One configuration | `toolconfig/` only, never the agent's | FR-07-03 |
+| 4 | One Python | The spec's; a round scored on two is refused | FR-07-04 |
 
-```mermaid
-flowchart LR
-    strip["Strip context file,<br/>templates, markers,<br/>scoring output"]
-    tree["Trial tree"] --> strip
-    strip --> scan{"Leak scan:<br/>names its arm?"}
-    scan -- yes --> refuse["Refused"]
-    scan -- no --> order["Shuffle, at a recorded seed"]
-    order --> judge["Judge"]
-    order -. "unblinding map" .-> map[("Kept out of<br/>the judge's reach")]
-```
+## 8.5 Blind judging
+
+The judge must not know which arm wrote a build.
+
+**Why**
+
+- A judge that can name the arm can favour it, even without meaning to.
+
+![A frozen trial is stripped of its context file, templates, skills, markers and scoring output. A leak scan refuses a bundle that still names its arm. A clean bundle is shuffled at a recorded seed and judged, scored 1 to 5 three times, while the unblinding map is written where the judge cannot reach it](../diagrams/blinding.png)
+
+**Rules**
+
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Strip what names the arm | The context file, vendored templates, skills, markers and scoring output leave the bundle | FR-08-01 |
+| 2 | Shuffle, and keep the key apart | The order is shuffled at a recorded seed; the map is out of the judge's reach | FR-08-02 |
+| 3 | Refuse a leak | A leak scan reads every file, and a bundle that still names its arm is not judged | FR-08-03 |
 
 ## 8.6 Scoring
 
-Each frozen trial goes through the same pipeline. The deterministic stages
-run on every trial; the judge comes last.
+Each frozen trial goes through the same pipeline: the deterministic measures
+first, the judge last. [Chapter 6](06-runtime-view.md) shows it as a
+sequence.
 
-```mermaid
-flowchart LR
-    t["Frozen trial"] --> s["Task success<br/>and backbone<br/>8.6.1"]
-    s --> q["Code quality<br/>8.6.2"]
-    q --> d["Design structure<br/>8.6.3"]
-    d --> c["Change task<br/>8.6.4"]
-    c --> p["Security probes<br/>8.6.8"]
-    p --> j["Judge<br/>8.6.5-8.6.7"]
-```
-
-### 8.6.1 Task success and the backbone
+### 8.6.1 Task success and other measures
 
 **Task success** is the hidden suite's pass rate. The suite lives in a
-private repository. It is cloned only at scoring time, never into a
-workspace. It covers:
+private repository and is cloned only at scoring time, never into a
+workspace (FR-09-01). It covers:
 
 - the Python API: rule precedence, stacking, tier boundaries, rounding to
   the cent, jurisdiction tables, invalid rules refused
@@ -242,10 +250,10 @@ workspace. It covers:
 - the JSON and CSV exports, byte-exact against the seed
 - forms with JavaScript disabled, and browser flows through Playwright
 
-The rest of the backbone:
+The other measures, run on every trial:
 
 | Measure | What it reads |
-|---|---|
+| ------- | ------------- |
 | Install | `pip install .` in a clean virtualenv, `import tariff`, and the app serves `/` |
 | Accessibility | axe-core WCAG 2.1 AA violations |
 | HTML validity | Errors, less those on HTMX's `hx-*` attributes, which the spec requires and HTML lacks |
@@ -253,28 +261,29 @@ The rest of the backbone:
 | Invoice builder | Response size and request count |
 | Adherence | Share of a fixed checklist of 13 items passed |
 | Cost | Tokens, turns, wall time, API-equivalent dollars |
-| Scope | Files and lines, and artifacts nobody asked for: ADR, journal, CHANGELOG, PLAYBOOK |
+| Size | App code's files and lines, apart from tests, docs and configuration |
+| Unasked artifacts | ADR, journal, CHANGELOG, PLAYBOOK, committed bytecode or databases |
 | Consistency | Each metric's spread across an arm's trials |
 
 The adherence checklist:
 
-- **Tools:** `ruff` clean, `ruff format` clean, `mypy --strict` clean,
-  coverage ≥ 80 %, cognitive complexity ≤ 15.
-- **Structure:** a `src/` layout, one error hierarchy, a `NullHandler`.
-- **Hygiene:** no `print` in library code, no citations.
-- **Packaging:** complete metadata, a README with install and usage,
-  discoverable tests.
+| Group | Items |
+| ----- | ----- |
+| Tools | `ruff` clean, `ruff format` clean, `mypy --strict` clean, coverage ≥ 80 %, cognitive complexity ≤ 15 |
+| Structure | A `src/` layout, one error hierarchy, a `NullHandler` |
+| Hygiene | No `print` in library code, no citations |
+| Packaging | Complete metadata, a README with install and usage, discoverable tests |
 
-It checks quality, not the templates, so the bare arm can score on it too.
+It checks quality, not the templates, so the bare arm scores on it too
+(FR-09-05). The decisions on HTML validity and size are ADR-011.
 
 ### 8.6.2 Code quality
 
-The tools run at the harness's pinned versions and configuration, never the
-configuration the agent wrote. Counts are reported absolute and per 1,000
-lines.
+The tools run at the harness's pinned versions and configuration (8.4).
+Counts are reported absolute and per 1,000 lines.
 
 | Tool | Measures |
-|---|---|
+| ---- | -------- |
 | `ruff check --select ALL` | Violations, by category |
 | `ruff format --check` | Files needing reformatting |
 | `mypy --strict` | Type errors |
@@ -287,30 +296,20 @@ lines.
 
 Not measured: mutation score, class cohesion, pylint's refactoring checks.
 
-**Finding the code.** Each arm picks its own layout, so the tools never
-assume `src/`. A tool pointed at an empty `src/` would report zero findings,
-and zero must never mean "nothing scanned". The harness:
+**Rules**
 
-1. imports the installed package and takes its directory
-2. adds every top-level package directory in the workspace
-3. passes those paths to every tool explicitly
-
-The report shows how many files and lines each tool saw, so a clean arm can
-be told from an unmeasured one.
-
-**Coverage installs the test dependencies.** The clean install leaves out a
-trial's extras and dependency groups. Without them a suite fails on an
-import, and a trial that packaged its tests correctly would read as
-unmeasured. So the coverage run first installs every extra and dependency
-group in `pyproject.toml`, within the tool lock. One that conflicts with the
-lock records coverage as missing, with the conflict as the reason.
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Find the code, never assume `src/` | The installed package and every top-level package, passed to every tool by path; the report shows the files and lines each tool saw | FR-07-05 |
+| 2 | Coverage installs the test dependencies | Every extra and dependency group the trial declares, within the lock | FR-07-06 |
+| 3 | A conflict leaves coverage missing | With the conflict as the reason | FR-07-07 |
 
 ### 8.6.3 Design structure
 
-The harness probes each tree's structure directly.
+The scorer probes each build's structure directly (FR-09-06).
 
 | Probe | Asks |
-|---|---|
+| ----- | ---- |
 | Layering | Does the domain import neither Flask nor persistence? Do routes do no `Decimal` arithmetic? |
 | Import graph | Mutual imports, and the domain modules' mean instability (Martin), through `grimp` |
 | Extension points | Can a discount kind, a jurisdiction or an export format be added without editing existing code? Per axis |
@@ -320,131 +319,134 @@ The harness probes each tree's structure directly.
 | IO isolation | Does pricing take values, not rows or a connection? |
 | Hygiene | `print` calls, exception bases, citations, a `NullHandler` |
 
-### 8.6.4 The change task: the open-closed measure
+### 8.6.4 The change task
 
 The change task measures how well a build takes a change it was not built
-for. It must lie outside what the spec allows, or it measures data entry,
-not design. It adds two things no configuration reaches:
+for: the open-closed principle, in practice.
+
+**Why**
+
+- A task the spec already allows measures data entry, not design. Both
+  additions are out of reach of configuration.
+- Churn means something only beside a pass: an arm that touched four lines
+  and broke the extension has not scored well.
+
+The two additions:
 
 | Addition | Why configuration cannot reach it |
-|---|---|
-| Spend-threshold discount: 5 % off once the subtotal reaches 200.00, before coupons | The first rule gated by a condition over the invoice. Every other kind is unconditional or gated by a coupon |
-| Capped reduced rate: one category taxed at the reduced rate on a line's first 50.00, the standard rate above | The first tax that is not one rate times one amount. It changes the tax step's shape, not its inputs |
+| -------- | --------------------------------- |
+| Spend-threshold discount: 5 % off once the subtotal reaches 200.00, before coupons | The first rule gated by a condition over the invoice |
+| Capped reduced rate: one category taxed at the reduced rate on a line's first 50.00, the standard rate above | The first tax that is not one rate times one amount |
 
-Measured:
+Measured: files touched and lines changed, whether the build suite stays
+green, whether the acceptance modules pass through the API, and, from round
+3, whether the rule and cap work through the forms and the invoice preview.
 
-- files touched and lines changed
-- whether the build suite is still green
-- whether the change-task acceptance modules pass, through the API
-- from round 3, whether the new rule and cap work through the forms and the
-  invoice preview
+**Rules**
 
-A new rule class plus a registry entry scores low churn. Editing the
-pricing function, the tax step, three routes and two templates scores high.
-Churn means something only beside a pass: an arm that touched four lines and
-broke the extension has not scored well.
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Churn counts what the agent changed | Every edited and new file; nothing in an environment | FR-09-07 |
+| 2 | The prompt states what the grader drives | The new class, the cap's keyword, the form fields, the rules checked | FR-09-08 |
+| 3 | The acceptance modules come first | Written before any change-task run, against worked figures | FR-09-09 |
 
-Two rules keep the grading fair:
-
-- **The prompt states everything the grader drives:** the new class, the
-  cap's keyword, the form fields, the rules the acceptance modules check.
-  Round 1's grader used names the prompt never gave, so it graded guessing,
-  and its pass rate was withdrawn (8.7.5).
-- **The acceptance modules are written before any change-task run.** They
-  test the two behaviours against worked figures.
+The decision is ADR-009, including why round 1's change-task pass rate was
+withdrawn.
 
 ### 8.6.5 Pattern use
 
 For each design pattern it finds, the judge records where it is, what it
-removes or opens, and whether it has more than one implementation.
+removes or opens, and whether it has more than one implementation. It scores
+the property, not the name: a design that reaches the same extension points
+another way scores the same.
 
 | Kind | What counts |
-|---|---|
+| ---- | ----------- |
 | Warranted | Patterns the app invites: Strategy for discount kinds, a registry or Factory to resolve a rule or jurisdiction by name, Composite or a precedence chain for stacking, Adapter for exports, Builder for an invoice |
 | Missed | A conditional ladder over rule kinds where a Strategy was warranted |
 | Over-engineered | A pattern with one implementation that removes nothing, per `oop.md` |
 
-It scores the property, not the name. A design that reaches the same
-extension points another way scores the same.
+### 8.6.6 The judge
 
-### 8.6.6 The model judge
+A model reads each build and scores it 1–5 on each row of a rubric, quoting
+the line its score rests on.
 
-**The rubric.** Each row is scored 1–5 with a quoted evidence line:
+The rubric's rows:
 
-- SOLID: SRP, OCP, LSP, ISP, DIP
-- naming and abstraction level, error design
-- readability, maintainability, test quality
-- security, data protection
+| Group | Rows |
+| ----- | ---- |
+| SOLID | SRP, OCP, LSP, ISP, DIP |
+| Code | Naming and abstraction level, error design, test quality |
+| Primary | Design (SOLID and pattern use), readability, maintainability; from round 3, security and data protection |
 
-**Primary dimensions** lead the report, before task success and cost:
-design (SOLID and pattern use), readability, maintainability, and from
-round 3 security and data protection (8.6.8).
+The primary rows lead the report, before task success and cost.
 
-**How it judges:**
+**Why**
 
-| Rule | Why |
-|---|---|
-| Anchored: each primary describes its 1, 3 and 5 in this domain's terms | A scale saying only "1 is poor, 5 is excellent" put 3 on ordinary work every time |
-| Three judgings per tree, averaged | One judging is not reproducible |
-| Blind (8.5) | The judge must not favour an arm it can name |
-| Model and effort recorded with every judging | A reading is tied to the judge that made it |
-| Read-only: it may read the bundle and do nothing else | A judge that edits or runs the code changes what it scores |
+- A scale saying only "1 is poor, 5 is excellent" put 3 on ordinary work
+  every time, so each primary is anchored at 1, 3 and 5 in this domain's
+  terms.
+- One judging is not reproducible, so each tree is judged three times.
 
-**Which judge.** From round 5, `gpt-6-astra` through `codex exec` at effort
-`high` judges every trial, and no cross-check runs
-([round 5's registration, 13.1](../rounds/round-5.md)).
+**Rules**
 
-Earlier rounds used `claude-opus-5-5` through the `claude` CLI at effort
-`high`. It shares a vendor with the generator. Every arm has the same
-generator, so a contrast cancels most of that bias, but not a preference for
-the templates' style, which was largely written with Claude. So `gpt-6-astra`
-cross-checked a sample of each round, under a rule registered before the
-first round it covered:
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Three judgings, averaged | Each tree is judged three times | FR-10-01 |
+| 2 | One named judge | From round 5, `gpt-6-astra` through `codex exec` at effort `high`, model and effort recorded | FR-10-02 |
+| 3 | The judge only reads | It may read the bundle and do nothing else | FR-10-03 |
+| 4 | Blind | As 8.5 sets out | FR-08-01 to FR-08-03 |
+| 5 | A cross-check never mixes in | Before round 5, a second judge read a sample; agreement counted per row; a verdict lost its direction only where the two read opposite signs | FR-10-04, FR-10-05 |
 
-- **Sample:** whole blocks, so every contrast it reads is paired. Every
-  build trial once where the plan's weekly limit allows; otherwise blocks
-  drawn in a shuffled order at the round's seed until the limit.
-- **Agreement:** per row, the mean difference between the two judges, and
-  the share of trials whose scores lie within one point.
-- **Direction:** a better or worse verdict loses it when the other judge's
-  mean paired difference has the opposite sign. Zero or unread keeps it.
-- **Never mixed:** the other judge's scores never replace or join the main
-  judge's, and its intervals decide nothing.
+The choice of judge, and how it changed, is ADR-005.
 
-### 8.6.7 How the judge is checked
+### 8.6.7 Judge validation
 
 No person scores the judge. Two automated checks do.
 
 **The evidence check.** Every line the judge quotes is looked up in the
-bundle it came from. The report prints the share found per trial. A judge
-that never opened the code still returns plausible numbers; this check tells
+bundle it came from, and the report prints the share found per trial. A
+judge that never opened the code still returns plausible numbers; this tells
 the two apart.
 
 **The control fixture.** Trees built from two pinned applications, in
-`tests/efficacy/control/`. Each tree changes one thing and passes the same
-tests as its application. A primary counts only if it falls on the tree that
-damages it and rises on the one that improves it, under the rounds' judge.
+`tests/efficacy/control/`. Each changes one thing and passes the same tests
+as its application. A row works when it falls on the tree that damages it
+and rises on the one that improves it, under the rounds' judge.
 
 | Reading | What it means |
-|---|---|
+| ------- | ------------- |
 | Falls on its damaged tree, rises on its improved one | The row works |
 | Does not fall | It cannot detect damage |
 | Does not rise | It cannot detect improvement, so no arm can win on it |
 | Moves on neither | It carries no information |
 
-#### The control's trees
+**Rules**
 
-The first application is a round-1 tree with no sign-in and no customers, so
-it cannot move the security or data-protection rows. The second is one
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | The quotes are checked | The share found is printed per trial | FR-10-06 |
+| 2 | A row counts only if it moves | It falls on its damaged tree and rises on its improved one | FR-10-09 |
+| 3 | Every mutation lands | The builder reads each change back off the trees and refuses one that did not land | FR-10-07 |
+| 4 | The bases do not drift | An archive whose sha256 is not the one recorded is refused | FR-10-08 |
+| 5 | Re-run on any judge change | A new judge model, effort or rubric prompt invalidates every earlier reading | — |
+
+The measured results are in [validation](../validation.md). The decision is
+ADR-016.
+
+#### Control trees
+
+The first application is a round-1 build with no sign-in and no customers,
+so it cannot move the security or data-protection rows. The second is one
 uncounted calibration trial: an ordinary build of the extended spec by the
 rounds' generator. The reference implementation cannot serve instead: it is
 a worked answer to the hidden suite and stays private.
 
-Each tree is built to move one row. Read a row against its own tree; the
-others check that it is not moving on noise.
+Read each row against the tree built to move it; the others check that it
+is not moving on noise.
 
 | Tree | Built to move | What it changes |
-|---|---|---|
+| ---- | ------------- | --------------- |
 | `base-1` | — | The first application, unaltered |
 | `degraded-1` | design ↓, maintainability ↓ | Domain merged into one module, `from flask import current_app` inside `price`, the exceptions reparented off `TariffError` |
 | `obscured-1` | readability ↓ | Pricing inlined into one long function with abbreviated names; nothing else |
@@ -472,48 +474,32 @@ alike. That comparison therefore covers the 293 that pass, the pricing and API
 checks among them.
 <!-- /measured -->
 
-**The builder proves its own changes.** It prints one line per entity it
-claims to change, read back off the built trees, and refuses when a mutation
-did not land. A mutation that silently did nothing would read as the judge
-holding when it was never tested.
-
-**When to re-run it.** Whenever the judge model, its effort, or the rubric
-prompt changes. Each change silently invalidates every earlier reading. The
-measured results are in [validation](../validation.md).
-
-#### Why the bases are pinned archives
+#### Pinned bases
 
 `base.zip` and `base-2.zip` each hold one trial's output. They are inputs to
 the control, not artifacts of it: a regenerated base would compare a later
 run against a different application. `base-2.zip` is `git archive` of the
 calibration trial's commit `f74c0cc`, which reproduces it byte for byte.
 
-Two guards hold them still:
-
-- The builder refuses an archive whose sha256 is not the one in `control.py`.
-- Every edit is an exact-text swap that refuses when its target is absent, so
-  a drifted base stops the control instead of mutating less than it claims.
-
 They are archives, not directories, because this repository's linters would
-read committed Python as source to fix. Reformatting the fixture would edit
-the very thing the judge scores.
+read committed Python as source to fix, and reformatting the fixture would
+edit the very thing the judge scores.
 
 ### 8.6.8 Security and data protection
 
-From round 3, security and data protection are primary dimensions, each read
-two ways:
+From round 3, security and data protection are primary, each read two ways:
 
 | Metric | What it is | Direction | Margin | Smallest change that matters |
-|---|---|---|---|---|
+| ------ | ---------- | --------- | ------ | ---------------------------- |
 | `judge_security` | Anchored judge row, 1–5 | up | 0.3 points | 0.5 points |
 | `judge_data_protection` | Anchored judge row, 1–5 | up | 0.3 points | 0.5 points |
 | Security probe pass rate | Share of 11 probes passed | up | 2 pp | 9 pp |
 | Data-protection probe pass rate | Share of 3 probes passed | up | 10 pp | 30 pp |
 
-**The probes.**
+The probes:
 
 | Security (11) | Data protection (3) |
-|---|---|
+| ------------- | ------------------- |
 | Plaintext password at rest | Sentinel customer email in the logs |
 | Sign-in failures that reveal which accounts exist | An erased customer's sentinel still in the database file |
 | Open redirect after sign-in | One customer's export carrying another's data |
@@ -526,36 +512,32 @@ two ways:
 | Missing security headers | |
 | Stack traces in answers to malformed requests | |
 
-**How a probe reads the app.** It seeds and signs in the way the hidden
-suite does: the administrator's password from the environment, then the
-sign-in form's own fields. Where a probe needs a judgement, it takes the
-narrow one:
+Where a probe needs a judgement, it takes the narrow one:
 
 | Probe | Reads | Why so narrow |
-|---|---|---|
+| ----- | ----- | ------------- |
 | Cookie flags | `HttpOnly` and `SameSite` | `Secure` cannot be observed over plain HTTP |
 | Headers | `nosniff` and framing protection | No content security policy: the spec requires HTMX |
 | Sentinel in logs | Counts at any level | A call that logs personal data does so whatever the level |
 | Erased sentinel | Counts anywhere beside the database, free pages included | That is where erasure leaves it |
 
-**A probe the trial keeps from running is lost.** An app that will not boot,
-install or sign in its administrator fails every probe that needs it, with
-the reason. Counted as missing, those probes would drop out of the rate, and
-a trial would score higher for not reaching them. A probe the harness itself
-could not run leaves the rate missing.
+**Why**
 
-**How the probe margins are set.** Both follow one rule, so they change only
-when a probe count does:
+- A judge row alone is an opinion; the probes are deterministic.
+- Security regressions get no tolerance: each margin is less than one probe
+  lost in one trial at K = 3, and the smallest change that matters is one
+  probe lost in every trial.
 
-| | Security (11) | Data protection (3) |
-|---|---|---|
-| Margin: under one probe lost in one trial at K = 3 | under 3.0 pp → 2 | under 11.1 pp → 10 |
-| Smallest change: one probe lost in every trial | 9.1 pp → 9 | 33.3 pp → 30 |
+**Rules**
 
-Before round 3's first trial, each row was anchored at 1, 3 and 5, and each
-passed the control fixture (8.6.7). The last seven security probes were
-declared after round 1, so they described that round and decided nothing
-(8.7.4). Fixed before round 3, they decide it.
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Probes are proven both ways | Each fails an app built to fail it and passes one built to pass it | FR-11-01, FR-11-03 to FR-11-05 |
+| 2 | A probe signs in as the suite does | The administrator's password from the environment, then the form's own fields | FR-11-02 |
+| 3 | A probe the trial blocks is lost | An app that will not boot, install or sign in fails every probe that needs it | FR-06-03 |
+| 4 | The report reads the probes' own rates | As the security reader files them | FR-11-06 |
+
+The decisions are ADR-012 and ADR-018.
 
 ## 8.7 The report
 
@@ -565,7 +547,7 @@ Each metric is reported per arm and for the contrasts a round registers.
 Round 5's:
 
 | Contrast | Asks |
-|---|---|
+| -------- | ---- |
 | `inline − none` | Does every rule, copied in, help? |
 | `hybrid − none` | Does the hybrid model help? |
 | `reference − none` | Does naming the templates help? |
@@ -574,110 +556,108 @@ Round 5's:
 | `reference − hybrid` | H3: does naming the templates alone deliver less? |
 | `skills − inline` | The same rules, with and without the split into skills |
 
-- A round that measures a template change registers one contrast,
-  `candidate − baseline`, with both arms run in that round
-  ([ch. 4.2](04-solution-strategy.md)).
-- **Pairing trials from different rounds gives no verdict.** The contrast
-  keeps its mean and interval, and counts as neither a win nor a fail.
-- A round may instead register a contrast with an earlier round's arm as
-  **unpaired**, read with an unpaired interval, as round 5d does.
-- Earlier rounds' contrasts stay declared in `report.py`, so an old round
-  re-reads as it was reported.
+**Rules**
+
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | No paired verdict across rounds | A contrast pairing trials from different rounds keeps its mean and interval, and counts as neither a win nor a fail | FR-12-01 |
+| 2 | Or a registered unpaired contrast | A round may read an earlier round's arm unpaired, with a verdict, as round 5d does | FR-12-02 |
+| 3 | Only what the arms ran | Every declared contrast whose arms ran, and no other; earlier rounds' contrasts stay declared | FR-12-03 |
+| 4 | A template change is one contrast | `candidate − baseline`, both arms in one round ([ch. 4.2](04-solution-strategy.md)) | — |
+
+The decision is ADR-015.
 
 ### 8.7.2 Metric directions
 
 | Direction | Metrics |
-|---|---|
+| --------- | ------- |
 | Better up | Task success, adherence, coverage, docstring coverage, extension points present, every judge score, the probe pass rates |
 | Better down | Every static-analysis count, cognitive and cyclomatic complexity, tokens, turns, wall time, cost, files, lines, artifacts nobody asked for, change-task churn, axe violations, HTML errors |
-| Down, against a band | From round 5, app code's lines and files. A rise wholly inside the margin (8.1.2) reads as held; only one wholly past it reads as worse |
-| Neutral, no verdict | Maintainability index, instability, test code's lines; from round 5, the source lines and files app code replaces; before round 5, app code's rows |
+| Down, against a band | From round 5, app code's lines and files: a rise wholly inside the margin (8.1.2) reads held, one wholly past it worse (FR-02-06) |
+| Neutral, no verdict | Maintainability index, instability, test code's lines; from round 5, the source lines and files app code replaces; before round 5, app code's rows (FR-12-04) |
 
-### 8.7.3 What the report prints
+### 8.7.3 Report documents
 
 A round writes three documents to `docs/audits/`, one per reader, plus the
-radar's two images:
+radar's two images (FR-12-05):
 
 | File | Reader | Holds |
-|---|---|---|
+| ---- | ------ | ----- |
 | `YYYY-MM-DD-efficacy.md` | Anyone deciding | The radars, each approach in plain words, the round's questions answered, how sure the answers are |
 | `YYYY-MM-DD-efficacy-appendix.md` | Someone checking a claim | What produced the results, the radar's axes row by row, the verdict vector |
 | `YYYY-MM-DD-efficacy-record.md` | An auditor | Every metric's table, the change task, raw numbers per trial, lost and re-run trials, reaches, the evidence check |
 
-**The radar.** One per file arm, against `none` as the ring at 0. Its axes
-group the verdict vector's rows, in a fixed order: reliability, security,
-data protection, design, maintainability, tests, economy. An axis is the
-share of its rows better than `none` minus the share worse, from −1 to +1. A
-withheld or uncomputed verdict counts neither way. It comes as two SVGs,
-light and dark, and GitHub shows the one matching the reader's theme. Round
-5d registers a radar sized by how far each row moved instead.
+**The radar** (FR-12-06). One per file arm, against `none` as the ring at 0.
+Its axes group the verdict vector's rows: reliability, security, data
+protection, design, maintainability, tests, economy. An axis is the share of
+its rows better than `none` minus the share worse, from −1 to +1. It comes
+as two SVGs, light and dark. Round 5d registers a radar sized by how far
+each row moved instead.
 
-**Each approach, in plain words.**
+**Each approach in plain words** (FR-12-07):
 
 - What it did better and worse than `none`, by radar axis.
 - Reliability: how many runs fell short, and how many would not start.
 - Cost: dollars per run.
-- Its verdict, from the deciding measures: the hidden tests, both probe
-  sets, and the judge's five primaries.
-  - **Yes:** one is better and none worse.
-  - **Worse:** any is worse.
-  - **No:** none moved.
+- Its verdict from the deciding measures, the hidden tests, both probe sets
+  and the judge's five primaries: **Yes** where one is better and none
+  worse, **Worse** where any is worse, **No** where none moved.
 
 The radar and the words describe the verdicts and decide nothing. Every
-claim rests on a row of the appendix or the record.
+claim rests on a row of the appendix or the record. What the report opens
+with is ADR-013.
 
 ### 8.7.4 Checks declared after a run
 
 A check chosen after the results were seen can describe a run, never decide
-it. Otherwise the bar moves with the results.
+it, or the bar would move with the results.
 
-- It is declared in writing, with its direction, before any trial is read
-  for it.
-- The report prints it in its own section, with means and intervals and no
-  verdict.
-- It never enters the verdict vector, a "nothing got worse" claim, or the
-  escalation.
-- A check worth deciding on is fixed before the next run.
+**Rules**
 
-### 8.7.5 Withdrawn measurements
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Declared before it is read | In writing, with its direction, before any trial is read for it | — |
+| 2 | Printed apart | Its own section, with means and intervals and no verdict | FR-12-08 |
+| 3 | Never decides | Never in the verdict vector, a "nothing got worse" claim, or the escalation | FR-12-08 |
+| 4 | Fixed for next time | A check worth deciding on is registered before the next run | — |
+
+### 8.7.5 Withdrawn metrics
 
 A metric whose grader turns out to measure something else is withdrawn, not
 reported.
 
-- The withdrawal goes in `tests/efficacy/withdrawn.json`, against the
-  grader's revision.
-- Every run that revision graded loses the metric. A run graded by a
-  corrected revision keeps it.
-- The report names the metric and the reason, with no number, interval or
-  verdict.
-- A corrected grader never re-grades the same trials. The correction is
-  fixed before the next run.
+**Rules**
+
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | Withdrawn by revision | Recorded in `tests/efficacy/withdrawn.json` against the grader's revision; every run that revision graded loses the metric, others keep it | FR-12-09 |
+| 2 | Named, not shown | The report names the metric and the reason, with no number, interval or verdict | FR-12-09 |
+| 3 | No re-grade | A corrected grader never re-grades the same trials; it is fixed before the next run | FR-12-10 |
 
 ## 8.8 Records
 
-Every stage writes what it did beside what it made.
+Every stage writes what it did beside what it made, so any figure can be
+traced to its inputs and re-run.
 
 | Stage | Records |
-|---|---|
-| Harness | The run record, per invocation |
-| Arm generator | `generation.json`, per generated file |
-| Scoring | Each score with the revisions it was graded under |
-| Judging | Each judging with its model, effort and seed |
-| Archive | All of the above, carried to the private archive with a hash per file |
+| ----- | ------- |
+| Harness | The run record, written as every trial starts and ends (FR-13-01) |
+| Arm generator | `generation.json`, per generated file (FR-13-02) |
+| Scorer | Each score with the revisions it was graded under |
+| Judge | Each judging with its model, effort and seed |
+| Archive | All of the above, in the private archive with a hash per file (FR-13-03) |
 
-The report refuses to write once any reading changed since the archive was
-verified.
+The report refuses to write under `docs/audits/` once any reading changed
+since the archive was verified (FR-13-04). The decision is ADR-019.
 
-## 8.9 One run at a time
+## 8.9 Concurrent runs
 
 `score.py`, `judge.py` and `security.py` each clear a trial's directory
 before rebuilding it, so two runs on one root would destroy each other's
 work.
 
-```mermaid
-flowchart LR
-    start["A run starts"] --> claim{"A .running claim<br/>on the root?"}
-    claim -- no --> write["Write the claim,<br/>naming its process"]
-    claim -- "yes, process alive" --> refuse["Refused"]
-    claim -- "yes, process ended" --> take["Take it over,<br/>and say so"]
-```
+| Claim found on the root | What the run does | Requirement |
+| ----------------------- | ----------------- | ----------- |
+| None | Writes `<tool>.running`, naming its process | — |
+| A live process's | Refused | FR-14-01 |
+| An ended process's | Takes it over, and says so | FR-14-02 |

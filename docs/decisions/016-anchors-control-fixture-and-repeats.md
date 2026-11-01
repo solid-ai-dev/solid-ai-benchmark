@@ -25,7 +25,7 @@ each tree is judged three times.
 - Unanchored, `design` and `maintainability` scored 3 on all 24 trials of
   rounds 1–2.
 - Six judgings of one unchanged tree disagreed
-  ([ch. 10.6](../architecture/10-quality-requirements.md)).
+  ([validation](../validation.md)).
 - Under `claude-opus-5-5` the base and the damaged tree both scored 2 on
   design, each judged on dispatch on concrete classes, so design's anchors were
   moved.
@@ -48,5 +48,5 @@ Every change to this decision, oldest first:
 | Date | Change | Why | Issue |
 | ---- | ------ | --- | ----- |
 | 2026-09-19 | The primaries are anchored and checked by the control fixture | Unanchored, `design` and `maintainability` scored 3 on all 24 trials of rounds 1–2 | solid-ai-templates#1827, solid-ai-templates#1829, solid-ai-templates#1830 |
-| 2026-09-19 | Each tree is judged three times | Six judgings of one unchanged tree disagreed ([ch. 10.6](../architecture/10-quality-requirements.md)) | solid-ai-templates#1830 |
+| 2026-09-19 | Each tree is judged three times | Six judgings of one unchanged tree disagreed ([validation](../validation.md)) | solid-ai-templates#1830 |
 | 2026-09-25 | Design's 1 names the damage to layering, and dispatch on concrete classes with the layers kept apart is a 3 | Under `claude-opus-5-5` the base and the damaged tree both scored 2, each judged on that dispatch | solid-ai-templates#1767 |
