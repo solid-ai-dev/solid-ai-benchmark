@@ -295,8 +295,7 @@ def figures(root, seed):
     trials = report.load(root)
     report.exclude_reached(trials, report.reaches(root))
     table = report.collect(trials)
-    results = report.contrasts(table, seed, report.crossed_labels(trials),
-                               report.margins_of(trials))
+    results = report.round_contrasts(trials, table, seed)
     withdrawn = report.withdrawals(trials)
     report.withdraw(withdrawn, table, results)
     return {"table": table, "results": results, "withdrawn": withdrawn,
@@ -529,6 +528,18 @@ def self_test():
               ["security_probe_pass_rate"] == {"value": 0.5})
     checks.append(("a reading changed in the archive fails the verify",
                    landed and verify(root, into, seed) != []))
+
+    # A round-5d root is verified by round 5d's rules, so reliability's
+    # interval is Newcombe's there as it is in the report.
+    later = os.path.join(scratch, "round-5d")
+    for name in ("hand-1", "short-1", "hand-2", "short-2"):
+        dump_json(os.path.join(scoring_area(later), "scores", name + ".json"),
+                  {"name": name, "install": {"value": True},
+                   "boot": {"value": {"factory": True, "index_status": 302}}})
+    method = figures(later, seed)["results"]["reliability"]["short-hand"][
+        "interval"]["method"]
+    checks.append(("a round-5d root is verified by round 5d's rules",
+                   method.startswith("Newcombe")))
 
     checks.append(("an unarchived round has a stamp problem",
                    stamp_problem(root) is not None))
