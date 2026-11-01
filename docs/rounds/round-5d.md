@@ -8,6 +8,10 @@ Amended on 2026-11-01, before any round-5d trial ran: the three fresh `none`
 trials and their drift check are dropped, and the round runs in one run of
 `hand` and `short`.
 
+Amended again on 2026-11-01, before any round-5d trial ran: the verdict rules of
+13d.7 replace round 5's one-strike reading, and the radar plots how far each row
+moved (13d.8).
+
 ## 13d. Round 5d: a person's file and a 40-line file, against round 5c
 
 ### 13d.1 What it takes from round 5c
@@ -115,6 +119,9 @@ templates delivers at least what a person's file of the same length delivers.
 | Supported | every primary row is held or better |
 | Refuted | any primary row is worse |
 
+H4 to H6 are read under the rules of 13d.7, and each verdict is printed with
+its confidence and the arm's profile.
+
 **Secondary, no verdict:** every metric of [ch.
 8.6](../architecture/08-crosscutting-concepts.md) for `hand` and `short`
 against round 5c's `none`; `short` against round 5c's `inline`, the same
@@ -147,6 +154,8 @@ The report still gains, with a self-test:
 - round 5c's `none` trials read with their scores, judgings, security readings
   and tool lock, from round 5c's run root and scoring area
 - the unpaired contrasts of H4 and H5
+- the verdict rules of 13d.7 and the radar of 13d.8, each rule with a self-test
+  that fails with the rule removed
 
 ### 13d.6 When it runs
 
@@ -155,3 +164,89 @@ After round 5c's last trial is in, scored and judged. Its 30 trials take about
 the owner's go.
 
 Nothing in this registration changes once a round-5d trial has run.
+
+### 13d.7 Verdict rules
+
+Round 5c read a row as worse on one strike, and one broken build struck several
+rows at once. Its two "worse" rows were the same two builds: they failed the
+hidden tests and the data-protection probes together. Round 5d counts each
+failure once and lets only a difference past the margin decide.
+
+**Reliability is a row of its own.**
+
+- It is the share of builds that install and boot.
+- Its interval is exact: Clopper-Pearson per arm, and for a contrast the
+  difference read from the two arms' exact intervals (Newcombe's method).
+- It is a primary row of H4, H5 and H6, beside round 5's H1 rows.
+- Its margin is one build of 15: 6.7 pp.
+
+**Quality rows read working builds only.**
+
+- Task success, the security probes and the data-protection probes are read
+  on the builds that installed and booted.
+- A build that does not boot counts against reliability, and nowhere else.
+- Paired contrasts keep a block only where both builds work. The report prints
+  how many blocks each row kept.
+
+**A strike or a win needs the whole interval past the margin.**
+
+- **Worse:** the whole interval lies past the row's margin, on the losing side.
+- **Better:** the whole interval lies past the margin, on the improving side.
+- **Held:** the whole interval lies inside the margin, as in ch. 8.1.2.
+- Otherwise the row is unsettled, and it decides nothing.
+- The margins are round 5's: ch. 8.1.2, round 5's adherence and app-code rows,
+  and reliability's above.
+
+**Economy has margins, and two rows on the radar.**
+
+| Row | Margin | On the radar |
+| --- | --- | --- |
+| Cost | 25 % relative | yes |
+| Turns | 25 % relative | yes |
+| Output tokens | 25 % relative | appendix only |
+| Wall time | 25 % relative | appendix only |
+
+- Output tokens move with turns, and wall time with cost, so two rows stand for
+  four.
+- Economy stays secondary: it reads better, held or worse in the profile, and
+  decides no hypothesis.
+
+**Each verdict states its confidence.**
+
+- Leave-two-out: the verdict is read again with every two trials dropped, from
+  the 15 blocks of a paired contrast or from the 30 trials of an unpaired one.
+- Each reading uses the interval rule of ch. 8.1.1, with 2,000 resamples and
+  the recorded seed, to keep the 435 readings of an unpaired contrast cheap.
+- **Robust:** every reading gives the same verdict. **Fragile:** any reading
+  differs.
+
+**A profile, beside the word.**
+
+- Each arm's verdict is printed with one line per radar axis: better, held,
+  worse or unsettled.
+- A trade-off, such as better tests at a higher cost, stays visible instead of
+  folding into "supported" or "refuted".
+
+### 13d.8 The radar
+
+The radar plots how far each row moved, not how many rows moved. Round 5c's
+axes were (rows better minus rows worse) over rows, so a 1 % move counted as
+much as a 200 % one.
+
+Per row:
+
+1. Take the bound of the interval nearest zero: the move the data vouches for.
+   An interval across zero scores 0.
+2. Divide it by the row's full scale and cap it at ±1, with + for better.
+3. An axis is the mean of its rows.
+
+| Row kind | Full scale: scores ±1 |
+| --- | --- |
+| Judge scores, 1–5 | 1 point |
+| Shares: reliability, task success, probe pass rates, CSRF, XSS | 20 pp |
+| Coverage | 20 points |
+| Counts, per-KLOC rows, cost and turns | ×4 or ÷4 against `none`, on a log scale |
+
+- The full scale is where an axis saturates. It is not the margin, which
+  still decides better, held or worse.
+- The radar describes the verdicts and decides nothing.
