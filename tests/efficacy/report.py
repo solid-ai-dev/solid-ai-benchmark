@@ -809,8 +809,12 @@ def crossed_labels(trials):
 def collect(trials, metrics=METRICS, later_rules=None):
     """Metric values by metric, arm and trial index, read by round 5d's
     rules for a round-5d run or where `later_rules` asks for them."""
-    superseded = SUPERSEDED_IN_ROUND5 if is_round5(trials) else FROM_ROUND5
     working_only = is_round5d(trials) if later_rules is None else later_rules
+
+    # Round 5d's rules are round 5's size rows too, so a round read by them
+    # decides on app code, whichever round it was.
+    superseded = (SUPERSEDED_IN_ROUND5 if is_round5(trials) or working_only
+                  else FROM_ROUND5)
     table = {}
     for key, label, direction, accessor in metrics:
         if key in superseded or (working_only and key == "adherence"):
@@ -3200,6 +3204,16 @@ def round5d_checks(seed):
         crossed_ok = error
     checks.append(("the post-hoc reading takes a cross-check",
                    crossed_ok is True, crossed_ok))
+
+    # A round before round 5 read by the later rules decides on app code,
+    # while its registered reading keeps source lines and files.
+    sized_run = {trial_name(arm, 1): {"scores": {}} for arm in ("none",
+                                                                 "full")}
+    got = (collect(sized_run, later_rules=True)["app_lines"]["direction"],
+           collect(sized_run, later_rules=True)["source_lines"]["direction"],
+           collect(sized_run)["source_lines"]["direction"])
+    checks.append(("the later rules read app code in any round",
+                   got == (DOWN, NEUTRAL, DOWN), got))
     scratch = os.path.join(tempfile.gettempdir(), "efficacy-posthoc-rules")
     shutil.rmtree(scratch, ignore_errors=True)
     page = write_posthoc_rules(earlier, later_table, later_results, seed,
