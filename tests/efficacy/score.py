@@ -1854,15 +1854,19 @@ def interpreter_checks(scratch, venv):
     targets = {}
     for label, versions in (("same", [wanted, wanted]),
                             ("other", [wanted, "3.14.8"]),
-                            ("unrecorded", [wanted, None])):
-        target = os.path.join(scratch, "pythons", label)
-        os.makedirs(target)
+                            ("unrecorded", [wanted, None]),
+                            ("change", [wanted, wanted, "3.14.8"])):
+        area = os.path.join(scratch, "pythons", label)
+
+        # The third score, where there is one, is a change task's.
         for index, version in enumerate(versions):
-            with io.open(os.path.join(target, "none-%d.json" % (index + 1)),
+            task = "scores-change" if index == 2 else "scores"
+            os.makedirs(os.path.join(area, task), exist_ok=True)
+            with io.open(os.path.join(area, task, "none-%d.json" % (index % 2 + 1)),
                          "w", encoding="utf-8") as handle:
                 json.dump({} if version is None else {"python": version},
                           handle)
-        targets[label] = python_problem(target)
+        targets[label] = python_problem(area)
     return [
         ("a dotted interpreter name on the path is found",
          dotted is not None),
@@ -1872,6 +1876,8 @@ def interpreter_checks(scratch, venv):
          "3.14" in (targets["other"] or "")),
         ("a score with no Python recorded refuses the root",
          "unrecorded" in (targets["unrecorded"] or "")),
+        ("a change task's score on another Python refuses the root",
+         "3.14" in (targets["change"] or "")),
         ("a scoring environment runs the spec's Python",
          (venv_version(venv) or "").split(".")[:2]
          == ["%d" % part for part in SPEC_PYTHON]),
@@ -1982,20 +1988,24 @@ def python_of(scores):
     return ".".join(version.split(".")[:2]) if version else "unrecorded"
 
 
-def python_problem(target):
-    """Why the scores already in `target` cannot stand beside new ones, or
-    None: each was installed on the spec's Python."""
+def python_problem(area):
+    """Why the scores already in a scoring area cannot stand beside new ones,
+    or None: each, of either task, was installed on the spec's Python."""
     wanted = "%d.%d" % SPEC_PYTHON
     others = set()
-    for file in glob.glob(os.path.join(target, "*.json")):
-        with io.open(file, encoding="utf-8") as handle:
-            others.add(python_of(json.load(handle)))
+
+    # Both tasks' scores, since the report reads a build's beside its change
+    # task's and refuses the pair on two Pythons.
+    for task in ("scores", "scores-change"):
+        for file in glob.glob(os.path.join(area, task, "*.json")):
+            with io.open(file, encoding="utf-8") as handle:
+                others.add(python_of(json.load(handle)))
     others.discard(wanted)
     if not others:
         return None
     return ("%s holds scores installed on Python %s, and scoring runs on %s; "
             "a run on another Python is another root"
-            % (target, ", ".join(sorted(others)), wanted))
+            % (area, ", ".join(sorted(others)), wanted))
 
 
 def parse_args(argv):
@@ -2103,7 +2113,7 @@ def score_trials(options):
 
     # The same holds for the interpreter: a score kept from another Python
     # beside new ones would compare the two Pythons, not the arms.
-    problem = python_problem(target)
+    problem = python_problem(area)
     if problem:
         print("refused: %s" % problem)
         lib.print_verdict(False, "0 scored, 1 refused")
