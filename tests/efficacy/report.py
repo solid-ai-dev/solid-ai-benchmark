@@ -994,12 +994,17 @@ def unpaired_interval(left, right, seed, resamples=RESAMPLES):
     normal = statistics.NormalDist()
     bias = normal.inv_cdf(share)
     cubes, squares = 0.0, 0.0
-    for sample in (left, right):
+
+    # The baseline's mean enters the difference with a minus sign, so its
+    # influence on the difference is the negative of its influence on its
+    # own mean; the squares do not see the sign, the cubes do.
+    for sample, sign in ((left, 1.0), (right, -1.0)):
         count = len(sample)
         jackknife = [statistics.fmean(sample[:i] + sample[i + 1:])
                      for i in range(count)]
         centre = statistics.fmean(jackknife)
-        influence = [(count - 1) * (centre - value) for value in jackknife]
+        influence = [sign * (count - 1) * (centre - value)
+                     for value in jackknife]
         cubes += sum(u ** 3 for u in influence) / count ** 3
         squares += sum(u * u for u in influence) / count ** 2
     acceleration = cubes / (6 * squares ** 1.5) if squares else 0.0
@@ -1242,7 +1247,8 @@ def cross_check(trials, other, seed):
     metrics = [metric for metric in METRICS if metric[0] in JUDGE_ROWS]
     return {"model": first.get("model"), "trials": sorted(other),
             "rows": rows,
-            "results": contrasts(collect(other, metrics), seed, (), None,
+            "results": contrasts(collect(other, metrics), seed,
+                                 crossed_labels(trials), None,
                                  is_round5d(trials)),
             "disagreements": []}
 
@@ -2918,6 +2924,29 @@ def round5d_checks(seed):
                    got[0] == 0 and got[1] and got[2] != CROSSING_VERDICT
                    and got[3].startswith("Newcombe's score interval, "
                                          "unpaired"), got))
+
+    # A skewed baseline: the difference's acceleration takes the baseline's
+    # influence with a minus sign, which leaves the interval low enough to
+    # read held within 0.3 points rather than better.
+    skewed = unpaired_interval([2.0] * 15, [1.0] * 14 + [3.0], 20260912)
+    got = (round(skewed["low"], 4), margined_verdict(skewed, UP, 0.3))
+    checks.append(("the unpaired interval signs the baseline's influence",
+                   got[1] == "held" and got[0] < 0.3, got))
+
+    # The other vendor's judge read hand-1, hand-2 and none-3: no block in
+    # common, so only an unpaired reading compares them, as the main one does.
+    def judged(score, reused=False):
+        return {"scores": {"reused_from": {"name": "planted"}} if reused
+                else {}, "change": None, "security": None,
+                "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
+    ours = {"hand-1": judged(3), "hand-2": judged(3), "hand-3": judged(3),
+            "none-1": judged(2, True), "none-2": judged(2, True),
+            "none-3": judged(2, True)}
+    theirs = {name: ours[name] for name in ("hand-1", "hand-2", "none-3")}
+    got = cross_check(ours, theirs, seed)["results"]["judge_design"][
+        "hand-none"]["mean"]
+    checks.append(("the cross-check reads a contrast across rounds unpaired",
+                   got == 1.0, got))
 
     # Two arms that never share a block: unpaired, every reading of the
     # thirty is supported, which a reading by blocks would never be.
