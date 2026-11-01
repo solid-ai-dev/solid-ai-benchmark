@@ -175,10 +175,14 @@ failure once and lets only a difference past the margin decide.
 **Reliability is a row of its own.**
 
 - It is the share of builds that install and boot.
-- Its interval is exact: Clopper-Pearson per arm, and for a contrast the
-  difference read from the two arms' exact intervals (Newcombe's method).
-- It is a primary row of H4, H5 and H6, beside round 5's H1 rows.
+- Each arm's share is printed with its exact interval, Clopper-Pearson.
+- A contrast's interval is Newcombe's score interval for a difference of two
+  shares (Newcombe, 1998), in its paired form for H6.
 - Its margin is one build of 15: 6.7 pp.
+- It can refute but never has to hold. At K = 15 even 15 of 15 against 15 of
+  15 gives an interval near ±20 pp, so no result could show it held. A worse
+  reliability refutes H4, H5 or H6; any other reading lets the other primary
+  rows decide.
 
 **Quality rows read working builds only.**
 
@@ -247,6 +251,13 @@ Per row:
 | Coverage | 20 points |
 | Counts, per-KLOC rows, cost and turns | ×4 or ÷4 against `none`, on a log scale |
 
+- A count row's move is a ratio, (n + d + 1) / (n + 1), where n is `none`'s
+  mean, d the bound nearest zero of the difference, and 1 one unit of the
+  row: one count, or one per KLOC. The ratio stays defined at zero, both for a
+  `none` of 0 and for an arm that falls to 0. Its score is the ratio's log
+  over log 4, signed by the row's direction.
+- Cost and turns are never zero in a trial that ran, so they take the plain
+  ratio, (n + d) / n, on the same log scale.
 - The full scale is where an axis saturates. It is not the margin, which
   still decides better, held or worse.
 - The radar describes the verdicts and decides nothing.
