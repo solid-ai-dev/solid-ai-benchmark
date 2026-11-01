@@ -26,9 +26,10 @@ py tests/efficacy/trace.py
 py -m pyflakes tests
 ```
 
-`trace.py` runs every self-test and fails on a rule in
-[`docs/requirements.md`](docs/requirements.md) whose checks no self-test
-prints. A new rule gets a row there, and a new check its label.
+`trace.py` runs every self-test and fails on a requirement in
+[`docs/requirements.md`](docs/requirements.md) with no row in
+[`docs/coverage.md`](docs/coverage.md), or on a label there no self-test
+prints. A new rule gets a row in both, and a new check its label.
 
 A self-test makes no model call and runs no trial. Running a trial or a
 judging spends a plan's limit, so ask first.

@@ -479,7 +479,7 @@ holding when it was never tested.
 
 **When to re-run it.** Whenever the judge model, its effort, or the rubric
 prompt changes. Each change silently invalidates every earlier reading. The
-measured results are in [ch. 10.7](10-quality-requirements.md).
+measured results are in [validation](../validation.md).
 
 #### Why the bases are pinned archives
 

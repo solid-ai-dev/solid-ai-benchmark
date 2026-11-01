@@ -78,7 +78,7 @@ built.
 
 **Bounds.** A trial ends at $100 of the CLI's own cost figure or at two
 hours. The timeout is the bound that shapes a trial; the budget stops a
-runaway. [ch. 10.6](10-quality-requirements.md) gives the figures behind them.
+runaway. [Validation](../validation.md) gives the figures behind them.
 
 **Records.** Transcript, token usage, turns, wall time and cost are kept,
 and the record says which bound ended the trial. The workspace is frozen as
