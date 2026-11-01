@@ -944,8 +944,8 @@ def cross_check_section(check):
     lines = ["## The other vendor's judge", ""]
     if not check:
         lines.append("Not run: no other vendor's judging was read for this "
-                     "round, so the judge shares a vendor with the generator "
-                     "unchecked.")
+                     "round, so the judge is checked only by its evidence "
+                     "lines.")
         return lines
     lines.append("`%s` read %d trial(s) of this round: %s. Its scores are "
                  "never meaned with the rounds' judge's. A judge-row contrast "
@@ -1372,7 +1372,9 @@ def write_report(root, trials, table, results, seed, escalation,
                      "report repeats rather than footnotes." % k)
     else:
         lines.append("Each interval below is a 95 %% bootstrap interval over "
-                     "the K = %d paired differences of its contrast." % k)
+                     "the paired differences of its contrast, one per block "
+                     "that measured both arms: K = %d at most, and a cell "
+                     "that had fewer names its count." % k)
     lines.append("")
 
     lost = lost_trials(root)
@@ -1408,7 +1410,11 @@ def write_report(root, trials, table, results, seed, escalation,
                         else "%d to %d, uneven" % (counts[0], counts[-1])))
     else:
         lines.append("| Judge | not run |")
-    for label, key in (("Templates revision", "templates_tree"),
+    # A trial's record names the benchmark tree that ran it under the key
+    # `templates_tree`, from when the benchmark lived in the templates
+    # repository; the templates an arm was made from are its generation
+    # record's, in the arm rows below.
+    for label, key in (("Benchmark revision, per trial", "templates_tree"),
                        ("Hidden suite", "suite_revision")):
         seen = sorted({str(trial["scores"].get(key) or "unknown")
                        for trial in trials.values()}) or ["unknown"]
@@ -1421,10 +1427,12 @@ def write_report(root, trials, table, results, seed, escalation,
             continue
         record = generation.get(arm)
         if record:
-            lines.append("| Arm %s's file | generated %s, %s lines, leak "
-                         "scan: %s |"
+            made_from = (record.get("commit") or record.get("ref")
+                         or "unknown")[:8]
+            lines.append("| Arm %s's file | generated %s from the templates "
+                         "at `%s`, %s lines, leak scan: %s |"
                          % (arm, record.get("started_at", "unknown"),
-                            record.get("output_lines", "?"),
+                            made_from, record.get("output_lines", "?"),
                             "clean" if not (record.get("output_leak") or {})
                             .get("hits") else "HITS"))
         else:
@@ -1444,7 +1452,8 @@ def write_report(root, trials, table, results, seed, escalation,
                  % (counted(len(PRIMARY) - len(PROBE_RATES)),
                     counted(len(PROBE_RATES))))
     lines.append("")
-    lines.extend(contrast_table(table, results, PRIMARY, active=active))
+    lines.extend(contrast_table(table, results, PRIMARY, active=active,
+                                blocks=k))
     lines.append("")
 
     lines.extend(escalation_section(escalation))
@@ -1455,7 +1464,7 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.extend(contrast_table(table, results,
                                 ("task_success", "install", "adherence",
                                  "output_tokens", "turns", "wall_seconds",
-                                 "cost_usd"), active=active))
+                                 "cost_usd"), active=active, blocks=k))
     lines.append("")
 
     lines.append("## The change task")
@@ -1464,7 +1473,8 @@ def write_report(root, trials, table, results, seed, escalation,
                  "was not built for, read beside whether the change works and "
                  "whether the build still passes after it.")
     lines.append("")
-    lines.extend(contrast_table(table, results, CHANGE, active=active))
+    lines.extend(contrast_table(table, results, CHANGE, active=active,
+                                blocks=k))
     lines.append("")
 
     lines.append("## Every other metric")
@@ -1473,11 +1483,12 @@ def write_report(root, trials, table, results, seed, escalation,
             if key not in PRIMARY and key not in CHANGE and key not in
             ("task_success", "install", "adherence", "output_tokens", "turns",
              "wall_seconds", "cost_usd")]
-    lines.extend(contrast_table(table, results, rest, active=active))
+    lines.extend(contrast_table(table, results, rest, active=active,
+                                blocks=k))
     lines.append("")
 
     if posthoc:
-        lines.extend(posthoc_section(*posthoc, active=active))
+        lines.extend(posthoc_section(*posthoc, active=active, blocks=k))
         lines.append("")
 
     if is_round5(trials):
@@ -1595,8 +1606,18 @@ def write_report(root, trials, table, results, seed, escalation,
     target = os.path.join(out_dir, "%s-efficacy.md"
                           % datetime.date.today().isoformat())
     with io.open(target, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(wrap_prose(lines, markdown_width())) + "\n")
+        handle.write(report_text(lines, markdown_width()))
     return target
+
+
+def report_text(lines, width):
+    """The report's lines as one text, wrapped to `width`, ending in exactly
+    one newline."""
+
+    # Sections each end in a blank line, so the last one would leave two
+    # blank lines at the end of the file, which the templates' Markdown lint
+    # refuses.
+    return "\n".join(wrap_prose(lines, width)).rstrip("\n") + "\n"
 
 
 def markdown_width():
@@ -1640,7 +1661,7 @@ def posthoc_owed(trials):
                                       for reading in readings)
 
 
-def posthoc_section(table, results, active=None):
+def posthoc_section(table, results, active=None, blocks=None):
     """The report's lines on the security checks declared after the run."""
     lines = ["## Security, read with checks declared after the results",
              "",
@@ -1652,7 +1673,8 @@ def posthoc_section(table, results, active=None):
              ""]
     lines.extend(contrast_table(table, results,
                                 [key for key, _, _, _ in POSTHOC],
-                                verdicts=False, active=active))
+                                verdicts=False, active=active,
+                                blocks=blocks))
     return lines
 
 
@@ -2006,6 +2028,13 @@ def round5_checks():
     got = suite_cell({"task_success": {"values": values}}, "skills-none")
     checks.append(("a dip among fifteen runs is named without a crash",
                    got == "97 %%, one run of %d at 50 %%" % ROUND5_K, got))
+    values["skills"][4] = 0.0
+    got = suite_cell({"task_success": {"values": values}}, "skills-none")
+    checks.append(("two dips are named as two runs",
+                   got == "90 %%, two runs of %d at 0 %% and 50 %%" % ROUND5_K, got))
+    got = report_text(["# Report", "", "Body.", "", ""], 88)
+    checks.append(("a report ends in one newline, however its last section "
+                   "ends", got == "# Report\n\nBody.\n", got))
     return checks
 
 
@@ -2114,9 +2143,14 @@ def moved_cell(results, name):
     return ", ".join(cells) if cells else "did not move"
 
 
+def runs(count):
+    """`run` or `runs`, as a count of them reads."""
+    return "run" if count == 1 else "runs"
+
+
 def suite_cell(table, name):
-    """The arm's hidden-suite pass rate, naming any run under the bare arm's
-    mean by more than the practical threshold."""
+    """The arm's hidden-suite pass rate, naming each run under the bare arm's
+    mean by more than the practical threshold with its own rate."""
     treatment, baseline = name.split("-")
     left = [value for value in table["task_success"]["values"]
             .get(treatment, {}).values() if value is not None]
@@ -2124,10 +2158,11 @@ def suite_cell(table, name):
     if not left or right is None:
         return NOT_MEASURED
     text = "%d %%" % round(100 * statistics.fmean(left))
-    dipped = [value for value in left if value < right - SUITE_DIP]
+    dipped = sorted(value for value in left if value < right - SUITE_DIP)
     if dipped:
-        text += ", %s run of %s at %d %%" % (
-            counted(len(dipped)), counted(len(left)), round(100 * min(dipped)))
+        text += ", %s %s of %s at %s" % (
+            counted(len(dipped)), runs(len(dipped)), counted(len(left)),
+            spoken(["%d %%" % round(100 * value) for value in dipped]))
     return text
 
 
@@ -2144,8 +2179,9 @@ def share_cell(table, results, key, name, held):
 
 
 def size_cell(table, results, name):
-    """Source lines and files as signed shares of the bare arm's, naming
-    only the ones the interval separated."""
+    """Source lines and files as signed shares of the bare arm's, naming the
+    ones the interval separated and, marked so, the ones held within their
+    margin."""
     parts, measured = [], False
     for word, key in SIZE:
         if key not in results:
@@ -2154,6 +2190,14 @@ def size_cell(table, results, name):
         measured = measured or cell != NOT_MEASURED
         if cell not in (None, NOT_MEASURED):
             parts.append("%s %s" % (word, cell))
+        elif results[key][name]["verdict"] == "held":
+
+            # Held means the growth stayed inside the margin, not that there
+            # was none, so the share is printed beside the word.
+            entry = results[key][name]
+            baseline = arm_mean(table, key, name.split("-")[1])
+            parts.append("%s %+d %% (held)" % (
+                word, round(100 * entry["mean"] / baseline)))
     if not measured:
         return NOT_MEASURED
     return ", ".join(parts) if parts else "no change shown"
@@ -2250,8 +2294,9 @@ def why_line(trials, results, arm, name, answered, length):
                  "the app unable to boot"
                  if errors[0].startswith("ModuleNotFoundError")
                  else "left the app unable to boot (`%s`)" % errors[0])
-        sentences.append("%s run of %s %s." % (
-            counted(len(errors)).capitalize(), counted(count), cause))
+        sentences.append("%s %s of %s %s." % (
+            counted(len(errors)).capitalize(), runs(len(errors)),
+            counted(count), cause))
 
     built = [word for word, key in STRUCTURE
              if read_as(results, name, key, "worse")]
@@ -2284,7 +2329,7 @@ def why_line(trials, results, arm, name, answered, length):
         if answered == "Yes" and length is not None and length <= SHORT_FILE:
             lead = "A few rules the agent could hold: " + lead
         if not built:
-            lead += ", and it wrote no more code than without a file"
+            lead += ", and its code grew no more than its size margin allows"
             if effort:
                 lead += " — for more %s" % spoken(effort)
     elif computed:
@@ -2342,7 +2387,7 @@ def finding_lines(trials, table, results, active):
     rows = [
         ("Improves the code?",
          ["**%s**" % answers[arm] for arm in arms]),
-        ("Readability, design, maintainability",
+        ("Primary rows that moved",
          [moved_cell(results, name) for name in names]),
         (suite, [suite_cell(table, name) for name in names]),
         ("Code size", [size_cell(table, results, name) for name in names]),
@@ -2588,7 +2633,7 @@ def escalation_section(escalation):
     return lines
 
 
-def contrast_cell(contrast, verdicts=True):
+def contrast_cell(contrast, verdicts=True, full=None):
     """One contrast, as the mean, its interval, its verdict and its method.
 
     Without `verdicts` the cell stops at the interval, for a row that may
@@ -2612,6 +2657,12 @@ def contrast_cell(contrast, verdicts=True):
     method = interval.get("method") or ""
     if not method.startswith("BCa"):
         body += " ‡"
+
+    # A block missing either arm's measure drops out of the pair, so an
+    # interval over fewer pairs than the round's blocks says how many.
+    pairs = len(contrast.get("pairs") or [])
+    if full and 0 < pairs < full:
+        body += ", %d pairs" % pairs
     if not verdicts:
         return body
     verdict_text = contrast["verdict"]
@@ -2625,9 +2676,11 @@ def contrast_cell(contrast, verdicts=True):
     return "%s — %s" % (body, verdict_text)
 
 
-def contrast_table(table, results, keys, verdicts=True, active=None):
+def contrast_table(table, results, keys, verdicts=True, active=None,
+                   blocks=None):
     """One table of contrasts: every metric, each arm's mean, and every
-    comparison the run holds."""
+    comparison the run holds. `blocks` is the round's block count, against
+    which a contrast over fewer pairs names its count."""
     active = list(CONTRASTS if active is None else active)
     arms = contrast_arms(active)
     lines = ["| Metric | Direction | %s | %s |"
@@ -2645,7 +2698,7 @@ def contrast_table(table, results, keys, verdicts=True, active=None):
         cells = []
         for treatment, baseline in active:
             contrast = results[key]["%s-%s" % (treatment, baseline)]
-            cell = contrast_cell(contrast, verdicts)
+            cell = contrast_cell(contrast, verdicts, blocks)
             degenerate = degenerate or "‡" in cell
             cells.append(cell)
         lines.append("| %s | %s | %s | %s |"
@@ -3437,6 +3490,35 @@ def executive_checks(seed):
     got = (size_cell(bare, planted, "full-none"), size_cell(bare, planted, "hand-none"))
     checks.append(("the size cell names the separated measure as a share",
                    got == ("files +40 %", "no change shown"), got))
+    planted["source_lines"]["hand-none"] = {"mean": 14.0, "verdict": "held"}
+    got = size_cell(bare, planted, "hand-none")
+    checks.append(("growth held within its margin is printed, marked held",
+                   got == "lines +14 % (held)", got))
+
+    # An interval over fewer pairs than the round's blocks names its count;
+    # one over every block does not.
+    contrast = {"mean": 0.1, "verdict": "better", "non_inferior": None,
+                "interval": {"low": 0.05, "high": 0.2, "method": "BCa"},
+                "pairs": [0.1] * 14}
+    short, whole = (contrast_cell(contrast, True, 15),
+                    contrast_cell(dict(contrast, pairs=[0.1] * 15), True, 15))
+    checks.append(("a contrast over fewer pairs than blocks names its count",
+                   ", 14 pairs" in short and "pairs" not in whole,
+                   (short, whole)))
+
+    # Every contrast in the table short of the round's blocks: the count is
+    # read against the round's K, not the most pairs any contrast had.
+    one_table = {"cost_usd": {"label": "Cost", "direction": "down",
+                              "values": {"none": {1: 1.0}, "skills": {1: 2.0}}}}
+    one_result = {"cost_usd": {"skills-none": contrast}}
+    rows = contrast_table(one_table, one_result, ["cost_usd"],
+                          active=[("skills", "none")], blocks=15)
+    checks.append(("a table whose every contrast is short still names counts",
+                   any(", 14 pairs" in row for row in rows), rows))
+    got = " ".join(cross_check_section(None))
+    checks.append(("no second judge is said to be unchecked, not same-vendor",
+                   "checked only by its evidence lines" in got
+                   and "shares a vendor" not in got, got))
 
     # A why-line says, in words, what stands on a record or verdict below:
     # the run that could not boot, the structure built beyond the task and
@@ -3491,8 +3573,8 @@ def executive_checks(seed):
     checks.append(("a short Yes file is a few rules the agent could hold",
                    got == "**Hand-written file, Yes.** A few rules the agent "
                    "could hold: the judge read its code as more readable "
-                   "and better tested, and it wrote no more code than "
-                   "without a file — for more turns and cost.", got))
+                   "and better tested, and its code grew no more than its "
+                   "size margin allows — for more turns and cost.", got))
 
     # The planted change run has no primary, suite, size or cost values, so
     # every cell reads not measured and the columns carry the arm files'
