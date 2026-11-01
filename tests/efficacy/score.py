@@ -27,6 +27,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -265,7 +266,14 @@ def find_interpreter(commands):
     probe = "import sys; print(sys.executable); print(*sys.version_info[:2])"
     wanted = ["%d" % part for part in SPEC_PYTHON]
     for command in commands:
-        outcome = run(list(command) + ["-c", probe], timeout=120)
+
+        # Windows reads the `.12` of `python3.12` as an extension and adds no
+        # `.exe`, so the name is resolved on the path before it is launched.
+        program = shutil.which(command[0])
+        if program is None:
+            continue
+        outcome = run([program] + list(command[1:]) + ["-c", probe],
+                      timeout=120)
         lines = outcome["stdout"].splitlines()
         if (outcome["failed"] is None and outcome["status"] == 0
                 and len(lines) == 2 and lines[1].split() == wanted):
@@ -1818,7 +1826,52 @@ def interpreter_checks(scratch, venv):
         refused = False
     except ScoreError:
         refused = True
+
+    # A dotted name on the path, as `python3.12` is: a wrapper that hands its
+    # arguments to the spec's interpreter.
+    bin_dir = os.path.join(scratch, "dotted-bin")
+    os.makedirs(bin_dir)
+    real = spec_interpreter()
+    if os.name == "nt":
+        wrapper = os.path.join(bin_dir, "spec%d.%d.cmd" % SPEC_PYTHON)
+        text = '@"%s" %%*\r\n' % real
+    else:
+        wrapper = os.path.join(bin_dir, "spec%d.%d" % SPEC_PYTHON)
+        text = '#!/bin/sh\nexec "%s" "$@"\n' % real
+    with io.open(wrapper, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+    os.chmod(wrapper, 0o755)
+    path = os.environ.get("PATH", "")
+    os.environ["PATH"] = bin_dir + os.pathsep + path
+    try:
+        dotted = find_interpreter([["spec%d.%d" % SPEC_PYTHON]])
+    finally:
+        os.environ["PATH"] = path
+
+    # Scores kept in a root: each one on the spec's Python, one on another,
+    # and one from before the scorer recorded its Python.
+    wanted = "%d.%d.0" % SPEC_PYTHON
+    targets = {}
+    for label, versions in (("same", [wanted, wanted]),
+                            ("other", [wanted, "3.14.8"]),
+                            ("unrecorded", [wanted, None])):
+        target = os.path.join(scratch, "pythons", label)
+        os.makedirs(target)
+        for index, version in enumerate(versions):
+            with io.open(os.path.join(target, "none-%d.json" % (index + 1)),
+                         "w", encoding="utf-8") as handle:
+                json.dump({} if version is None else {"python": version},
+                          handle)
+        targets[label] = python_problem(target)
     return [
+        ("a dotted interpreter name on the path is found",
+         dotted is not None),
+        ("scores all on the spec's Python stand beside new ones",
+         targets["same"] is None),
+        ("a score on another Python refuses the root",
+         "3.14" in (targets["other"] or "")),
+        ("a score with no Python recorded refuses the root",
+         "unrecorded" in (targets["unrecorded"] or "")),
         ("a scoring environment runs the spec's Python",
          (venv_version(venv) or "").split(".")[:2]
          == ["%d" % part for part in SPEC_PYTHON]),
@@ -1922,6 +1975,29 @@ def graded_revisions(target):
     return revisions
 
 
+def python_of(scores):
+    """A score's Python as `3.12`, or "unrecorded" for one scored before the
+    scorer recorded it."""
+    version = scores.get("python")
+    return ".".join(version.split(".")[:2]) if version else "unrecorded"
+
+
+def python_problem(target):
+    """Why the scores already in `target` cannot stand beside new ones, or
+    None: each was installed on the spec's Python."""
+    wanted = "%d.%d" % SPEC_PYTHON
+    others = set()
+    for file in glob.glob(os.path.join(target, "*.json")):
+        with io.open(file, encoding="utf-8") as handle:
+            others.add(python_of(json.load(handle)))
+    others.discard(wanted)
+    if not others:
+        return None
+    return ("%s holds scores installed on Python %s, and scoring runs on %s; "
+            "a run on another Python is another root"
+            % (target, ", ".join(sorted(others)), wanted))
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(
         description="Score frozen efficacy-benchmark trials.")
@@ -2022,6 +2098,14 @@ def score_trials(options):
         print("refused: %s holds scores graded at %s, and the hidden suite "
               "is at %s; a run at another revision is another root"
               % (target, ", ".join(sorted(earlier)), suite["revision"]))
+        lib.print_verdict(False, "0 scored, 1 refused")
+        return 1
+
+    # The same holds for the interpreter: a score kept from another Python
+    # beside new ones would compare the two Pythons, not the arms.
+    problem = python_problem(target)
+    if problem:
+        print("refused: %s" % problem)
         lib.print_verdict(False, "0 scored, 1 refused")
         return 1
 

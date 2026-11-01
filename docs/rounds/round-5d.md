@@ -147,6 +147,9 @@ Done with this registration:
 - scoring makes every environment on Python 3.12, the spec's version, and
   records it on every score. Round 5c was scored on Python 3.14.8, which
   refused three builds that capped `requires-python` below 3.13
+- the scorer refuses a root holding scores on another Python, and the report
+  a round whose scores were installed on more than one, so round 5c's
+  `none` is re-scored on Python 3.12 before round 5d reads it
 
 The report still gains, with a self-test:
 
