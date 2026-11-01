@@ -1452,7 +1452,8 @@ def write_report(root, trials, table, results, seed, escalation,
                  % (counted(len(PRIMARY) - len(PROBE_RATES)),
                     counted(len(PROBE_RATES))))
     lines.append("")
-    lines.extend(contrast_table(table, results, PRIMARY, active=active))
+    lines.extend(contrast_table(table, results, PRIMARY, active=active,
+                                blocks=k))
     lines.append("")
 
     lines.extend(escalation_section(escalation))
@@ -1463,7 +1464,7 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.extend(contrast_table(table, results,
                                 ("task_success", "install", "adherence",
                                  "output_tokens", "turns", "wall_seconds",
-                                 "cost_usd"), active=active))
+                                 "cost_usd"), active=active, blocks=k))
     lines.append("")
 
     lines.append("## The change task")
@@ -1472,7 +1473,8 @@ def write_report(root, trials, table, results, seed, escalation,
                  "was not built for, read beside whether the change works and "
                  "whether the build still passes after it.")
     lines.append("")
-    lines.extend(contrast_table(table, results, CHANGE, active=active))
+    lines.extend(contrast_table(table, results, CHANGE, active=active,
+                                blocks=k))
     lines.append("")
 
     lines.append("## Every other metric")
@@ -1481,11 +1483,12 @@ def write_report(root, trials, table, results, seed, escalation,
             if key not in PRIMARY and key not in CHANGE and key not in
             ("task_success", "install", "adherence", "output_tokens", "turns",
              "wall_seconds", "cost_usd")]
-    lines.extend(contrast_table(table, results, rest, active=active))
+    lines.extend(contrast_table(table, results, rest, active=active,
+                                blocks=k))
     lines.append("")
 
     if posthoc:
-        lines.extend(posthoc_section(*posthoc, active=active))
+        lines.extend(posthoc_section(*posthoc, active=active, blocks=k))
         lines.append("")
 
     if is_round5(trials):
@@ -1658,7 +1661,7 @@ def posthoc_owed(trials):
                                       for reading in readings)
 
 
-def posthoc_section(table, results, active=None):
+def posthoc_section(table, results, active=None, blocks=None):
     """The report's lines on the security checks declared after the run."""
     lines = ["## Security, read with checks declared after the results",
              "",
@@ -1670,7 +1673,8 @@ def posthoc_section(table, results, active=None):
              ""]
     lines.extend(contrast_table(table, results,
                                 [key for key, _, _, _ in POSTHOC],
-                                verdicts=False, active=active))
+                                verdicts=False, active=active,
+                                blocks=blocks))
     return lines
 
 
@@ -2672,9 +2676,11 @@ def contrast_cell(contrast, verdicts=True, full=None):
     return "%s — %s" % (body, verdict_text)
 
 
-def contrast_table(table, results, keys, verdicts=True, active=None):
+def contrast_table(table, results, keys, verdicts=True, active=None,
+                   blocks=None):
     """One table of contrasts: every metric, each arm's mean, and every
-    comparison the run holds."""
+    comparison the run holds. `blocks` is the round's block count, against
+    which a contrast over fewer pairs names its count."""
     active = list(CONTRASTS if active is None else active)
     arms = contrast_arms(active)
     lines = ["| Metric | Direction | %s | %s |"
@@ -2682,9 +2688,6 @@ def contrast_table(table, results, keys, verdicts=True, active=None):
                 " | ".join("%s−%s" % pair for pair in active)),
              "|---|---|%s|" % "|".join("---" for _ in arms + active)]
     degenerate = False
-    full = max((len(contrast.get("pairs") or [])
-                for by_name in results.values() for contrast in by_name.values()
-                if isinstance(contrast, dict)), default=0)
     for key in keys:
         entry = table[key]
         means = {}
@@ -2695,7 +2698,7 @@ def contrast_table(table, results, keys, verdicts=True, active=None):
         cells = []
         for treatment, baseline in active:
             contrast = results[key]["%s-%s" % (treatment, baseline)]
-            cell = contrast_cell(contrast, verdicts, full)
+            cell = contrast_cell(contrast, verdicts, blocks)
             degenerate = degenerate or "‡" in cell
             cells.append(cell)
         lines.append("| %s | %s | %s | %s |"
@@ -3502,6 +3505,16 @@ def executive_checks(seed):
     checks.append(("a contrast over fewer pairs than blocks names its count",
                    ", 14 pairs" in short and "pairs" not in whole,
                    (short, whole)))
+
+    # Every contrast in the table short of the round's blocks: the count is
+    # read against the round's K, not the most pairs any contrast had.
+    one_table = {"cost_usd": {"label": "Cost", "direction": "down",
+                              "values": {"none": {1: 1.0}, "skills": {1: 2.0}}}}
+    one_result = {"cost_usd": {"skills-none": contrast}}
+    rows = contrast_table(one_table, one_result, ["cost_usd"],
+                          active=[("skills", "none")], blocks=15)
+    checks.append(("a table whose every contrast is short still names counts",
+                   any(", 14 pairs" in row for row in rows), rows))
     got = " ".join(cross_check_section(None))
     checks.append(("no second judge is said to be unchecked, not same-vendor",
                    "checked only by its evidence lines" in got
