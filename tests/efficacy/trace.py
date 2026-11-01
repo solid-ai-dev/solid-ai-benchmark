@@ -97,6 +97,13 @@ def rows(text, name, problems):
         rule, rule_topic, index, second, third = row.groups()
         where = "%s line %d, %s" % (name, number, rule)
 
+        # A cell of spaces parses as a cell, but says nothing: a reason, a
+        # kind or a requirement left blank.
+        second, third = second.strip(), third.strip()
+        if not (second and third):
+            problems.append("%s: a cell is blank" % where)
+            second = third = None
+
         # An ID is cited from other documents, so it must be unique, sit
         # under its own topic, and keep the order a reader looks it up by.
         if rule in seen:
@@ -124,13 +131,18 @@ def trace(requirements, coverage, outputs):
     # A removed row keeps its ID so the number is never reused, and needs
     # no coverage.
     live = {rule for _, rule, text, _ in stated
-            if not text.startswith("Removed:")}
+            if text is None or not text.startswith("Removed:")}
     covered = set()
     for number, rule, kind, cell in rows(coverage, "coverage", problems):
         where = "coverage line %d, %s" % (number, rule)
         covered.add(rule)
         if rule not in live:
             problems.append("%s: no live requirement has this ID" % where)
+
+        # A blank row is already a problem; reading it further would only
+        # repeat it.
+        if kind is None:
+            continue
         if kind not in KINDS:
             problems.append("%s: an unknown kind, %s" % (where, kind))
             continue
@@ -277,6 +289,9 @@ def self_test():
         ("an Untestable row with no reason fails",
          len(problems_of(*good[:2], "| FR-01-04 | Untestable | |", good[3]))
          == 2, None),
+        ("an Untestable row whose reason is spaces fails",
+         problems_of(*good[:2], "| FR-01-04 | Untestable |   |", good[3])
+         == ["coverage line 7, FR-01-04: a cell is blank"], None),
         ("an ID used twice fails",
          len(problems_of(good[0], *good)) == 2, None),
         ("an ID out of order fails",
