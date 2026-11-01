@@ -1,56 +1,56 @@
 # 10. Quality requirements
 
 The quality goals of chapter 1, each made testable by scenarios. A
-scenario names a stimulus, the response the benchmark must give, and what
-checks it.
+scenario names a stimulus, the response the benchmark must give, and the
+[requirements](../requirements.md) it rests on, whose rows name the checks.
 
 ## 10.1 Q1, fairness
 
-| # | Stimulus | Response | Checked by |
+| # | Stimulus | Response | Rests on |
 | - | -------- | -------- | ---------- |
-| Q1-1 | The model's behaviour drifts during a round | The drift lands across every arm of a block, not on one arm | Interleaved blocks, `harness.py` |
-| Q1-2 | An agent writes its own `ruff.toml` | Every arm is still measured under `toolconfig/` | `score.py` |
-| Q1-3 | A trial packages its tests in an extra | Coverage still runs, from the trial's declared groups within the lock | `score.py` |
-| Q1-4 | The spec requires HTMX, whose attributes HTML lacks | HTML validity sets aside `hx-*` errors and records how many | `score.py` |
-| Q1-5 | The model drifts within one block | No arm always runs first or last: each block starts one arm later | `harness.py --self-test` |
+| Q1-1 | The model's behaviour drifts during a round | The drift lands across every arm of a block, not on one arm | FR-02-01 |
+| Q1-2 | An agent writes its own `ruff.toml` | Every arm is still measured under `toolconfig/` | FR-07-03 |
+| Q1-3 | A trial packages its tests in an extra | Coverage still runs, from the trial's declared groups within the lock | FR-07-06 |
+| Q1-4 | The spec requires HTMX, whose attributes HTML lacks | HTML validity sets aside `hx-*` errors and records how many | FR-09-03 |
+| Q1-5 | The model drifts within one block | No arm always runs first or last: each block starts one arm later | FR-02-01 |
 
 ## 10.2 Q2, pre-registration
 
-| # | Stimulus | Response | Checked by |
+| # | Stimulus | Response | Rests on |
 | - | -------- | -------- | ---------- |
-| Q2-1 | In a round registered at K = 3, a primary's interval contains zero while its mean exceeds the smallest change that matters | The report names the rows that owe K = 5 and the command that settles it | `report.py --self-test` |
-| Q2-2 | Someone asks for more blocks than the round allows | The harness refuses past 5, or past 15 for a round-5 run, and the report refuses a run past them | `harness.py`, `report.py` |
-| Q2-3 | A check is added after the results were seen | It prints in its own section with no verdict | `report.py` |
-| Q2-4 | A grader is found to measure something else | Every run that revision graded loses the metric, named with its reason | `withdrawn.json`, `report.py --self-test` |
-| Q2-5 | A round-5 run holds fewer than its 15 blocks | The report calls it part-run and names the blocks still owed | `report.py --self-test` |
+| Q2-1 | In a round registered at K = 3, a primary's interval contains zero while its mean exceeds the smallest change that matters | The report names the rows that owe K = 5 and the command that settles it | FR-03-01 |
+| Q2-2 | Someone asks for more blocks than the round allows | The harness refuses past 5, or past 15 for a round-5 run, and the report refuses a run past them | FR-03-02, FR-03-04 |
+| Q2-3 | A check is added after the results were seen | It prints in its own section with no verdict | FR-12-08 |
+| Q2-4 | A grader is found to measure something else | Every run that revision graded loses the metric, named with its reason | FR-12-09 |
+| Q2-5 | A round-5 run holds fewer than its 15 blocks | The report calls it part-run and names the blocks still owed | FR-03-05 |
 
 ## 10.3 Q3, isolation
 
-| # | Stimulus | Response | Checked by |
+| # | Stimulus | Response | Rests on |
 | - | -------- | -------- | ---------- |
-| Q3-1 | The owner has a global `CLAUDE.md` | The bare arm never sees it, and the harness refuses a root a context file above it would reach | `harness.py` |
-| Q3-2 | A trial runs `git clone` of the hidden suite in its shell | The clone has no credentials, the transcript scan flags it, and the trial is voided and re-run once | `harness.py --self-test` |
-| Q3-3 | An agent stops its dev server by process name | The command is denied. One that ran voids the trial | Deny rules, transcript scan |
-| Q3-4 | A background server outlives the CLI | Every process from the trial's directories is stopped before the freeze | `harness.py --self-test` |
+| Q3-1 | The owner has a global `CLAUDE.md` | The bare arm never sees it, and the harness refuses a root a context file above it would reach | FR-05-01 |
+| Q3-2 | A trial runs `git clone` of the hidden suite in its shell | The clone has no credentials, the transcript scan flags it, and the trial is voided and re-run once | FR-05-05, FR-05-07 |
+| Q3-3 | An agent stops its dev server by process name | The command is denied. One that ran voids the trial | FR-05-06, FR-05-07 |
+| Q3-4 | A background server outlives the CLI | Every process from the trial's directories is stopped before the freeze | FR-05-09 |
 
 ## 10.4 Q4, honest measurement
 
-| # | Stimulus | Response | Checked by |
+| # | Stimulus | Response | Rests on |
 | - | -------- | -------- | ---------- |
-| Q4-1 | A tool is pointed at an empty `src/` | The metric is missing, not zero, and the report shows the files and lines each tool saw | `score.py --self-test` |
-| Q4-2 | The judge returns scores without reading the code | The evidence check finds its quotes missing from the bundle | `judge.py`, the report's evidence line |
-| Q4-3 | A judge row cannot move | The control fixture shows it fail to fall on a damaged tree or rise on an improved one | `control/control.py`, `judge.py` |
-| Q4-4 | An app will not sign in its administrator | Every probe that needs it fails with the reason, so the rate cannot rise by not reaching it | `security.py` |
+| Q4-1 | A tool is pointed at an empty `src/` | The metric is missing, not zero, and the report shows the files and lines each tool saw | FR-06-01, FR-07-05 |
+| Q4-2 | The judge returns scores without reading the code | The evidence check finds its quotes missing from the bundle | FR-10-06 |
+| Q4-3 | A judge row cannot move | The control fixture shows it fail to fall on a damaged tree or rise on an improved one | FR-10-07, FR-10-09 |
+| Q4-4 | An app will not sign in its administrator | Every probe that needs it fails with the reason, so the rate cannot rise by not reaching it | FR-06-03 |
 
 ## 10.5 Q5, reproducibility
 
-| # | Stimulus | Response | Checked by |
+| # | Stimulus | Response | Rests on |
 | - | -------- | -------- | ---------- |
-| Q5-1 | The run root is deleted after a round | The archive restores it, and scoring and judging run on the restored root | `archive.py --restore` |
-| Q5-2 | A reading changes after the archive was verified | The report refuses to write under `docs/audits/` | `archive.py`, `report.py` |
-| Q5-3 | A run stops part way | The run record holds every trial it finished, and `--from` resumes at the next | `harness.py` |
-| Q5-4 | A later template revision is to be measured | The same harness runs it as a candidate against the baseline, both in one round | Design [ch. 4.2](04-solution-strategy.md) |
-| Q5-5 | A report is aimed at any `docs/audits/` before the round is archived | Refused, in the templates source as anywhere else | `report.py --self-test` |
+| Q5-1 | The run root is deleted after a round | The archive restores it, and scoring and judging run on the restored root | FR-13-05 |
+| Q5-2 | A reading changes after the archive was verified | The report refuses to write under `docs/audits/` | FR-13-04 |
+| Q5-3 | A run stops part way | The run record holds every trial it finished, and `--from` resumes at the next | FR-04-08 |
+| Q5-4 | A later template revision is to be measured | The same harness runs it as a candidate against the baseline, both in one round | Design, [ch. 4.2](04-solution-strategy.md) |
+| Q5-5 | A report is aimed at any `docs/audits/` before the round is archived | Refused, in the templates source as anywhere else | FR-13-04 |
 
 ## 10.6 The numbers behind the rules
 

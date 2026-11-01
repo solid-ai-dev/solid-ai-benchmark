@@ -67,16 +67,25 @@ jobs:
       - name: Install pyflakes
         run: python -m pip install --disable-pip-version-check pyflakes
 
+      # Each self-test's output is kept, so the trace below can look up the
+      # labels the requirements name without running every self-test again.
       - name: Run every self-test
         working-directory: solid-ai-benchmark
         run: |
-          set -e
+          set -eo pipefail
+          outputs="$RUNNER_TEMP/self-tests"
+          mkdir -p "$outputs"
           for module in harness generate_arm score judge report archive reuse \
-              security control/control; do
+              progress security control/control trace; do
             echo "::group::$module"
-            python "tests/efficacy/$module.py" --self-test
+            python "tests/efficacy/$module.py" --self-test \
+              | tee "$outputs/$(basename "$module").txt"
             echo "::endgroup::"
           done
+
+      - name: Trace the requirements to the self-tests
+        working-directory: solid-ai-benchmark
+        run: python tests/efficacy/trace.py --outputs "$RUNNER_TEMP/self-tests"
 
       - name: Pyflakes
         working-directory: solid-ai-benchmark
