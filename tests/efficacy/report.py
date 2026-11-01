@@ -2948,6 +2948,14 @@ def round5d_checks(seed):
     checks.append(("the cross-check reads a contrast across rounds unpaired",
                    got == 1.0, got))
 
+    # Two measured trials against fifteen: the cell says so.
+    cell = contrast_cell({"interval": {"low": 0.1, "high": 0.4,
+                                       "method": "BCa, unpaired"},
+                          "mean": 0.2, "verdict": "held", "pairs": [],
+                          "unpaired": True, "trials": (2, 15)}, full=15)
+    checks.append(("an unpaired cell names each arm's trials when short",
+                   cell.endswith("(2 against 15 trials)"), cell))
+
     # Two arms that never share a block: unpaired, every reading of the
     # thirty is supported, which a reading by blocks would never be.
     apart = {key: {"label": key, "direction": UP, "values": {
@@ -4041,6 +4049,12 @@ def contrast_cell(contrast, verdicts=True, full=None):
     pairs = len(contrast.get("pairs") or [])
     if full and 0 < pairs < full:
         body += " (%d pairs)" % pairs
+
+    # An unpaired contrast has no pairs; it says how many trials each arm
+    # gave where either gave fewer than the round's blocks.
+    counts = contrast.get("trials")
+    if full and contrast.get("unpaired") and counts and min(counts) < full:
+        body += " (%d against %d trials)" % tuple(counts)
     return body
 
 
