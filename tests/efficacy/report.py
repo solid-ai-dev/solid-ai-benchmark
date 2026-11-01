@@ -1700,21 +1700,10 @@ SHORT = {"judge_design": "design", "judge_readability": "readability",
          "judge_data_protection": "data protection",
          "security_probe_pass_rate": "security probes",
          "data_protection_probe_pass_rate": "data-protection probes"}
-FILES = {"full": "Templates' inline file",
-         "short": "Templates' short inline file",
-         "hybrid": "Templates' hybrid file", "hand": "Hand-written file",
-         "reference": "Templates named only",
-         "inline": "Templates' inline file from agents.md",
-         "skills": "Emitted root file and skills"}
 
 # The arm every file arm is read against: the bare agent.
 BARE = "none"
 
-# Code size, by the rows earlier rounds read and the app-code rows round 5
-# reads. A run gives a verdict on one pair only: round 5 reports the earlier
-# rows without one, and earlier rounds have no app-code scores.
-SIZE = (("lines", "source_lines"), ("files", "tracked_files"),
-        ("lines", "app_lines"), ("files", "app_files"))
 COUNTED = ("no", "one", "two", "three", "four", "five")
 NOT_MEASURED = "not measured"
 
@@ -2021,17 +2010,28 @@ def round5_checks():
                    and blocks_named([2, 7, 9, 10, 11]) ==
                    "blocks 2, 7 and 9 to 11", (got, named)))
 
-    # Fifteen runs with one under the bare arm's mean are counted in digits.
+    # Fifteen runs with two under the bare arm's mean: each is named with its
+    # rate, lowest first, and the finding row counts them.
     values = {"none": {index: 1.0 for index in range(1, ROUND5_K + 1)},
               "skills": {index: 1.0 for index in range(1, ROUND5_K + 1)}}
     values["skills"][3] = 0.5
-    got = suite_cell({"task_success": {"values": values}}, "skills-none")
-    checks.append(("a dip among fifteen runs is named without a crash",
-                   got == "97 %%, one run of %d at 50 %%" % ROUND5_K, got))
     values["skills"][4] = 0.0
-    got = suite_cell({"task_success": {"values": values}}, "skills-none")
-    checks.append(("two dips are named as two runs",
-                   got == "90 %%, two runs of %d at 0 %% and 50 %%" % ROUND5_K, got))
+    planted = {"task_success": {"values": values}}
+    for key in ("judge_security", "adherence", "cost_usd"):
+        planted[key] = {"values": {"none": {1: 1.0}, "skills": {1: 2.0}}}
+    verdicts = {key: {"skills-none": {"verdict": verdict}} for key, verdict in
+                (("task_success", "worse"), ("judge_security", "better"),
+                 ("adherence", "no improvement shown"), ("cost_usd", "worse"))}
+    got = (low_runs(planted, "skills"),
+           finding_row(planted, verdicts, "skills", "Worse", 1351),
+           finding_row(planted, verdicts, "none", None, None))
+    checks.append(("each low run is named, and the row counts and marks them",
+                   got == ([0.0, 0.5],
+                           ["`skills`", "1,351 lines", "Worse",
+                            "90 % ▼ (2 runs low)", "2.0 ▲", "200 %",
+                            "$2.00 ▼"],
+                           ["`none`", "no file", "—", "100 %", "1.0", "100 %",
+                            "$1.00"]), got))
     got = report_text(["# Report", "", "Body.", "", ""], 88)
     checks.append(("a report ends in one newline, however its last section "
                    "ends", got == "# Report\n\nBody.\n", got))
@@ -2126,94 +2126,60 @@ def signed(value):
     return text[:-2] if text.endswith(".0") else text
 
 
-def moved_cell(results, name):
-    """Which primary dimensions moved, and by how much."""
-    cells = []
-    computed = False
-    for key in PRIMARY:
-        entry = results[key][name]
-        computed = computed or entry["verdict"] != "not computed"
-        if entry["verdict"] in ("better", "worse") and key in PROBE_RATES:
-            cells.append("%s %s pp" % (SHORT[key],
-                                       signed(100 * entry["mean"])))
-        elif entry["verdict"] in ("better", "worse"):
-            cells.append("%s %s" % (SHORT[key], signed(entry["mean"])))
-    if not computed:
-        return NOT_MEASURED
-    return ", ".join(cells) if cells else "did not move"
-
-
 def runs(count):
     """`run` or `runs`, as a count of them reads."""
     return "run" if count == 1 else "runs"
 
 
-def suite_cell(table, name):
-    """The arm's hidden-suite pass rate, naming each run under the bare arm's
-    mean by more than the practical threshold with its own rate."""
-    treatment, baseline = name.split("-")
-    left = [value for value in table["task_success"]["values"]
-            .get(treatment, {}).values() if value is not None]
-    right = arm_mean(table, "task_success", baseline)
-    if not left or right is None:
-        return NOT_MEASURED
-    text = "%d %%" % round(100 * statistics.fmean(left))
-    dipped = sorted(value for value in left if value < right - SUITE_DIP)
-    if dipped:
-        text += ", %s %s of %s at %s" % (
-            counted(len(dipped)), runs(len(dipped)), counted(len(left)),
-            spoken(["%d %%" % round(100 * value) for value in dipped]))
-    return text
+# The finding table's measure columns: the heading, the metric, and how an
+# arm's mean is printed. One primary from the judge, the suite, adherence
+# and cost: the four a reader weighs a file by at a glance.
+FINDING_COLUMNS = (
+    ("Hidden tests passed", "task_success",
+     lambda mean: "%d %%" % round(100 * mean)),
+    ("Security, judge 1–5", "judge_security", lambda mean: "%.1f" % mean),
+    ("Adherence", "adherence", lambda mean: "%d %%" % round(100 * mean)),
+    ("Cost per trial", "cost_usd", lambda mean: "$%.2f" % mean),
+)
+
+# A verdict against the bare arm, as the mark the finding table prints.
+MARKS = {"better": " ▲", "worse": " ▼"}
 
 
-def share_cell(table, results, key, name, held):
-    """A metric's paired difference as a signed share of the bare arm's mean,
-    or `held` where the interval showed no difference."""
-    entry = results[key][name]
-    baseline = arm_mean(table, key, name.split("-")[1])
-    if entry["mean"] is None or not baseline:
-        return NOT_MEASURED
-    if entry["verdict"] not in ("better", "worse"):
-        return held
-    return "%+d %%" % round(100 * entry["mean"] / baseline)
+def low_runs(table, arm):
+    """The arm's hidden-suite rates under the bare arm's mean by more than
+    the practical threshold, lowest first."""
+    bare = arm_mean(table, "task_success", BARE)
+    if bare is None:
+        return []
+    values = table["task_success"]["values"].get(arm, {}).values()
+    return sorted(value for value in values
+                  if value is not None and value < bare - SUITE_DIP)
 
 
-def size_cell(table, results, name):
-    """Source lines and files as signed shares of the bare arm's, naming the
-    ones the interval separated and, marked so, the ones held within their
-    margin."""
-    parts, measured = [], False
-    for word, key in SIZE:
-        if key not in results:
+def finding_row(table, results, arm, answered, length):
+    """One arm's cells in the finding table: its name, its file, its verdict
+    and each measure's mean, marked by the verdict against the bare arm."""
+    if arm == BARE:
+        cells = ["`%s`" % arm, "no file", "—"]
+    else:
+        cells = ["`%s`" % arm,
+                 "%s lines" % format(length, ",") if length else NOT_MEASURED,
+                 answered]
+    for _, key, show in FINDING_COLUMNS:
+        mean = arm_mean(table, key, arm)
+        if mean is None:
+            cells.append(NOT_MEASURED)
             continue
-        cell = share_cell(table, results, key, name, None)
-        measured = measured or cell != NOT_MEASURED
-        if cell not in (None, NOT_MEASURED):
-            parts.append("%s %s" % (word, cell))
-        elif results[key][name]["verdict"] == "held":
-
-            # Held means the growth stayed inside the margin, not that there
-            # was none, so the share is printed beside the word.
-            entry = results[key][name]
-            baseline = arm_mean(table, key, name.split("-")[1])
-            parts.append("%s %+d %% (held)" % (
-                word, round(100 * entry["mean"] / baseline)))
-    if not measured:
-        return NOT_MEASURED
-    return ", ".join(parts) if parts else "no change shown"
-
-
-def reads_cell(answered, results, name):
-    """One phrase from the answer and the size and cost verdicts."""
-    if answered == "Not measured":
-        return NOT_MEASURED
-    bulk = any(read_as(results, name, key, "worse") for _, key in SIZE)
-    if answered == "Yes":
-        return "quality, %s bulk" % ("with" if bulk else "no")
-    added = (["bulk"] if bulk else []) + (
-        ["cost"] if results["cost_usd"][name]["verdict"] == "worse" else [])
-    quality = "worse quality" if answered == "Worse" else "no quality"
-    return "%s, %s" % (spoken(added), quality) if added else quality
+        cell = show(mean)
+        if arm != BARE:
+            cell += verdict_mark(results[key]["%s-%s" % (arm, BARE)])
+        if key == "task_success" and arm != BARE:
+            low = low_runs(table, arm)
+            if low:
+                cell += " (%d %s low)" % (len(low), runs(len(low)))
+        cells.append(cell)
+    return cells
 
 
 def reading(answers, lengths):
@@ -2344,7 +2310,7 @@ def why_line(trials, results, arm, name, answered, length):
     if closing:
         sentences.append(closing[0].upper() + closing[1:] + ".")
     text = " ".join(sentences) if sentences else "Nothing below separates it."
-    return "**%s, %s.** %s" % (FILES[arm], answered, text)
+    return "**`%s`, %s.** %s" % (arm, answered, text)
 
 
 def executive_section(trials, table, results, escalation=None,
@@ -2380,33 +2346,39 @@ def finding_lines(trials, table, results, active):
     answers = {arm: answer([results[key][name]["verdict"]
                             for key in ANSWERED])
                for arm, name in zip(arms, names)}
-    bare = arm_mean(table, "task_success", BARE)
-    suite = "Hidden tests passed"
-    if bare is not None:
-        suite += ", against %d %% without a file" % round(100 * bare)
-    rows = [
-        ("Improves the code?",
-         ["**%s**" % answers[arm] for arm in arms]),
-        ("Primary rows that moved",
-         [moved_cell(results, name) for name in names]),
-        (suite, [suite_cell(table, name) for name in names]),
-        ("Code size", [size_cell(table, results, name) for name in names]),
-        ("Cost",
-         [share_cell(table, results, "cost_usd", name, "no change shown")
-          for name in names]),
-        ("Reads as",
-         [reads_cell(answers[arm], results, name)
-          for arm, name in zip(arms, names)]),
-    ]
+
+    # One row per arm, the bare arm first as the line every other is read
+    # against, then the files from the cheapest to the dearest.
+    def cost(arm):
+        mean = arm_mean(table, "cost_usd", arm)
+        return (mean is None, mean or 0.0)
+
+    ranked = sorted(arms, key=cost)
     lines = ["## Executive summary", "",
-             "| | %s |" % " | ".join(
-                 "%s, %s lines" % (FILES[arm], lengths[arm])
-                 for arm in arms),
-             "|---|%s|" % "|".join("---" for _ in arms)]
-    for label, cells in rows:
-        lines.append("| %s | %s |" % (label, " | ".join(cells)))
+             "| Arm | File | Verdict vs `%s` | %s |"
+             % (BARE, " | ".join(heading for heading, _, _ in FINDING_COLUMNS)),
+             "| --- | --- | --- | %s |"
+             % " | ".join("---" for _ in FINDING_COLUMNS)]
+    for arm in [BARE] + ranked:
+        lines.append("| %s |" % " | ".join(
+            finding_row(table, results, arm, answers.get(arm),
+                        lengths.get(arm))))
     lines.append("")
-    for arm, name in zip(arms, names):
+    lines.append("Each mark reads an arm against `%s`. %s"
+                 % (BARE, MARK_LEGEND))
+    low = [(arm, low_runs(table, arm)) for arm in ranked]
+    low = [(arm, rates) for arm, rates in low if rates]
+    if low:
+        lines.append("")
+        lines.append("Runs low on the hidden tests, more than %d points under "
+                     "`%s`'s mean: %s."
+                     % (round(100 * SUITE_DIP), BARE, "; ".join(
+                         "`%s` %s" % (arm, spoken(["%d %%" % round(100 * rate)
+                                                   for rate in rates]))
+                         for arm, rates in low)))
+    lines.append("")
+    for arm in ranked:
+        name = "%s-%s" % (arm, BARE)
         lines.append(why_line(trials, results, arm, name, answers[arm],
                               lengths[arm]))
         lines.append("")
@@ -2441,8 +2413,8 @@ def compared(answers, lengths):
         return ""
     longer = max(measured, key=lengths.get)
     shorter = min(measured, key=lengths.get)
-    return (", reading the longest file beside the shortest (%s, %s)"
-            % (FILES[longer].lower(), FILES[shorter].lower()))
+    return (", reading the longest file beside the shortest (`%s`, `%s`)"
+            % (longer, shorter))
 
 
 def between_files(results, active):
@@ -2651,29 +2623,62 @@ def contrast_cell(contrast, verdicts=True, full=None):
     interval = contrast["interval"]
     if interval.get("low") is None:
         return interval.get("method")
-    body = "%s (%s, %s)" % (number(contrast["mean"]),
-                            number(interval["low"]),
-                            number(interval["high"]))
+    mean = contrast["mean"]
+    body = "%s%s [%s, %s]" % ("+" if mean and mean > 0 else "", number(mean),
+                              number(interval["low"]),
+                              number(interval["high"]))
     method = interval.get("method") or ""
     if not method.startswith("BCa"):
         body += " ‡"
+    if verdicts:
+        body += verdict_mark(contrast)
 
     # A block missing either arm's measure drops out of the pair, so an
     # interval over fewer pairs than the round's blocks says how many.
     pairs = len(contrast.get("pairs") or [])
     if full and 0 < pairs < full:
-        body += ", %d pairs" % pairs
-    if not verdicts:
-        return body
-    verdict_text = contrast["verdict"]
+        body += " (%d pairs)" % pairs
+    return body
+
+
+def verdict_mark(contrast):
+    """A contrast's verdict as the mark its cell carries; the legend under
+    each table spells the marks out once."""
+    verdict = contrast["verdict"]
+    if verdict in MARKS:
+        return MARKS[verdict]
+    if verdict == "held":
+        return " ="
+
+    # Too few complete pairs for an interval is no comparison at all, not a
+    # comparison that showed nothing.
+    if verdict == "not computed":
+        return " (not compared)"
+
+    # A verdict withheld on purpose (a neutral row, a pair across rounds, two
+    # judges that disagree) is not an inconclusive one, so it has its own
+    # mark rather than none.
+    if verdict == "reported without a verdict" or verdict.startswith(
+            "no verdict"):
+        return " ○"
     inferiority = contrast.get("non_inferior")
-    if inferiority and verdict_text == "held":
-        verdict_text += " within %s" % inferiority["margin"]
-    elif inferiority and verdict_text == "no improvement shown":
-        verdict_text += (", preserved within %s" % inferiority["margin"]
-                         if inferiority["within"] else
-                         ", not preserved within %s" % inferiority["margin"])
-    return "%s — %s" % (body, verdict_text)
+    if verdict == "no improvement shown" and inferiority             and inferiority["within"]:
+        return " ≈"
+    return ""
+
+
+# The legend under a table of contrasts with verdicts.
+MARK_LEGEND = (
+    "▲ better and ▼ worse: the interval is clear of zero, in the metric's "
+    "direction. = held, for a row read by its margin, and ≈ no difference "
+    "shown: either way the interval's worse end stays within the row's "
+    "margin, so it is no worse than the margin, which is not the same as "
+    "equal. ○ no verdict, on purpose: a row reported without one, a pair "
+    "across rounds, or two judges that disagree. (not compared): too few "
+    "complete pairs for an interval. No mark: no difference shown, on a row "
+    "with no margin or past the margin it has.")
+CONTRAST_LEGEND = ("Each cell: the mean paired difference, its 95 % interval "
+                   "in brackets, and a mark. " + MARK_LEGEND)
 
 
 def contrast_table(table, results, keys, verdicts=True, active=None,
@@ -2683,10 +2688,10 @@ def contrast_table(table, results, keys, verdicts=True, active=None,
     which a contrast over fewer pairs names its count."""
     active = list(CONTRASTS if active is None else active)
     arms = contrast_arms(active)
-    lines = ["| Metric | Direction | %s | %s |"
+    lines = ["| Metric | Direction | Margin | %s | %s |"
              % (" | ".join(arms),
                 " | ".join("%s−%s" % pair for pair in active)),
-             "|---|---|%s|" % "|".join("---" for _ in arms + active)]
+             "|---|---|---|%s|" % "|".join("---" for _ in arms + active)]
     degenerate = False
     for key in keys:
         entry = table[key]
@@ -2701,10 +2706,17 @@ def contrast_table(table, results, keys, verdicts=True, active=None,
             cell = contrast_cell(contrast, verdicts, blocks)
             degenerate = degenerate or "‡" in cell
             cells.append(cell)
-        lines.append("| %s | %s | %s | %s |"
+        margins = [contrast["non_inferior"]["margin"]
+                   for contrast in results[key].values()
+                   if isinstance(contrast, dict)
+                   and contrast.get("non_inferior")]
+        lines.append("| %s | %s | %s | %s | %s |"
                      % (entry["label"], entry["direction"],
+                        margins[0] if margins else "—",
                         " | ".join(number(means[arm]) for arm in arms),
                         " | ".join(cells)))
+    if verdicts:
+        lines.extend(["", CONTRAST_LEGEND])
     if degenerate:
         lines.append("")
         lines.append("‡ the interval was not computed by BCa: the paired "
@@ -2872,13 +2884,9 @@ def band_checks(seed):
     reread = contrasts(collect(earlier), seed)
     kept = reread["tracked_files"]["full-none"]
     later = reread["app_lines"]["full-none"]["verdict"]
-    shares = size_cell(collect(earlier), reread, "full-none")
     checks.extend([
         ("an earlier round rescored prints app code without a verdict",
          later == "reported without a verdict", later),
-        ("and names each size share once",
-         shares == "lines +10 %, files +100 %",
-         shares),
         ("round 5 reads a 10 % rise in app code as held", app == "held", app),
         ("round 5 reports the files it supersedes without a verdict",
          files == "reported without a verdict", files),
@@ -3364,7 +3372,7 @@ def withdrawal_checks(seed):
         ("the withdrawal section names it and why",
          len(listed) == 1 and "planted reason" in listed[0], listed),
         ("a metric not withdrawn keeps its verdict",
-         len(churn) == 1 and "better" in churn[0], churn),
+         len(churn) == 1 and "▲" in churn[0], churn),
         ("a run graded by another revision withdraws nothing", spared == {},
          sorted(spared)),
     ]
@@ -3456,44 +3464,10 @@ def executive_checks(seed):
     named = compared({arm: "No" for arm in four}, four)
     checks.append(("a reading over four files names the two it compares",
                    named == ", reading the longest file beside the shortest "
-                            "(templates' hybrid file, templates' short inline "
-                            "file)", named))
+                            "(`hybrid`, `short`)", named))
     checks.append(("a reading over two files names none",
                    compared({"full": "No", "hand": "No"}, lengths) == "",
                    compared({"full": "No", "hand": "No"}, lengths)))
-
-    # A moved primary dimension prints its change alone, whole where it is.
-    planted = {key: {"hand-none": {"mean": 0.0, "verdict": shown}}
-               for key in PRIMARY}
-    planted["judge_readability"]["hand-none"] = {"mean": 1.0, "verdict": "better"}
-    planted["judge_design"]["hand-none"] = {"mean": -0.667, "verdict": "worse"}
-    got = moved_cell(planted, "hand-none")
-    checks.append(("a moved dimension prints its change alone",
-                   got == "design -0.7, readability +1", got))
-
-    # A No with files and cost worse names bulk and cost; a Yes with neither
-    # names only the bulk it lacks. The size cell names only the measure
-    # whose interval separated the arms, as a share of the bare arm's.
-    planted = {"source_lines": {"full-none": {"mean": 5.0, "verdict": shown},
-                                "hand-none": {"mean": -1.0, "verdict": shown}},
-               "tracked_files": {"full-none": {"mean": 4.0, "verdict": "worse"},
-                                 "hand-none": {"mean": 0.0, "verdict": shown}},
-               "cost_usd": {"full-none": {"verdict": "worse"},
-                            "hand-none": {"verdict": "worse"}}}
-    got = (reads_cell("No", planted, "full-none"),
-           reads_cell("Yes", planted, "hand-none"))
-    checks.append(("the phrase names what the verdicts added",
-                   got == ("bulk and cost, no quality", "quality, no bulk"),
-                   got))
-    bare = {"source_lines": {"values": {"none": {1: 100.0}}},
-            "tracked_files": {"values": {"none": {1: 10.0}}}}
-    got = (size_cell(bare, planted, "full-none"), size_cell(bare, planted, "hand-none"))
-    checks.append(("the size cell names the separated measure as a share",
-                   got == ("files +40 %", "no change shown"), got))
-    planted["source_lines"]["hand-none"] = {"mean": 14.0, "verdict": "held"}
-    got = size_cell(bare, planted, "hand-none")
-    checks.append(("growth held within its margin is printed, marked held",
-                   got == "lines +14 % (held)", got))
 
     # An interval over fewer pairs than the round's blocks names its count;
     # one over every block does not.
@@ -3503,8 +3477,21 @@ def executive_checks(seed):
     short, whole = (contrast_cell(contrast, True, 15),
                     contrast_cell(dict(contrast, pairs=[0.1] * 15), True, 15))
     checks.append(("a contrast over fewer pairs than blocks names its count",
-                   ", 14 pairs" in short and "pairs" not in whole,
+                   "(14 pairs)" in short and "pairs" not in whole,
                    (short, whole)))
+
+    # Each verdict reads as its mark, once spelled out in the legend.
+    marks = [verdict_mark({"verdict": verdict, "non_inferior": inferior})
+             for verdict, inferior in (
+                 ("better", None), ("worse", None), ("held", None),
+                 ("no improvement shown", {"within": True}),
+                 ("no improvement shown", {"within": False}),
+                 ("reported without a verdict", None),
+                 (CROSSING_VERDICT, None), (DISAGREE_VERDICT, None),
+                 ("not computed", None))]
+    checks.append(("each verdict reads as its mark, a withheld one apart",
+                   marks == [" ▲", " ▼", " =", " ≈", "", " ○", " ○", " ○",
+                             " (not compared)"], marks))
 
     # Every contrast in the table short of the round's blocks: the count is
     # read against the round's K, not the most pairs any contrast had.
@@ -3514,7 +3501,7 @@ def executive_checks(seed):
     rows = contrast_table(one_table, one_result, ["cost_usd"],
                           active=[("skills", "none")], blocks=15)
     checks.append(("a table whose every contrast is short still names counts",
-                   any(", 14 pairs" in row for row in rows), rows))
+                   any("(14 pairs)" in row for row in rows), rows))
     got = " ".join(cross_check_section(None))
     checks.append(("no second judge is said to be unchecked, not same-vendor",
                    "checked only by its evidence lines" in got
@@ -3540,7 +3527,7 @@ def executive_checks(seed):
     planted["adherence"]["full-none"]["verdict"] = "better"
     got = why_line(trials, planted, "full", "full-none", "No", 400)
     checks.append(("the why-line says what the records and verdicts hold",
-                   got == "**Templates' inline file, No.** One run of two left the "
+                   got == "**`full`, No.** One run of two left the "
                    "app unable to boot (`planted error`). It built more than "
                    "the task asked for: more files, and took more turns to "
                    "do it; the follow-up change had to move through that "
@@ -3554,7 +3541,7 @@ def executive_checks(seed):
     checks.append(("a module missing after a clean install is a declared "
                    "dependency, and a win the judge did not give is a tool "
                    "count",
-                   got.startswith("**Templates' inline file, No.** One run of two "
+                   got.startswith("**`full`, No.** One run of two "
                                   "declared its dependencies so that a clean "
                                   "install left the app unable to boot.")
                    and got.endswith("The judge saw none of it as better "
@@ -3571,7 +3558,7 @@ def executive_checks(seed):
         planted[key]["hand-none"]["verdict"] = "worse"
     got = why_line({}, planted, "hand", "hand-none", "Yes", 39)
     checks.append(("a short Yes file is a few rules the agent could hold",
-                   got == "**Hand-written file, Yes.** A few rules the agent "
+                   got == "**`hand`, Yes.** A few rules the agent "
                    "could hold: the judge read its code as more readable "
                    "and better tested, and its code grew no more than its "
                    "size margin allows — for more turns and cost.", got))
@@ -3580,25 +3567,29 @@ def executive_checks(seed):
     # every cell reads not measured and the columns carry the arm files'
     # own line counts.
     _, _, text = rendered(planted_change_run("any-revision"), seed, {})
-    header = "| | %s |" % " | ".join(
-        "%s, %s lines" % (FILES[arm], context_lines(arm))
-        for arm in ("full", "hand"))
+
+    def row_start(arm, verdict):
+        return "| `%s` | %s lines | %s |" % (
+            arm, format(context_lines(arm), ","), verdict)
     checks.extend([
         ("the finding table opens the report",
          0 <= text.find("## Executive summary")
          < text.find("## What produced"), None),
-        ("its columns are the arm files with their line counts",
-         header in text and context_lines("full") > context_lines("hand"),
-         header),
+        ("it has a row per arm, the bare arm first, with the files' lines",
+         0 < text.find("| `none` | no file | — |")
+         < text.find("| `full` | ") and context_lines("full")
+         > context_lines("hand"), prose_of(text, "## Executive summary")),
         ("an unmeasured run answers Not measured in every cell",
-         "| Improves the code? | **Not measured** | **Not measured** |"
-         in text and "Together: not measured. K = %d," % K_PRIMARY in text,
+         row_start("full", "Not measured") + " not measured |" in text
+         and row_start("hand", "Not measured") + " not measured |" in text
+         and "Together: not measured. K = %d," % K_PRIMARY in text,
          prose_of(text, "## Executive summary")),
         ("each file's why-line sits between the table and the reading",
-         "| Reads as |" in text and 0 < text.find("| Reads as |")
-         < text.find("**Templates' inline file, Not measured.** Every win is "
+         "▲ better and ▼ worse" in text
+         and 0 < text.find("▲ better and ▼ worse")
+         < text.find("**`full`, Not measured.** Every win is "
                      "something a tool counts.")
-         < text.find("**Hand-written file, Not measured.**")
+         < text.find("**`hand`, Not measured.**")
          < text.find("Together:"), prose_of(text, "## Executive summary")),
     ])
 
@@ -3615,12 +3606,15 @@ def executive_checks(seed):
         for arm, score in design.items() for index in range(1, K_PRIMARY + 1)}
     _, _, text = rendered(trials, seed, {})
     finding = prose_of(text, "## Executive summary")
-    header = "| | %s |" % " | ".join(
-        "%s, %s lines" % (FILES[arm], context_lines(arm))
-        for arm in ("full", "short", "hybrid", "hand"))
+
+    def row_start(arm, verdict):
+        return "| `%s` | %s lines | %s |" % (
+            arm, format(context_lines(arm), ","), verdict)
     checks.extend([
-        ("a five-arm run prints one column per file arm",
-         header in text, header),
+        ("a five-arm run prints one row per arm",
+         all("| `%s` |" % arm in finding
+             for arm in ("none", "full", "short", "hybrid", "hand")),
+         finding),
         ("it prints every declared contrast its arms ran",
          all("%s − %s" % pair in finding for pair in active_contrasts(trials)
              if pair[1] != BARE)
@@ -3637,8 +3631,9 @@ def executive_checks(seed):
          in finding, finding),
         ("the reading sets the longest measured file against the shortest",
          "Together: length is not quality" in finding
-         and "| Improves the code? | **Not measured** | **Yes** | **No** | "
-             "**Not measured** |" in text, finding),
+         and all(row_start(arm, verdict) in finding for arm, verdict in
+                 (("full", "Not measured"), ("short", "Yes"),
+                  ("hybrid", "No"), ("hand", "Not measured"))), finding),
         ("a trial's repeats are meaned, and one judging means itself",
          judge_score({"judgings": [
              {"answer": {"rubric": {"design": {"score": 4}}}},
