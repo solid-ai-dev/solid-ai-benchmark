@@ -1229,9 +1229,11 @@ def shared_judges(trials, other):
     return sorted(str(model) for model in models(trials) & models(other))
 
 
-def cross_check(trials, other, seed):
+def cross_check(trials, other, seed, later_rules=None):
     """How far the other vendor's judge agrees with the rounds' judge on the
-    trials it read, per judge row, and the contrasts it reads itself."""
+    trials it read, per judge row, and the contrasts it reads itself, by
+    round 5d's rules for a round-5d run or where `later_rules` asks."""
+    strict = is_round5d(trials) if later_rules is None else later_rules
     rows = {}
     for key in JUDGE_ROWS:
         dimension = key[len("judge_"):]
@@ -1252,9 +1254,8 @@ def cross_check(trials, other, seed):
     metrics = [metric for metric in METRICS if metric[0] in JUDGE_ROWS]
     return {"model": first.get("model"), "trials": sorted(other),
             "rows": rows,
-            "results": contrasts(collect(other, metrics), seed,
-                                 crossed_labels(trials), None,
-                                 is_round5d(trials)),
+            "results": contrasts(collect(other, metrics, strict), seed,
+                                 crossed_labels(trials), None, strict),
             "disagreements": []}
 
 
@@ -3054,6 +3055,17 @@ def round5d_checks(seed):
         "hand-none"]["mean"]
     checks.append(("the cross-check reads a contrast across rounds unpaired",
                    got == 1.0, got))
+
+    # The same for an earlier round read post-hoc: round 2's reused `full`
+    # against `none`, read by the later rules.
+    earlier_ours = {"full-1": judged(3, True), "full-2": judged(3, True),
+                    "none-3": judged(2)}
+    got = (cross_check(earlier_ours, earlier_ours, seed)["results"][
+        "judge_design"]["full-none"]["mean"],
+           cross_check(earlier_ours, earlier_ours, seed, True)["results"][
+        "judge_design"]["full-none"]["mean"])
+    checks.append(("an earlier round's cross-check is unpaired post-hoc",
+                   got == (None, 1.0), got))
 
     # Two measured trials against fifteen: the cell says so.
     cell = contrast_cell({"interval": {"low": 0.1, "high": 0.4,
@@ -5809,7 +5821,11 @@ def main(argv):
     # An earlier round read by round 5d's rules is post-hoc: its own page,
     # beside the registered report, which it leaves as it was.
     if options.posthoc_rules and not is_round5d(trials):
-        later = posthoc_rules_reading(trials, options.seed, withdrawn, check)
+        # The other judge is read by the same rules, so a contrast across
+        # rounds is unpaired on both sides before their signs are compared.
+        later = posthoc_rules_reading(
+            trials, options.seed, withdrawn,
+            cross_check(trials, other, options.seed, True) if check else None)
         print("Post-hoc: %s" % write_posthoc_rules(
             trials, later[0], later[1], options.seed, out_dir))
         with io.open(os.path.join(scoring_area(options.root),
