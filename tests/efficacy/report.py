@@ -1144,6 +1144,27 @@ def prompt_problem(root):
     return None
 
 
+def python_problem(trials):
+    """Why the trials' scores were not all installed on one Python, or None.
+
+    A score from before the scorer recorded its Python reads as unrecorded,
+    so a round's old scores beside new ones are refused too."""
+    found = {}
+    for name, trial in trials.items():
+        for part in ("scores", "change"):
+            scores = trial.get(part)
+            if scores is None:
+                continue
+            version = scores.get("python")
+            minor = ".".join(version.split(".")[:2]) if version else "unrecorded"
+            found.setdefault(minor, name)
+    if len(found) < 2:
+        return None
+    return ("the trials were installed on more than one Python: %s"
+            % ", ".join("%s (%s, for one)" % (minor, name)
+                        for minor, name in sorted(found.items())))
+
+
 def registration_problem(root, registration, repository=REPOSITORY):
     """Why the round's registration does not predate its first trial, or
     None when it landed on the main branch before that trial and is
@@ -3521,6 +3542,25 @@ def prompt_checks():
     return checks
 
 
+def python_checks():
+    """A round is refused when its scores were installed on more than one
+    Python, an unrecorded one included."""
+    def trials(*versions):
+        return {"none-%d" % (index + 1): {
+            "scores": {} if version is None else {"python": version},
+            "change": None} for index, version in enumerate(versions)}
+    return [
+        ("scores on one Python are read",
+         python_problem(trials("3.12.10", "3.12.15")) is None),
+        ("scores all unrecorded, as an old round's are, are read",
+         python_problem(trials(None, None)) is None),
+        ("scores on two Pythons are refused",
+         "3.14" in (python_problem(trials("3.12.10", "3.14.8")) or "")),
+        ("an unrecorded score beside a recorded one is refused",
+         "unrecorded" in (python_problem(trials("3.12.10", None)) or "")),
+    ]
+
+
 def registration_checks():
     """A round is refused when its registration landed on the main branch
     after its first trial, has not landed, is changed and not committed, or
@@ -4541,6 +4581,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in registration_checks())
     checks.extend((label, ok, ok) for label, ok in spec_checks())
     checks.extend((label, ok, ok) for label, ok in prompt_checks())
+    checks.extend((label, ok, ok) for label, ok in python_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -4619,6 +4660,13 @@ def main(argv):
         if problem:
             print("refused: %s" % problem)
             return 2
+
+    # Scores installed on two Pythons would read the interpreter as an arm's
+    # effect, so a round's scores have to share one.
+    problem = python_problem(trials)
+    if problem:
+        print("refused: %s" % problem)
+        return 2
 
     # A trial that read past its workspace measures what it read, not its
     # arm; the harness voids one its own scan catches, and this re-scan, under
