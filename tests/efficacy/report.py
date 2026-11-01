@@ -1601,8 +1601,18 @@ def write_report(root, trials, table, results, seed, escalation,
     target = os.path.join(out_dir, "%s-efficacy.md"
                           % datetime.date.today().isoformat())
     with io.open(target, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(wrap_prose(lines, markdown_width())) + "\n")
+        handle.write(report_text(lines, markdown_width()))
     return target
+
+
+def report_text(lines, width):
+    """The report's lines as one text, wrapped to `width`, ending in exactly
+    one newline."""
+
+    # Sections each end in a blank line, so the last one would leave two
+    # blank lines at the end of the file, which the templates' Markdown lint
+    # refuses.
+    return "\n".join(wrap_prose(lines, width)).rstrip("\n") + "\n"
 
 
 def markdown_width():
@@ -2016,6 +2026,9 @@ def round5_checks():
     got = suite_cell({"task_success": {"values": values}}, "skills-none")
     checks.append(("two dips are named as two runs",
                    got == "90 %%, two runs of %d at 0 %%" % ROUND5_K, got))
+    got = report_text(["# Report", "", "Body.", "", ""], 88)
+    checks.append(("a report ends in one newline, however its last section "
+                   "ends", got == "# Report\n\nBody.\n", got))
     return checks
 
 
