@@ -806,10 +806,15 @@ def crossed_labels(trials):
                                  reused_arms(trials))}
 
 
-def collect(trials, metrics=METRICS):
-    """Metric values by metric, arm and trial index."""
-    superseded = SUPERSEDED_IN_ROUND5 if is_round5(trials) else FROM_ROUND5
-    working_only = is_round5d(trials)
+def collect(trials, metrics=METRICS, later_rules=None):
+    """Metric values by metric, arm and trial index, read by round 5d's
+    rules for a round-5d run or where `later_rules` asks for them."""
+    working_only = is_round5d(trials) if later_rules is None else later_rules
+
+    # Round 5d's rules are round 5's size rows too, so a round read by them
+    # decides on app code, whichever round it was.
+    superseded = (SUPERSEDED_IN_ROUND5 if is_round5(trials) or working_only
+                  else FROM_ROUND5)
     table = {}
     for key, label, direction, accessor in metrics:
         if key in superseded or (working_only and key == "adherence"):
@@ -1224,9 +1229,11 @@ def shared_judges(trials, other):
     return sorted(str(model) for model in models(trials) & models(other))
 
 
-def cross_check(trials, other, seed):
+def cross_check(trials, other, seed, later_rules=None):
     """How far the other vendor's judge agrees with the rounds' judge on the
-    trials it read, per judge row, and the contrasts it reads itself."""
+    trials it read, per judge row, and the contrasts it reads itself, by
+    round 5d's rules for a round-5d run or where `later_rules` asks."""
+    strict = is_round5d(trials) if later_rules is None else later_rules
     rows = {}
     for key in JUDGE_ROWS:
         dimension = key[len("judge_"):]
@@ -1247,9 +1254,8 @@ def cross_check(trials, other, seed):
     metrics = [metric for metric in METRICS if metric[0] in JUDGE_ROWS]
     return {"model": first.get("model"), "trials": sorted(other),
             "rows": rows,
-            "results": contrasts(collect(other, metrics), seed,
-                                 crossed_labels(trials), None,
-                                 is_round5d(trials)),
+            "results": contrasts(collect(other, metrics, strict), seed,
+                                 crossed_labels(trials), None, strict),
             "disagreements": []}
 
 
@@ -1260,7 +1266,10 @@ def disagree(results, check):
     for key in JUDGE_ROWS:
         for label, contrast in results.get(key, {}).items():
             ours = contrast["mean"]
-            theirs = check["results"][key][label]["mean"]
+
+            # A contrast the other judge's reading did not compute, as an
+            # earlier round's leaves out round 5d's, has nothing to oppose.
+            theirs = check["results"].get(key, {}).get(label, {}).get("mean")
             if (contrast["verdict"] not in ("better", "worse")
                     or ours is None or theirs is None):
                 continue
@@ -1928,6 +1937,82 @@ def write_report(root, trials, table, results, seed, escalation,
     return os.path.join(out_dir, report)
 
 
+def posthoc_rules_reading(trials, seed, withdrawn=None, check=None):
+    """An earlier round's table and contrasts read by round 5d's rules,
+    with withdrawn metrics blanked and the cross-check's disagreements
+    withheld, as the registered reading has them."""
+    table = collect(trials, later_rules=True)
+    results = contrasts(table, seed, crossed_labels(trials), ROUND5D_MARGINS,
+                        True)
+    withdraw(withdrawn or {}, table, results)
+    if check:
+        disagree(results, check)
+    return table, results
+
+
+def write_posthoc_rules(trials, table, results, seed, out_dir):
+    """The post-hoc page beside an earlier round's report: its trials read
+    by round 5d's rules, with a radar by size. Returns its path."""
+    stem = "%s-efficacy-posthoc" % datetime.date.today().isoformat()
+    active = active_contrasts(trials)
+    os.makedirs(out_dir, exist_ok=True)
+    radar = {}
+    panels = radar_panels(table, results, active)
+    for theme in RADAR_THEMES if panels else ():
+        image = "%s-radar-%s.svg" % (stem, theme)
+        with io.open(os.path.join(out_dir, image), "w", encoding="utf-8",
+                     newline="\n") as handle:
+            handle.write(radar_svg(panels, theme))
+        radar[theme] = image
+    arms = by_cost(table, [pair[0] for pair in active if pair[1] == BARE])
+    lines = ["# Efficacy benchmark — %s, a post-hoc reading"
+             % datetime.date.today().isoformat(), "",
+             "**Post-hoc.** These rules were registered for round 5d, after "
+             "this round ran. The round's registered verdicts stand; this page "
+             "shows how its trials read under the later rules, and decides "
+             "nothing.", ""]
+    for theme, image in sorted(radar.items()):
+        lines.append("![Radar per arm, post-hoc](%s#gh-%s-mode-only)"
+                     % (image, theme))
+    if radar:
+        lines.extend(["", RADAR_SIZE_READING, ""])
+    lines.extend(radar_table(results, arms))
+    lines.extend(["", "## Each arm against `%s`, post-hoc" % BARE, ""])
+    for arm in arms:
+        lines.append("- `%s`: %s" % (arm, "; ".join(
+            "%s %s" % (axis, word)
+            for axis, word in profile(results, "%s-%s" % (arm, BARE)))))
+    lines.append("")
+    lines.extend(round5d_section(
+        trials, table, results, seed, ROUND5D_MARGINS, ROUND5_HYPOTHESES,
+        "## The round's questions, read post-hoc"))
+
+    # Every reading above rests on a row printed below: the rows each
+    # question decides on, and each radar axis's rows against the bare arm.
+    k = max((index_of(name) for name in trials), default=0)
+    asked = [tuple(label.split("-")) for _, label, _ in ROUND5_HYPOTHESES
+             if tuple(label.split("-")) in active]
+    lines.extend(["", "## The numbers behind it, post-hoc", "",
+                  "Each cell reads by the later rules, on working builds "
+                  "where the row says so. %s" % CONTRAST_LEGEND, "",
+                  DEGENERATE_NOTE.replace("`aggregate.json`",
+                                          "`aggregate-posthoc.json`"),
+                  "", "### The rows the questions decide on",
+                  ""])
+    lines.extend(contrast_table(table, results,
+                                ROUND5D_ROWS + ("reliability",),
+                                active=asked, blocks=k, legend=False))
+    against = [pair for pair in active if pair[1] == BARE]
+    for axis, keys in ROUND5D_RADAR_AXES:
+        lines.extend(["", "### %s" % axis, ""])
+        lines.extend(contrast_table(table, results, keys, active=against,
+                                    blocks=k, legend=False))
+    target = os.path.join(out_dir, stem + ".md")
+    with io.open(target, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(report_text(lines, markdown_width()))
+    return target
+
+
 def provenance_lines(trials, names, arms, k, seed, generation):
     """What produced a round's numbers, as a table: the trials, the models,
     the blinding, the revisions, the bootstrap and each generated file."""
@@ -2427,6 +2512,7 @@ SHORT = {"judge_design": "design", "judge_readability": "readability",
          "judge_maintainability": "maintainability",
          "judge_security": "security",
          "judge_data_protection": "data protection",
+         "task_success": "task success",
          "security_probe_pass_rate": "security probes",
          "data_protection_probe_pass_rate": "data-protection probes"}
 
@@ -2648,7 +2734,14 @@ def round5d_hypothesis(results, label, wanted):
             for key in ROUND5D_ROWS}
     reliability = row_reading(results.get("reliability", {}).get(label))
     outcomes = set(rows.values())
-    if "worse" in outcomes or reliability == "worse":
+
+    # A hypothesis that predicts a loss, as round 5's H3 does, is supported
+    # by the loss that refutes the others, reliability's among them.
+    if wanted == "worse":
+        state = ("supported" if "worse" in outcomes or reliability == "worse"
+                 else "refuted" if outcomes <= {"better", "held"}
+                 else "inconclusive")
+    elif "worse" in outcomes or reliability == "worse":
         state = "refuted"
     elif wanted == "better":
         state = "supported" if "better" in outcomes else "inconclusive"
@@ -2747,11 +2840,13 @@ def profile(results, name):
             for axis, keys in ROUND5D_RADAR_AXES]
 
 
-def round5d_section(trials, table, results, seed, margins):
+def round5d_section(trials, table, results, seed, margins,
+                    hypotheses=ROUND5D_HYPOTHESES,
+                    heading="## Round 5d: a person's file and a 40-line file"):
     """Round 5d's answer: each arm's working builds with their exact
     interval, and each hypothesis's reading, confidence and profile."""
     present = {arm_of(name) for name in trials}
-    lines = ["## Round 5d: a person's file and a 40-line file", "",
+    lines = [heading, "",
              "A row is better or worse only where its whole interval lies "
              "past its margin. Task success and the probes are read on "
              "working builds: those that install and boot. Reliability can "
@@ -2770,7 +2865,7 @@ def round5d_section(trials, table, results, seed, margins):
         lines.append("| %s | %d of %d | %.2f to %.2f |"
                      % (arm, sum(values), len(values), low, high))
     lines.append("")
-    for name, label, wanted in ROUND5D_HYPOTHESES:
+    for name, label, wanted in hypotheses:
         if not set(label.split("-")) <= present:
             continue
         state, rows = round5d_hypothesis(results, label, wanted)
@@ -2961,6 +3056,17 @@ def round5d_checks(seed):
     checks.append(("the cross-check reads a contrast across rounds unpaired",
                    got == 1.0, got))
 
+    # The same for an earlier round read post-hoc: round 2's reused `full`
+    # against `none`, read by the later rules.
+    earlier_ours = {"full-1": judged(3, True), "full-2": judged(3, True),
+                    "none-3": judged(2)}
+    got = (cross_check(earlier_ours, earlier_ours, seed)["results"][
+        "judge_design"]["full-none"]["mean"],
+           cross_check(earlier_ours, earlier_ours, seed, True)["results"][
+        "judge_design"]["full-none"]["mean"])
+    checks.append(("an earlier round's cross-check is unpaired post-hoc",
+                   got == (None, 1.0), got))
+
     # Two measured trials against fifteen: the cell says so.
     cell = contrast_cell({"interval": {"low": 0.1, "high": 0.4,
                                        "method": "BCa, unpaired"},
@@ -3071,6 +3177,82 @@ def round5d_checks(seed):
                    and "Compared unpaired with this round's trials, as "
                    "round 5d registered: short − none and hand − none."
                    in " ".join(text.split()), section[-600:]))
+    checks.append(("round 5d's radar is explained by size, not by votes",
+                   "bound nearest zero" in " ".join(text.split())
+                   and "the share of them better" not in text, None))
+
+    # H3 predicts a loss: a worse row or a worse reliability supports it,
+    # and every row held refutes it.
+    def rows_for(verdict, reliability="held"):
+        planted = {key: {"reference-hybrid": {"verdict": verdict}}
+                   for key in ROUND5D_ROWS}
+        planted["reliability"] = {"reference-hybrid": {
+            "verdict": reliability}}
+        return planted
+    got = [round5d_hypothesis(rows_for(*case), "reference-hybrid",
+                              "worse")[0]
+           for case in (("worse",), ("held",), ("held", "worse"),
+                        ("no improvement shown",))]
+    checks.append(("a hypothesis that predicts a loss reads by it",
+                   got == ["supported", "refuted", "supported",
+                           "inconclusive"], got))
+
+    # Round 5c read post-hoc: its own page, labelled, with H1 and H3 by the
+    # later rules, while the registered reading keeps its own rules.
+    design = {"none": 3, "hybrid": 3, "skills": 4, "reference": 3}
+    earlier = {trial_name(arm, index): {
+        "scores": {}, "change": None, "security": None,
+        "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
+        for arm, score in design.items() for index in range(1, 4)}
+    later_table, later_results = posthoc_rules_reading(earlier, seed)
+
+    # With the other vendor's judge, read as an earlier round's, the
+    # post-hoc reading meets contrasts that judge's reading never computed.
+    try:
+        posthoc_rules_reading(earlier, seed, None,
+                              cross_check(earlier, earlier, seed))
+        crossed_ok = True
+    except KeyError as error:
+        crossed_ok = error
+    checks.append(("the post-hoc reading takes a cross-check",
+                   crossed_ok is True, crossed_ok))
+
+    # A round before round 5 read by the later rules decides on app code,
+    # while its registered reading keeps source lines and files.
+    sized_run = {trial_name(arm, 1): {"scores": {}} for arm in ("none",
+                                                                 "full")}
+    got = (collect(sized_run, later_rules=True)["app_lines"]["direction"],
+           collect(sized_run, later_rules=True)["source_lines"]["direction"],
+           collect(sized_run)["source_lines"]["direction"])
+    checks.append(("the later rules read app code in any round",
+                   got == (DOWN, NEUTRAL, DOWN), got))
+    scratch = os.path.join(tempfile.gettempdir(), "efficacy-posthoc-rules")
+    shutil.rmtree(scratch, ignore_errors=True)
+    page = write_posthoc_rules(earlier, later_table, later_results, seed,
+                               scratch)
+    with io.open(page, encoding="utf-8") as handle:
+        written = " ".join(handle.read().split())
+    images = sorted(name for name in os.listdir(scratch)
+                    if name.endswith(".svg"))
+    shutil.rmtree(scratch, ignore_errors=True)
+    registered = round_contrasts(earlier, collect(earlier), seed)
+    checks.append(("round 5c's post-hoc page is labelled and reads H1 and "
+                   "H3 by the later rules",
+                   written.startswith("# Efficacy benchmark")
+                   and "**Post-hoc.**" in written
+                   and "registered verdicts stand" in written
+                   and "H1, skills deliver what hybrid does, skills-hybrid:"
+                   in written
+                   and "H3, a reference alone delivers less, "
+                   "reference-hybrid:" in written
+                   and "### The rows the questions decide on" in written
+                   and "### Economy" in written
+                   and "skills−hybrid" in written
+                   and "aggregate-posthoc.json" in written
+                   and len(images) == 2
+                   and "size" not in registered["judge_design"]["skills-none"]
+                   and "size" in later_results["judge_design"]["skills-none"],
+                   written[:300]))
 
     axes = dict(ROUND5D_RADAR_AXES)
     sized = {key: {"x": {"verdict": "better", "size": 0.25}}
@@ -3704,6 +3886,16 @@ def by_cost(table, arms):
     return sorted(arms, key=cost)
 
 
+# How to read a radar drawn by size, under it.
+RADAR_SIZE_READING = (
+    "One radar per arm, from the cheapest to the dearest. Each axis is the "
+    "mean of its rows' moves against `%s`: each row's interval bound nearest "
+    "zero over the row's full scale, from -1 at the centre to +1 at the rim, "
+    "and 0 where the interval crosses zero. The dashed ring is `%s`, so "
+    "outside it is better. A hollow point is an axis with no verdict. The "
+    "rows behind each axis, and every number, are in the sections below."
+    % (BARE, BARE))
+
 # How to read the radar, under it.
 RADAR_READING = (
     "One radar per arm, from the cheapest to the dearest. Each axis is a "
@@ -3743,7 +3935,8 @@ def executive_section(trials, table, results, escalation=None,
         for theme, image in sorted(radar.items()):
             lines.append("![Radar per arm](%s#gh-%s-mode-only)"
                          % (image, theme))
-        lines.extend(["", RADAR_READING, ""])
+        lines.extend(["", RADAR_SIZE_READING if radar_axes(results)
+                      is ROUND5D_RADAR_AXES else RADAR_READING, ""])
     else:
         lines.extend(["No radar was drawn for this run.", ""])
     lines.extend(finding_lines(trials, table, results, active))
@@ -4100,7 +4293,7 @@ def verdict_mark(contrast):
 # The legend under a table of contrasts with verdicts.
 MARK_LEGEND = (
     "▲ better and ▼ worse: the interval is clear of zero, in the metric's "
-    "direction. = held, for a row read by its margin, and ≈ no difference "
+    "direction, and under round 5d's rules clear of the row's margin. = held, for a row read by its margin, and ≈ no difference "
     "shown: either way the interval's worse end stays within the row's "
     "margin, so it is no worse than the margin, which is not the same as "
     "equal. ○ no verdict, on purpose: a row reported without one, a pair "
@@ -4177,6 +4370,10 @@ def parse_args(argv):
     parser.add_argument("--cross-check",
                         help="a root whose scoring area holds the other "
                              "vendor's judgings of this round's trees")
+    parser.add_argument("--posthoc-rules", action="store_true",
+                        help="also write a post-hoc page reading the round "
+                             "by round 5d's rules; its registered verdicts "
+                             "stand")
     parser.add_argument("--self-test", action="store_true",
                         help="check the verdict rule against worked cases; "
                              "read no run")
@@ -5620,6 +5817,23 @@ def main(argv):
                    if posthoc else None},
                   handle, indent=2, sort_keys=True)
     print("Report: %s" % target)
+
+    # An earlier round read by round 5d's rules is post-hoc: its own page,
+    # beside the registered report, which it leaves as it was.
+    if options.posthoc_rules and not is_round5d(trials):
+        # The other judge is read by the same rules, so a contrast across
+        # rounds is unpaired on both sides before their signs are compared.
+        later = posthoc_rules_reading(
+            trials, options.seed, withdrawn,
+            cross_check(trials, other, options.seed, True) if check else None)
+        print("Post-hoc: %s" % write_posthoc_rules(
+            trials, later[0], later[1], options.seed, out_dir))
+        with io.open(os.path.join(scoring_area(options.root),
+                                  "aggregate-posthoc.json"),
+                     "w", encoding="utf-8") as handle:
+            json.dump({"seed": options.seed, "rules": "round 5d, post-hoc",
+                       "table": later[0], "results": later[1]},
+                      handle, indent=2, sort_keys=True)
     judged = sum(1 for trial in trials.values() if trial["judge"])
     lib.print_verdict(True, "%d trial(s) aggregated, %d judged"
                       % (len(trials), judged))
