@@ -12,7 +12,7 @@ with its protocol.
 
 | Node or store | What it is | Needed for | Without it |
 | ------------- | ---------- | ---------- | ---------- |
-| Python 3.12 | The interpreter the scripts run under, as `py -3.12` | Every scored trial's environment | Trials scored under another interpreter are measured with another ruler |
+| Python 3.12 | Found as `py -3.12` or `python3.12` | Every scored trial's environment | The scorer refuses to score |
 | Claude Code CLI | `claude` on `PATH`, logged in | Every trial and every generation | The preflight refuses the run |
 | Codex CLI | `codex` on `PATH`, logged in | The rounds' judge, from round 5 | Each judging fails |
 | `gh` | Logged in with access to the hidden suite | Scoring clones the suite | Scoring refuses |

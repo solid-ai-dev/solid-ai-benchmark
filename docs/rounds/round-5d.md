@@ -144,6 +144,9 @@ Done with this registration:
   trial, and every trial records the CLI's version; round 5d runs
   `C:/efficacy/cli/claude-2.1.314.exe`, a copy of 2.1.314 kept where the
   launcher's updater does not prune it
+- scoring makes every environment on Python 3.12, the spec's version, and
+  records it on every score. Round 5c was scored on Python 3.14.8, which
+  refused three builds that capped `requires-python` below 3.13
 
 The report still gains, with a self-test:
 

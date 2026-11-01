@@ -14,7 +14,7 @@ setting, not a choice the benchmark made. Chapter 9 records the choices.
 | 5 | A deny rule matches a command's prefix, not the paths inside it | The file tools can be fenced, the shell cannot |
 | 6 | The builder and the judge bill against subscriptions | A round's budget is quota, not invoice. The judge's weekly plan limit sets how fast a round is judged |
 | 7 | This repository is public | The hidden suite and the raw runs live in private repositories, `braboj/tariff-hidden-suite` and `braboj/tariff-runs` |
-| 8 | Scoring runs Python 3.12 | Every trial's environment is made by the scorer's own interpreter, so a round is scored under one version |
+| 8 | Scoring runs Python 3.12 | Every trial's environment is made on Python 3.12, the spec's version, whatever the scorer runs under; without it the scorer refuses to score |
 | 9 | A round needs about 0.5 GB free per trial: about 40 GB for round 5's 75 | Each scored trial's environment is about 290 MB |
 | 10 | GitHub refuses a file over 50 MB on push | The archive refuses one too |
 

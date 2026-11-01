@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -55,6 +56,17 @@ HIDDEN_SUITE = "braboj/tariff-hidden-suite"
 
 # The package every arm is asked to produce, fixed by the specification.
 PACKAGE = "tariff"
+
+# The Python the specification names. A build may cap `requires-python` at
+# it, as the spec's wording invites, so every environment scoring makes runs
+# this version: on a newer scorer's Python such a build is refused at install
+# and scores zero on every row after it.
+SPEC_PYTHON = (3, 12)
+
+# Where an interpreter at the spec's version is looked for when the scorer
+# runs on another: the Windows launcher, then a versioned name on the path.
+SPEC_PYTHON_COMMANDS = (["py", "-%d.%d" % SPEC_PYTHON],
+                        ["python%d.%d" % SPEC_PYTHON])
 
 # The specification seeds an empty database when the application starts, and
 # seeding refuses without an administrator password. Every command scoring
@@ -228,11 +240,52 @@ def extract(tarball, into, name):
     return target
 
 
+# Each lookup's answer, so a run of many trials asks the launcher once.
+FOUND_INTERPRETERS = {}
+
+
+def spec_interpreter(commands=SPEC_PYTHON_COMMANDS):
+    """The path of a Python at the spec's version; a ScoreError if none is
+    found, since scoring on another version would grade the interpreter."""
+    if commands is SPEC_PYTHON_COMMANDS and sys.version_info[:2] == SPEC_PYTHON:
+        return sys.executable
+    key = tuple(tuple(command) for command in commands)
+    if key not in FOUND_INTERPRETERS:
+        FOUND_INTERPRETERS[key] = find_interpreter(commands)
+    if FOUND_INTERPRETERS[key] is None:
+        tried = ", ".join(" ".join(command) for command in commands)
+        raise ScoreError("no Python %d.%d was found, and scoring runs on the "
+                         "spec's Python only; tried: %s"
+                         % (SPEC_PYTHON[0], SPEC_PYTHON[1], tried))
+    return FOUND_INTERPRETERS[key]
+
+
+def find_interpreter(commands):
+    """The first command's interpreter that runs the spec's version, or None."""
+    probe = "import sys; print(sys.executable); print(*sys.version_info[:2])"
+    wanted = ["%d" % part for part in SPEC_PYTHON]
+    for command in commands:
+        outcome = run(list(command) + ["-c", probe], timeout=120)
+        lines = outcome["stdout"].splitlines()
+        if (outcome["failed"] is None and outcome["status"] == 0
+                and len(lines) == 2 and lines[1].split() == wanted):
+            return lines[0].strip()
+    return None
+
+
+def venv_version(venv):
+    """The Python version a virtual environment runs, as `3.12.10`, or None."""
+    outcome = run([python_in(venv), "-c",
+                   "import platform; print(platform.python_version())"],
+                  timeout=120)
+    return outcome["stdout"].strip() or None
+
+
 def create_venv(where):
-    """A clean virtual environment for one trial."""
+    """A clean virtual environment on the spec's Python."""
     if os.path.exists(where):
         remove_tree(where)
-    outcome = run([sys.executable, "-m", "venv", where], timeout=600)
+    outcome = run([spec_interpreter(), "-m", "venv", where], timeout=600)
     if outcome["failed"] or outcome["status"] != 0:
         raise ScoreError("could not create the virtual environment at %s: %s"
                          % (where, outcome["stderr"][:400]))
@@ -1108,6 +1161,7 @@ def score_trial(record, options, suite, lock):
               "workspace": workspace, "templates_tree": record.get(
                   "templates_tree"),
               "model": record.get("model"), "suite_revision": suite["revision"],
+              "python": venv_version(venv),
               "scored_at": datetime.datetime.now().isoformat(
                   timespec="seconds"),
               "python_files": files}
@@ -1247,6 +1301,7 @@ def score_change_trial(record, options, suite):
               "task": "change", "workspace": workspace,
               "base": record.get("base"), "model": record.get("model"),
               "suite_revision": suite["revision"],
+              "python": venv_version(venv),
               "scored_at": datetime.datetime.now().isoformat(
                   timespec="seconds")}
     scores["install"] = install_trial(venv, workspace)
@@ -1736,6 +1791,43 @@ def python_files_checks(scratch):
     ]
 
 
+def interpreter_checks(scratch, venv):
+    """Every environment runs the spec's Python, so a build capped at it
+    installs, and a scorer that cannot find that Python refuses to score."""
+
+    # A wheel carries its `Requires-Python` in its metadata, so pip refuses
+    # or accepts it with no build backend and no network, the way it refused
+    # round 5c's three builds capped below 3.13 on Python 3.14.
+    capped = "%d.%d" % (SPEC_PYTHON[0], SPEC_PYTHON[1] + 1)
+    wheel = os.path.join(scratch, "capped_pkg-0.1-py3-none-any.whl")
+    info = "capped_pkg-0.1.dist-info"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("capped_pkg/__init__.py", "")
+        archive.writestr(info + "/METADATA",
+                         "Metadata-Version: 2.1\nName: capped-pkg\n"
+                         "Version: 0.1\nRequires-Python: >=%d.%d,<%s\n"
+                         % (SPEC_PYTHON[0], SPEC_PYTHON[1], capped))
+        archive.writestr(info + "/WHEEL",
+                         "Wheel-Version: 1.0\nGenerator: self-test\n"
+                         "Root-Is-Purelib: true\nTag: py3-none-any\n")
+        archive.writestr(info + "/RECORD", "")
+    installed = pip(venv, "install", "--no-index", "--no-deps", wheel,
+                    timeout=300)
+    try:
+        spec_interpreter([["no-such-python-launcher"]])
+        refused = False
+    except ScoreError:
+        refused = True
+    return [
+        ("a scoring environment runs the spec's Python",
+         (venv_version(venv) or "").split(".")[:2]
+         == ["%d" % part for part in SPEC_PYTHON]),
+        ("a build capped below Python %s installs" % capped,
+         installed["failed"] is None and installed["status"] == 0),
+        ("no Python at the spec's version refuses to score", refused),
+    ]
+
+
 def self_test():
     """Prove the missing-vs-zero rule fires before any score is believed.
 
@@ -1762,7 +1854,7 @@ def self_test():
               + coverage_checks(scratch) + python_files_checks(scratch)
               + scope_checks(scratch))
     venv = create_venv(os.path.join(scratch, "venv"))
-    checks += boot_checks(scratch, venv)
+    checks += boot_checks(scratch, venv) + interpreter_checks(scratch, venv)
 
     empty = os.path.join(scratch, "empty")
     os.makedirs(empty)
