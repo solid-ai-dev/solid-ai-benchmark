@@ -20,9 +20,9 @@ Assumptions:
 | - | --- | ---- | ---- | ----- |
 | 1 | Team lead | Finds the latest report under `docs/audits/` in `solid-ai-templates` | 3 min | Nothing in this repository links to it |
 | 2 | Team lead | Reads the radar: one shape per file, against the no-file ring | 1 min | Outside the ring is better; the axes cluster the verdicts |
-| 3 | Team lead | Reads the finding table: verdict, hidden tests, security, adherence and cost per arm | 2 min | A file that breaks the app is not an improvement, whatever else it gains |
-| 4 | Team lead | Reads the line on each file | 2 min | Why it scored so, in words |
-| 5 | Team lead | Reads the caveats line: K, the escalation, lost trials, reach | 3 min | Below K = 6 every interval is descriptive; round 5 runs 15 |
+| 3 | Team lead | Reads each approach: better, worse, and the verdict with its reason | 3 min | A file that breaks the app is not an improvement, whatever else it gains |
+| 4 | Team lead | Reads the questions answered and how sure we are | 2 min | Plain words; the numbers are in the appendix |
+| 5 | Team lead | Opens the appendix for a claim to check | 3 min | What produced the results, the radar's rows, the verdict vector |
 | 6 | Team lead | Reads the assessment's claims table for the view across rounds | 3 min | One round's verdict can flip in the next |
 | | | Total | about 15 min | |
 

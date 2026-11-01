@@ -612,46 +612,36 @@ its mean and interval and counts as neither a win nor a fail.
 
 ### 8.7.3 What the report prints
 
-The report is `docs/audits/YYYY-MM-DD-efficacy.md`.
+A round writes three documents beside each other in `docs/audits/`, each for
+a different reader, plus the radar's two images.
 
-**It opens with a radar per file arm against `none`.** Its axes cluster the
-verdict vector's rows, in a fixed order: works, security, data protection,
-design, maintainability, tests and economy. An axis is the share of its rows
-better than `none` minus the share worse, from −1 to +1; a row whose verdict
-is withheld or not computed counts neither way. `none` is the ring at 0.
-The radar is two SVG files beside the report, light and dark, and GitHub
-shows the one matching the reader's theme.
+- **`YYYY-MM-DD-efficacy.md`, the report**, for anyone deciding: the
+  radars, each approach in plain words, the round's questions answered, and
+  how sure the answers are.
+- **`YYYY-MM-DD-efficacy-appendix.md`**, for a reader checking a claim:
+  what produced the results, the radar's axes row by row, and the verdict
+  vector.
+- **`YYYY-MM-DD-efficacy-record.md`**, for an auditor: everything else.
+  Every metric's table, the change task, raw numbers per trial, lost and
+  re-run trials, reaches, and the judge's evidence check.
 
-**Then the arms against `none`:**
+**The radar.** One per file arm against `none`. Its axes cluster the
+verdict vector's rows, in a fixed order: reliability, security, data
+protection, design, maintainability, tests and economy. An axis is the share
+of its rows better than `none` minus the share worse, from −1 to +1; a row
+whose verdict is withheld or not computed counts neither way. `none` is the
+ring at 0. It is two SVG files, light and dark, and GitHub shows the one
+matching the reader's theme.
 
-- the radar's scores as a table, with the rows behind each axis
-- the finding table: one row per arm, `none` first and the files from the
-  cheapest to the dearest, with the verdict (Yes where a primary dimension or
-  task success is better and none worse; Worse where any is worse; No where
-  none is better), the hidden tests, the judge's security, adherence and
-  cost, each marked by its verdict against `none`
-- the runs low on the hidden tests, by more than the smallest change that
-  matters
-- one line per file on why it scored so, in words
-- one line reading the files together
-- one line scoring the contrasts between two files, 1 to 10:
-  1 + 9 × wins ÷ (wins + fails). A win or fail is a metric better or worse;
-  "no improvement shown" counts neither way.
-- one line of caveats: the escalation, withdrawn metrics, lost trials,
-  reaches past a workspace, and the judge's evidence check
+**Each approach, in plain words.** What it did better and worse than `none`,
+by radar axis; for reliability, how many runs fell short and how many would
+not start; for cost, the dollars per run. Then its verdict, naming the
+deciding measures that made it: the hidden tests, the security and
+data-protection probes, and the judge's five primary scores. Yes where one
+is better and none worse; Worse where any is worse; No where none moved.
 
-The radar, the tables and the score describe the verdicts and decide
-nothing. Every cell rests on a verdict or record below it.
-
-**Then the record:**
-
-- model ids, CLI versions and the template revision
-- each generated arm's brief and token scan
-- K and the bootstrap seed
-- every trial's raw numbers
-- every trial that failed or was re-run, and why
-- the judge's evidence check
-- the verdict vector
+The radar and the words describe the verdicts and decide nothing. Every
+claim rests on a row of the appendix or the record.
 
 ### 8.7.4 Checks declared after a run
 
