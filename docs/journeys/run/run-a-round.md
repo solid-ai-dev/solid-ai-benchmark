@@ -48,6 +48,6 @@ py tests/efficacy/score.py --root <run root>
 | # | Finding | Status |
 | - | ------- | ------ |
 | 1 | Each trial records the templates source's remote, ref and commit, and vendoring reads that ref with `git archive`, so the templates clone's HEAD may move during a run | Settled in [ch. 6.1.2](../../architecture/06-runtime-view.md) |
-| 2 | A stray process-stop command in a trial once stopped the harness itself. Such commands are now denied, and a trial whose harness died is voided by the next run | Settled in [chapter 9](../../architecture/09-architecture-decisions.md), 2026-10-16 |
+| 2 | A stray process-stop command in a trial once stopped the harness itself. Such commands are now denied, and a trial whose harness died is voided by the next run | Settled in [ADR-020](../../decisions/020-trial-isolation.md), 2026-10-16 |
 | 3 | A full disk ends a trial with `No space left on device`, and that trial is not a result | Settled in [ch. 7.2](../../architecture/07-deployment-view.md) |
 | 4 | A trial that prints its result but does not exit is ended two minutes later | Settled in chapter 6.1 |
