@@ -228,6 +228,9 @@ failure once and lets only a difference past the margin decide.
 
 - Each arm's verdict is printed with one line per radar axis: better, held,
   worse or unsettled.
+- An axis is worse where a row is worse and none better, better the other
+  way round, and held where every row is held. Where rows went both ways, it
+  takes the sign of its size on the radar (13d.8).
 - A trade-off, such as better tests at a higher cost, stays visible instead of
   folding into "supported" or "refuted".
 

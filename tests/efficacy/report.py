@@ -37,7 +37,8 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
-                     PROMPT, ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, SCORABLE,
+                     PROMPT, ROUND5_ARMS, ROUND5_K, ROUND5_SPEC,
+                     ROUND5D_ARMS, SCORABLE,
                      TEMPLATES_ENV, VOIDING,
                      TrialError, canonical, git, k_ceiling, order, reach,
                      read_transcripts, scoring_area, split_name,
@@ -54,6 +55,7 @@ REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 # ran again as round 5b, which changed only the prompt; round 5b was stopped in
 # turn and runs again as round 5c, which changes only where a workspace sits.
 ROUND5_REGISTRATION = "docs/rounds/round-5c.md"
+ROUND5D_REGISTRATION = "docs/rounds/round-5d.md"
 
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
@@ -94,7 +96,16 @@ CONTRASTS = (("full", "none"), ("short", "none"), ("hybrid", "none"),
              # inline, the same rules with and without the split.
              ("reference", "none"), ("inline", "none"), ("skills", "none"),
              ("skills", "hybrid"), ("reference", "hybrid"),
-             ("skills", "inline"))
+             ("skills", "inline"),
+
+             # Round 5d: each templates arm against a person's file, and the
+             # 40-line file against the same generation without its budget.
+             ("inline", "hand"), ("hybrid", "hand"), ("reference", "hand"),
+             ("skills", "hand"), ("short", "inline"))
+
+# The contrasts only round 5d declares. Round 2 ran `hybrid` beside `hand`
+# and declared no contrast between them, so its report never prints one.
+ROUND5D_ONLY = CONTRASTS[-5:]
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -145,6 +156,19 @@ ROUND5_MARGINS = dict(MARGINS, adherence=("8 pp", 0.08, ABSOLUTE))
 ROUND5_MARGINS.update((key, ("20 % relative", 0.20, RELATIVE))
                       for key in ("app_lines", "app_files"))
 BANDED = ("app_lines", "app_files")
+
+# Round 5d adds two margins. Reliability's is one build of fifteen. Economy's
+# is a quarter of the baseline's mean, so a small rise in cost reads as held.
+ROUND5D_MARGINS = dict(ROUND5_MARGINS,
+                       reliability=("6.7 pp", 1 / 15.0, ABSOLUTE))
+ROUND5D_MARGINS.update((key, ("25 % relative", 0.25, RELATIVE))
+                       for key in ("cost_usd", "turns", "output_tokens",
+                                   "wall_seconds"))
+
+# The rows round 5d reads on working builds alone. A build that does not
+# install and boot counts once, against reliability, and not again against
+# every row it would fail.
+WORKING_ONLY = ("task_success",) + PROBE_RATES
 
 # The size rows round 5 replaces with app code. Source lines miss templates
 # and count tests kept in the package; files count docs and configuration.
@@ -206,6 +230,24 @@ def task_success(trial):
     if metric_value(trial, "install") is False:
         return 0.0
     return None
+
+
+def works(trial):
+    """1.0 where the build installed, created its app and served `/`, 0.0
+    where any of those failed, None where it was not measured."""
+
+    # A redirect to the sign-in page is an app that serves, so any status
+    # short of a server error counts as booted.
+    install = metric_value(trial, "install")
+    if install is False:
+        return 0.0
+    boot = metric_value(trial, "boot")
+    if install is not True or not isinstance(boot, dict):
+        return None
+    status = boot.get("index_status")
+    booted = (boot.get("factory") is True and isinstance(status, int)
+              and status < 500)
+    return 1.0 if booted else 0.0
 
 
 def boolean(trial, *keys):
@@ -287,6 +329,7 @@ METRICS = (
     ("task_success", "Task success, hidden suite pass rate", UP, task_success),
     ("install", "Installs in a clean environment", UP,
      lambda t: boolean(t, "install")),
+    ("reliability", "Installs and boots", UP, works),
     ("adherence", "Adherence checklist fraction", UP,
      lambda t: metric_value(t, "adherence")),
 
@@ -456,7 +499,7 @@ def change_success(trial):
     return None
 
 
-def bca_interval(differences, seed):
+def bca_interval(differences, seed, resamples=RESAMPLES):
     """A bias-corrected and accelerated bootstrap interval over K differences.
 
     Returns the interval and, where the method cannot be applied, the reason
@@ -472,7 +515,7 @@ def bca_interval(differences, seed):
     observed = statistics.fmean(differences)
     shuffler = random.Random(seed)
     replicates = []
-    for _ in range(RESAMPLES):
+    for _ in range(resamples):
         sample = [differences[shuffler.randrange(count)] for _ in range(count)]
         replicates.append(statistics.fmean(sample))
     replicates.sort()
@@ -484,11 +527,11 @@ def bca_interval(differences, seed):
 
     normal = statistics.NormalDist()
     below = sum(1 for value in replicates if value < observed)
-    share = below / RESAMPLES
+    share = below / resamples
     if share <= 0 or share >= 1:
-        low = replicates[int((1 - CONFIDENCE) / 2 * RESAMPLES)]
-        high = replicates[min(RESAMPLES - 1,
-                              int((1 + CONFIDENCE) / 2 * RESAMPLES))]
+        low = replicates[int((1 - CONFIDENCE) / 2 * resamples)]
+        high = replicates[min(resamples - 1,
+                              int((1 + CONFIDENCE) / 2 * resamples))]
         return {"low": low, "high": high,
                 "method": "percentile: the bias correction is undefined "
                           "because no resample fell on one side of the mean"}
@@ -510,10 +553,10 @@ def bca_interval(differences, seed):
         z = normal.inv_cdf(tail)
         adjusted = bias + (bias + z) / (1 - acceleration * (bias + z))
         position = normal.cdf(adjusted)
-        index = min(RESAMPLES - 1, max(0, int(position * RESAMPLES)))
+        index = min(resamples - 1, max(0, int(position * resamples)))
         bounds.append(replicates[index])
     return {"low": bounds[0], "high": bounds[1],
-            "method": "BCa, %d resamples, %d%%" % (RESAMPLES,
+            "method": "BCa, %d resamples, %d%%" % (resamples,
                                                    int(100 * CONFIDENCE))}
 
 
@@ -652,7 +695,18 @@ def ordered(names):
 def is_round5(trials):
     """Whether the run holds a round-5 arm, so that round's registration,
     its K and its margins, governs it."""
-    return any(arm_of(name) in ROUND5_ARMS for name in trials)
+    return (any(arm_of(name) in ROUND5_ARMS for name in trials)
+            or is_round5d(trials))
+
+
+def is_round5d(trials):
+    """Whether the run holds a round-5d arm, so that round's registration
+    and its verdict rules govern it."""
+
+    # Rounds 2 and 3 ran `hand` and `short` too, always beside `full`, which
+    # round 5d never runs, so `full` tells the earlier rounds apart.
+    arms = {arm_of(name) for name in trials}
+    return bool(arms & set(ROUND5D_ARMS)) and "full" not in arms
 
 
 # The arms round 5 registers. A block is complete only when every one of
@@ -663,9 +717,9 @@ ROUND5_RUN = ("none", "inline", "hybrid", "reference", "skills")
 def owed_blocks(trials):
     """The blocks of round 5's K that still miss a registered arm's trial,
     in order."""
+    run = ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
     return [block for block in range(1, ROUND5_K + 1)
-            if any(trial_name(arm, block) not in trials
-                   for arm in ROUND5_RUN)]
+            if any(trial_name(arm, block) not in trials for arm in run)]
 
 
 def blocks_named(blocks):
@@ -685,6 +739,8 @@ def blocks_named(blocks):
 
 def margins_of(trials):
     """The margins a run's contrasts are held against."""
+    if is_round5d(trials):
+        return ROUND5D_MARGINS
     return ROUND5_MARGINS if is_round5(trials) else MARGINS
 
 
@@ -715,7 +771,9 @@ def active_contrasts(trials):
     """The declared contrasts whose both arms the run holds, in the declared
     order."""
     present = {arm_of(name) for name in trials}
-    return [pair for pair in CONTRASTS if set(pair) <= present]
+    later = () if is_round5d(trials) else ROUND5D_ONLY
+    return [pair for pair in CONTRASTS
+            if set(pair) <= present and pair not in later]
 
 
 def contrast_arms(active):
@@ -751,6 +809,7 @@ def crossed_labels(trials):
 def collect(trials, metrics=METRICS):
     """Metric values by metric, arm and trial index."""
     superseded = SUPERSEDED_IN_ROUND5 if is_round5(trials) else FROM_ROUND5
+    working_only = is_round5d(trials)
     table = {}
     for key, label, direction, accessor in metrics:
         if key in superseded:
@@ -761,14 +820,190 @@ def collect(trials, metrics=METRICS):
                 value = accessor(trial)
             except (TypeError, KeyError, ValueError):
                 value = None
+            if working_only and key in WORKING_ONLY and works(trial) != 1.0:
+                value = None
             row.setdefault(arm_of(name), {})[index_of(name)] = value
         table[key] = {"label": label, "direction": direction, "values": row}
     return table
 
 
-def contrasts(table, seed, crossed=(), margins=None):
+def margined_verdict(interval, direction, margin):
+    """Better or worse only where the whole interval lies past `margin`, in
+    the metric's own units; held where its worse end stays within it; no
+    improvement shown otherwise."""
+    low, high = interval.get("low"), interval.get("high")
+    if low is None or high is None:
+        return "not computed"
+    if direction == NEUTRAL:
+        return "reported without a verdict"
+    gain_low, gain_high = (low, high) if direction == UP else (-high, -low)
+    if gain_low > margin:
+        return "better"
+    if -gain_high > margin:
+        return "worse"
+    if -gain_low <= margin:
+        return "held"
+    return "no improvement shown"
+
+
+def wilson(successes, count):
+    """Wilson's score interval for a share, at the report's confidence."""
+    z = statistics.NormalDist().inv_cdf((1 + CONFIDENCE) / 2)
+    share = successes / count
+    scale = 1 + z * z / count
+    centre = (share + z * z / (2 * count)) / scale
+    half = z * math.sqrt(share * (1 - share) / count
+                         + z * z / (4 * count * count)) / scale
+    return max(0.0, centre - half), min(1.0, centre + half)
+
+
+def newcombe_paired(pairs):
+    """Newcombe's score interval for the difference of two shares measured
+    on the same blocks (Newcombe, 1998, method 10): `pairs` holds each
+    block's (treatment, baseline), each 1.0 or 0.0."""
+    count = len(pairs)
+    both = sum(1 for left, right in pairs if left and right)
+    left_only = sum(1 for left, right in pairs if left and not right)
+    right_only = sum(1 for left, right in pairs if right and not left)
+    neither = count - both - left_only - right_only
+    first, second = (both + left_only) / count, (both + right_only) / count
+    low1, high1 = wilson(both + left_only, count)
+    low2, high2 = wilson(both + right_only, count)
+    product = ((both + left_only) * (right_only + neither)
+               * (both + right_only) * (left_only + neither))
+    phi = ((both * neither - left_only * right_only) / math.sqrt(product)
+           if product else 0.0)
+    below = math.sqrt(max(0.0, (first - low1) ** 2 - 2 * phi * (first - low1)
+                          * (high2 - second) + (high2 - second) ** 2))
+    above = math.sqrt(max(0.0, (high1 - first) ** 2 - 2 * phi * (high1 - first)
+                          * (second - low2) + (second - low2) ** 2))
+    difference = first - second
+    return {"low": max(-1.0, difference - below),
+            "high": min(1.0, difference + above),
+            "method": "Newcombe's score interval, paired, %d%%"
+                      % int(100 * CONFIDENCE)}
+
+
+def newcombe_unpaired(left, right):
+    """Newcombe's score interval for the difference of two independent
+    shares (Newcombe, 1998, method 10): each list holds 1.0 or 0.0."""
+    first, second = statistics.fmean(left), statistics.fmean(right)
+    low1, high1 = wilson(sum(left), len(left))
+    low2, high2 = wilson(sum(right), len(right))
+    difference = first - second
+    return {"low": difference - math.hypot(first - low1, high2 - second),
+            "high": difference + math.hypot(high1 - first, second - low2),
+            "method": "Newcombe's score interval, unpaired, %d%%"
+                      % int(100 * CONFIDENCE)}
+
+
+def clopper_pearson(successes, count):
+    """The exact interval for a share (Clopper and Pearson, 1934), found by
+    bisection on the binomial tail."""
+    tail = (1 - CONFIDENCE) / 2
+
+    def at_most(k, share):
+        return sum(math.comb(count, i) * share ** i * (1 - share) ** (count - i)
+                   for i in range(k + 1))
+
+    def solve(falls, target):
+        low, high = 0.0, 1.0
+        for _ in range(60):
+            middle = (low + high) / 2
+            if falls(middle) > target:
+                low = middle
+            else:
+                high = middle
+        return (low + high) / 2
+    lower = 0.0 if successes == 0 else solve(
+        lambda share: -(1 - at_most(successes - 1, share)), -tail)
+    upper = 1.0 if successes == count else solve(
+        lambda share: at_most(successes, share), tail)
+    return lower, upper
+
+
+# The radar's full scales: the move at which a row scores ±1. Judge rows move
+# on their 1-5 scale, shares in parts of one, coverage in percent; every
+# other row is a count or a cost, read as a ratio on a log scale.
+JUDGE_SCALE = 1.0
+SHARE_SCALE = 0.20
+COVERAGE_SCALE = 20.0
+RATIO_SCALE = 4.0
+SHARE_ROWS = ("reliability", "task_success", "install", "csrf_refused",
+              "xss_inert") + PROBE_RATES
+
+# Cost and turns are never zero in a trial that ran, so they take the plain
+# ratio; a count may be zero on either side, so it is offset by one unit.
+PLAIN_RATIO_ROWS = ("cost_usd", "turns", "output_tokens", "wall_seconds")
+
+
+def row_size(key, interval, direction, baseline_mean):
+    """How far a row moved, from -1 to +1 with + for better: the bound of
+    its interval nearest zero over the row's full scale, capped; 0 for an
+    interval across zero; None where it cannot be read."""
+    low, high = interval.get("low"), interval.get("high")
+    if low is None or high is None or direction == NEUTRAL:
+        return None
+    bound = 0.0 if low <= 0 <= high else (low if low > 0 else high)
+    if key.startswith("judge_"):
+        moved = bound / JUDGE_SCALE
+    elif key in SHARE_ROWS:
+        moved = bound / SHARE_SCALE
+    elif key == "coverage":
+        moved = bound / COVERAGE_SCALE
+    else:
+        if baseline_mean is None:
+            return None
+        offset = 0.0 if key in PLAIN_RATIO_ROWS else 1.0
+        if baseline_mean + offset <= 0 or baseline_mean + bound + offset <= 0:
+            return None
+        moved = math.log((baseline_mean + bound + offset)
+                         / (baseline_mean + offset)) / math.log(RATIO_SCALE)
+    signed = moved if direction == UP else -moved
+    return max(-1.0, min(1.0, signed))
+
+
+def strict_contrast(key, direction, left, right, seed, margins,
+                    resamples=RESAMPLES):
+    """One paired contrast read by round 5d's rules.
+
+    Better or worse needs the whole interval past the row's margin, and a
+    row without one is read against zero. Reliability's interval is
+    Newcombe's, as a share's. Each contrast carries its size on the radar.
+    """
+    measured = [(left[index], right[index])
+                for index in sorted(set(left) & set(right))
+                if left[index] is not None and right[index] is not None]
+    if not measured:
+        return {"pairs": [], "mean": None, "size": None,
+                "interval": {"low": None, "high": None,
+                             "method": "no complete pair was measured"},
+                "verdict": "not computed", "non_inferior": None}
+    pairs = [first - second for first, second in measured]
+    interval = (newcombe_paired(measured) if key == "reliability"
+                else bca_interval(pairs, seed, resamples))
+    observed = [value for value in right.values() if value is not None]
+    baseline_mean = statistics.fmean(observed) if observed else None
+    margin = 0.0
+    if key in margins:
+        _, share, kind = margins[key]
+        margin = (share * abs(baseline_mean or 0.0) if kind == RELATIVE
+                  else share)
+    return {"pairs": pairs, "mean": round(statistics.fmean(pairs), 4),
+            "interval": interval,
+            "verdict": margined_verdict(interval, direction, margin),
+            "non_inferior": non_inferior(key, interval, direction,
+                                         baseline_mean, margins),
+            "size": row_size(key, interval, direction, baseline_mean)}
+
+
+def contrasts(table, seed, crossed=(), margins=None, strict=False,
+              resamples=RESAMPLES, only=None):
     """The paired differences, their intervals and their verdicts, with
     each held against `margins`, by default the shared ones.
+
+    `strict` reads them by round 5d's rules, as `strict_contrast` states.
+    `only` limits the contrasts computed to the labels it names.
 
     A contrast in `crossed` pairs an arm judged in an earlier round with one
     judged in this one, so its difference carries the day as well as the arm.
@@ -780,14 +1015,25 @@ def contrasts(table, seed, crossed=(), margins=None):
     for key, entry in table.items():
         per_contrast = {}
         for treatment, baseline in CONTRASTS:
+            label = "%s-%s" % (treatment, baseline)
+            if only and label not in only:
+                continue
             left = entry["values"].get(treatment, {})
             right = entry["values"].get(baseline, {})
+            if strict:
+                per_contrast[label] = strict_contrast(
+                    key, entry["direction"], left, right, seed,
+                    margins or MARGINS, resamples)
+                if label in crossed:
+                    per_contrast[label]["verdict"] = CROSSING_VERDICT
+                    per_contrast[label]["non_inferior"] = None
+                    per_contrast[label]["size"] = None
+                continue
             pairs = []
             for index in sorted(set(left) & set(right)):
                 if left[index] is None or right[index] is None:
                     continue
                 pairs.append(left[index] - right[index])
-            label = "%s-%s" % (treatment, baseline)
             if not pairs:
                 per_contrast[label] = {
                     "pairs": [], "mean": None,
@@ -1478,8 +1724,12 @@ def write_report(root, trials, table, results, seed, escalation,
         lines.extend(posthoc_section(*posthoc, active=active, blocks=k))
         lines.append("")
 
-    if is_round5(trials):
+    if is_round5(trials) and not is_round5d(trials):
         lines.extend(round5_section(trials, table, results))
+        lines.append("")
+    if is_round5d(trials):
+        lines.extend(round5d_section(trials, table, results, seed,
+                                     margins_of(trials)))
         lines.append("")
 
     lines.append("## Raw numbers, per trial")
@@ -1721,6 +1971,14 @@ PLAIN_QUESTIONS = {
                      "file?",
     "reference-hybrid": "Does a file that only points to the templates do "
                         "worse than the hybrid file?",
+    "hand-none": "Does a person's short file do better than no file?",
+    "inline-hand": "Does the inline file do as well as a person's file?",
+    "hybrid-hand": "Does the hybrid file do as well as a person's file?",
+    "reference-hand": "Does the reference file do as well as a person's "
+                      "file?",
+    "skills-hand": "Does the skills approach do as well as a person's file?",
+    "short-hand": "Does a 40-line file from the templates do as well as a "
+                  "person's file of the same length?",
 }
 PLAIN_ANSWERS = {"supported": "yes", "refuted": "no",
                  "inconclusive": "not settled: the runs could not tell "
@@ -1893,7 +2151,17 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k):
         lines.extend(plain_arm_lines(trials, table, results, arm,
                                      context_lines(arm)))
         lines.append("")
-    if is_round5(trials):
+    present = {arm_of(name) for name in trials}
+    if is_round5d(trials):
+        lines.extend(["## The questions this round asked", ""])
+        for _, label, wanted in ROUND5D_HYPOTHESES:
+            if not set(label.split("-")) <= present:
+                continue
+            state, _ = round5d_hypothesis(results, label, wanted)
+            lines.append("- %s **%s.**" % (PLAIN_QUESTIONS[label],
+                                           sentence_case(PLAIN_ANSWERS[state])))
+        lines.append("")
+    elif is_round5(trials):
         lines.extend(["## The questions this round asked", ""])
         for _, label, wanted in ROUND5_HYPOTHESES:
             state, _ = hypothesis(results, label, wanted)
@@ -2240,6 +2508,303 @@ def round5_section(trials, table, results):
               consistency_reading(trials)]
     lines.append("- H2, consistency: %s" % h2)
     return lines
+
+
+# Round 5d's hypotheses, as registered: each contrast, and what it needs.
+# H4 asks for a gain; H5 and H6 for no loss. Each reads round 5's primary
+# rows, and reliability can refute any of them.
+ROUND5D_HYPOTHESES = (
+    ("H4, a file at all", "hand-none", "better"),
+    ("H5, inline against a person's file", "inline-hand", "held"),
+    ("H5, hybrid against a person's file", "hybrid-hand", "held"),
+    ("H5, reference against a person's file", "reference-hand", "held"),
+    ("H5, skills against a person's file", "skills-hand", "held"),
+    ("H6, the templates' content at a person's length", "short-hand",
+     "held"),
+)
+
+# Each leave-two-out reading takes fewer resamples than the report's
+# intervals, so an unpaired contrast's 435 readings stay cheap.
+LEAVE_TWO_OUT_RESAMPLES = 2000
+
+
+def row_reading(contrast):
+    """One primary row of a round-5d hypothesis: better, held, worse or
+    open."""
+    verdict = (contrast or {}).get("verdict")
+    return verdict if verdict in ("better", "held", "worse") else "open"
+
+
+def round5d_hypothesis(results, label, wanted):
+    """A round-5d hypothesis's reading, supported, refuted or inconclusive,
+    with the row readings it rests on, reliability's among them."""
+
+    # At K = 15 reliability's interval is too wide to show it held, so it
+    # can refute a hypothesis and never has to hold for one.
+    rows = {key: row_reading(results.get(key, {}).get(label))
+            for key in ROUND5_ROWS}
+    reliability = row_reading(results.get("reliability", {}).get(label))
+    outcomes = set(rows.values())
+    if "worse" in outcomes or reliability == "worse":
+        state = "refuted"
+    elif wanted == "better":
+        state = "supported" if "better" in outcomes else "inconclusive"
+    else:
+        state = ("supported" if outcomes <= {"better", "held"}
+                 else "inconclusive")
+    rows["reliability"] = reliability
+    return state, rows
+
+
+def without_blocks(table, keys, dropped):
+    """The rows `keys` of `table`, with the blocks in `dropped` left out."""
+    return {key: dict(table[key], values={
+        arm: {index: value for index, value in values.items()
+              if index not in dropped}
+        for arm, values in table[key]["values"].items()})
+        for key in keys if key in table}
+
+
+def leave_two_out(table, label, wanted, seed, margins):
+    """Robust where the hypothesis reads the same with every two blocks left
+    out, fragile where any such reading differs, None where it was not
+    read."""
+    keys = ROUND5_ROWS + ("reliability",)
+    whole = contrasts(without_blocks(table, keys, ()), seed, (), margins,
+                      True, LEAVE_TWO_OUT_RESAMPLES, (label,))
+    state = round5d_hypothesis(whole, label, wanted)[0]
+    treatment, baseline = label.split("-")
+    blocks = sorted(set().union(*(
+        set(table[key]["values"].get(treatment, {}))
+        | set(table[key]["values"].get(baseline, {}))
+        for key in keys if key in table)))
+    if len(blocks) < 3:
+        return None
+    for dropped in itertools.combinations(blocks, 2):
+        reading = contrasts(without_blocks(table, keys, dropped), seed, (),
+                            margins, True, LEAVE_TWO_OUT_RESAMPLES, (label,))
+        if round5d_hypothesis(reading, label, wanted)[0] != state:
+            return "fragile"
+    return "robust"
+
+
+def axis_word(results, name, keys):
+    """One radar axis as the profile reads it: worse where a row is worse
+    and none better, better where a row is better and none worse, held where
+    every row is held, and by the axis's size where rows went both ways."""
+    verdicts = [results[key][name]["verdict"] for key in keys
+                if name in results.get(key, {})]
+    counted = [verdict for verdict in verdicts
+               if verdict in COUNTED_VERDICTS]
+    if not counted:
+        return "not computed"
+    better, worse = "better" in counted, "worse" in counted
+    if better and worse:
+        sizes = [results[key][name].get("size") for key in keys
+                 if name in results.get(key, {})]
+        sizes = [size for size in sizes if size is not None]
+        mean = statistics.fmean(sizes) if sizes else 0.0
+        return "better" if mean > 0 else "worse" if mean < 0 else "unsettled"
+    if worse:
+        return "worse"
+    if better:
+        return "better"
+    return "held" if set(counted) == {"held"} else "unsettled"
+
+
+def profile(results, name):
+    """Each radar axis's word for one contrast, in the radar's order."""
+    return [(axis, axis_word(results, name, keys))
+            for axis, keys in ROUND5D_RADAR_AXES]
+
+
+def round5d_section(trials, table, results, seed, margins):
+    """Round 5d's answer: each arm's working builds with their exact
+    interval, and each hypothesis's reading, confidence and profile."""
+    present = {arm_of(name) for name in trials}
+    lines = ["## Round 5d: a person's file and a 40-line file", "",
+             "A row is better or worse only where its whole interval lies "
+             "past its margin. Task success and the probes are read on "
+             "working builds: those that install and boot. Reliability can "
+             "refute a hypothesis and never has to hold for one.", "",
+             "| Arm | Working builds | 95 % exact interval |",
+             "| --- | --- | --- |"]
+    for arm in ARMS:
+        if arm not in present:
+            continue
+        values = [value for value in table["reliability"]["values"].get(
+            arm, {}).values() if value is not None]
+        if not values:
+            lines.append("| %s | — | — |" % arm)
+            continue
+        low, high = clopper_pearson(int(sum(values)), len(values))
+        lines.append("| %s | %d of %d | %.2f to %.2f |"
+                     % (arm, sum(values), len(values), low, high))
+    lines.append("")
+    for name, label, wanted in ROUND5D_HYPOTHESES:
+        if not set(label.split("-")) <= present:
+            continue
+        state, rows = round5d_hypothesis(results, label, wanted)
+        sureness = leave_two_out(table, label, wanted, seed, margins)
+        detail = ", ".join("%s %s" % (SHORT.get(key, key), outcome)
+                           for key, outcome in rows.items())
+        lines.append("- %s, %s: %s, %s (%s)" % (
+            name, label, state, sureness or "confidence not read", detail))
+        lines.append("  - profile: %s" % "; ".join(
+            "%s %s" % (axis, word) for axis, word in profile(results, label)))
+    return lines
+
+
+def round5d_checks(seed):
+    """Round 5d's rules: a working build, quality on working builds, a
+    verdict only past the margin, economy's margins, reliability's interval
+    and its refute-only reading, leave-two-out, the profile and the radar's
+    sizes."""
+    checks = []
+
+    def boot(install, factory, status):
+        return {"scores": {"install": {"value": install},
+                           "boot": {"value": {"factory": factory,
+                                              "index_status": status}}}}
+    got = [works(boot(True, True, 302)), works(boot(True, False, None)),
+           works(boot(False, False, None)), works(boot(True, True, 500))]
+    checks.append(("a build works when it installs and serves short of a "
+                   "server error", got == [1.0, 0.0, 0.0, 0.0], got))
+
+    # A broken build's task success is left out in round 5d and is zero in
+    # round 2, which ran `full` beside `hand`.
+    broken = dict(boot(False, False, None)["scores"],
+                  hidden_suite={"value": None, "missing": "no install"})
+    working = dict(boot(True, True, 302)["scores"],
+                   hidden_suite={"value": 0.9})
+    run = {"hand-1": {"scores": broken}, "short-1": {"scores": working}}
+    later = collect(run)
+    earlier = collect(dict(run, **{"full-1": {"scores": working}}))
+    got = (later["task_success"]["values"]["hand"][1],
+           later["reliability"]["values"]["hand"][1],
+           earlier["task_success"]["values"]["hand"][1])
+    checks.append(("round 5d reads task success on working builds only",
+                   got == (None, 0.0, 0.0), got))
+
+    # A judge row's margin is 0.3 points.
+    readings = [margined_verdict({"low": low, "high": high}, UP, 0.3)
+                for low, high in ((0.05, 0.25), (0.35, 0.6), (-0.6, -0.35),
+                                  (-0.2, 0.0), (-0.4, 0.1))]
+    checks.append(("a strike or a win needs the whole interval past the "
+                   "margin", readings == ["held", "better", "worse", "held",
+                                          "no improvement shown"],
+                   readings))
+
+    # A 10 % rise in cost on a baseline of about 11 is held within 25 %; a
+    # 50 % rise is worse.
+    base = {index: 10.0 + index % 3 for index in range(1, 7)}
+    costs = []
+    for rise in (1.1, 1.5):
+        left = {index: value * rise for index, value in base.items()}
+        costs.append(strict_contrast("cost_usd", DOWN, left, base, seed,
+                                     ROUND5D_MARGINS)["verdict"])
+    checks.append(("economy is held within 25 % of the baseline's cost",
+                   costs == ["held", "worse"], costs))
+
+    # Fifteen of fifteen on both sides: the difference spans about ±0.204,
+    # and the exact interval of one arm starts at 0.782.
+    unpaired = newcombe_unpaired([1.0] * 15, [1.0] * 15)
+    paired = newcombe_paired([(1.0, 1.0)] * 15)
+    exact = clopper_pearson(15, 15)
+    got = (round(unpaired["low"], 3), round(unpaired["high"], 3),
+           round(paired["low"], 3), round(exact[0], 3))
+    checks.append(("reliability's interval is Newcombe's, and the arm's is "
+                   "exact", got == (-0.204, 0.204, -0.204, 0.782), got))
+
+    def planted_rows(verdicts, reliability):
+        planted = {key: {"short-hand": {"verdict": verdict}}
+                   for key, verdict in zip(ROUND5_ROWS, verdicts)}
+        planted["reliability"] = {"short-hand": {"verdict": reliability}}
+        return planted
+    held = ["held"] * len(ROUND5_ROWS)
+    got = (round5d_hypothesis(planted_rows(held, "no improvement shown"),
+                              "short-hand", "held")[0],
+           round5d_hypothesis(planted_rows(held, "worse"), "short-hand",
+                              "held")[0],
+           round5d_hypothesis(planted_rows(held, "held"), "short-hand",
+                              "better")[0],
+           round5d_hypothesis(planted_rows(["better"] + held[1:], "held"),
+                              "short-hand", "better")[0])
+    checks.append(("reliability refutes and never has to hold; H4 needs a "
+                   "gain", got == ("supported", "refuted", "inconclusive",
+                                   "supported"), got))
+
+    # Six blocks, every primary row equal: held wherever two are dropped.
+    # Two blocks losing a security point unsettle the row, and dropping
+    # just those two settles it, so that reading is fragile.
+    def table(security):
+        rows = {key: {"label": key, "direction": UP, "values": {
+            "short": {index: 1.0 for index in range(1, 7)},
+            "hand": {index: 1.0 for index in range(1, 7)}}}
+            for key in ROUND5_ROWS + ("reliability",)}
+        rows["judge_security"]["values"]["short"].update(security)
+        return rows
+    got = (leave_two_out(table({}), "short-hand", "held", seed,
+                         ROUND5D_MARGINS),
+           leave_two_out(table({1: 0.0, 2: 0.0}), "short-hand", "held",
+                         seed, ROUND5D_MARGINS))
+    checks.append(("leave-two-out reads robust and fragile",
+                   got == ("robust", "fragile"), got))
+
+    def planted(*pairs):
+        return {key: {"x": {"verdict": verdict, "size": size}}
+                for key, (verdict, size) in zip(("a", "b"), pairs)}
+    got = [axis_word(planted(("better", 0.4), ("held", 0.0)), "x",
+                     ("a", "b")),
+           axis_word(planted(("held", 0.0), ("held", 0.0)), "x", ("a", "b")),
+           axis_word(planted(("better", 0.5), ("worse", -0.1)), "x",
+                     ("a", "b")),
+           axis_word(planted(("no improvement shown", 0.0), ("held", 0.0)),
+                     "x", ("a", "b"))]
+    checks.append(("the profile names each axis better, held, worse or "
+                   "unsettled", got == ["better", "held", "better",
+                                        "unsettled"], got))
+
+    sizes = [row_size("judge_design", {"low": 0.5, "high": 0.9}, UP, 3.0),
+             row_size("judge_design", {"low": -0.1, "high": 0.4}, UP, 3.0),
+             row_size("task_success", {"low": 0.1, "high": 0.3}, UP, 0.8),
+             row_size("mutual_imports", {"low": 3.0, "high": 5.0}, DOWN,
+                      0.0),
+             row_size("mutual_imports", {"low": -3.0, "high": -2.0}, DOWN,
+                      3.0),
+             row_size("cost_usd", {"low": 6.0, "high": 9.0}, DOWN, 2.0),
+             row_size("cost_usd", {"low": 20.0, "high": 30.0}, DOWN, 2.0)]
+    got = [round(size, 3) for size in sizes]
+    checks.append(("the radar plots the bound nearest zero over the full "
+                   "scale", got == [0.5, 0.0, 0.5, -1.0, 0.5, -1.0, -1.0],
+                   got))
+
+    # A run of `hand` and `short` renders round 5d's section, with H6's
+    # reading, its confidence and its profile.
+    design = {"hand": 3, "short": 4}
+    run = {trial_name(arm, index): {
+        "scores": {}, "change": None, "security": None,
+        "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
+        for arm, score in design.items() for index in range(1, 4)}
+    text = rendered(run, seed, {})[2]
+    section = (text.split("## Round 5d")[1].split("\n## ")[0]
+               if "## Round 5d" in text else "")
+    checks.append(("a round-5d run renders H6 with its confidence and "
+                   "profile",
+                   "H6, the templates' content at a person's length, "
+                   "short-hand: inconclusive, robust" in section
+                   and "profile: Reliability not computed" in section
+                   and "Design better" in section, section[-600:]))
+
+    axes = dict(ROUND5D_RADAR_AXES)
+    sized = {key: {"x": {"verdict": "better", "size": 0.25}}
+             for key in axes["Economy"]}
+    got = (axes["Reliability"], axes["Economy"],
+           dict(cluster_scores(sized, "x"))["Economy"])
+    checks.append(("round 5d's radar reads reliability, cost and turns, by "
+                   "size", got == (("reliability", "task_success"),
+                                   ("cost_usd", "turns"), 0.25), got))
+    return checks
 
 
 def round5_checks():
@@ -2693,6 +3258,14 @@ RADAR_AXES = (
     ("Economy", ("cost_usd", "output_tokens", "turns", "wall_seconds")),
 )
 
+# Round 5d's axes. Reliability reads working builds, so install gives way to
+# it. Output tokens move with turns and wall time with cost, so economy keeps
+# cost and turns, and the other two stay in the tables.
+ROUND5D_RADAR_AXES = tuple(
+    (axis, ("reliability", "task_success") if axis == "Reliability"
+     else ("cost_usd", "turns") if axis == "Economy" else keys)
+    for axis, keys in RADAR_AXES)
+
 # The verdicts an axis counts: a withheld or uncomputed one is no evidence
 # either way, so it is left out of the share rather than read as no change.
 COUNTED_VERDICTS = ("better", "worse", "held", "no improvement shown")
@@ -2708,17 +3281,25 @@ RADAR_THEMES = {
 
 
 def cluster_scores(results, name):
-    """Per radar axis, in order: the share of its rows better than the bare
-    arm minus the share worse, from -1 to +1, or None where no row has a
-    verdict."""
+    """Per radar axis, in order, from -1 to +1, or None where no row has a
+    verdict: the mean of its rows' sizes where the contrasts carry them, as
+    round 5d's do, and otherwise the share of its rows better than the bare
+    arm minus the share worse."""
+    sized = any("size" in per.get(name, {}) for per in results.values())
     scores = []
-    for axis, keys in RADAR_AXES:
-        verdicts = [results[key][name]["verdict"] for key in keys
-                    if name in results.get(key, {})]
-        counted = [verdict for verdict in verdicts
-                   if verdict in COUNTED_VERDICTS]
-        scores.append((axis, (counted.count("better") - counted.count("worse"))
-                       / len(counted) if counted else None))
+    for axis, keys in ROUND5D_RADAR_AXES if sized else RADAR_AXES:
+        rows = [results[key][name] for key in keys
+                      if name in results.get(key, {})]
+        counted = [contrast for contrast in rows
+                   if contrast["verdict"] in COUNTED_VERDICTS]
+        if sized:
+            sizes = [contrast["size"] for contrast in counted
+                     if contrast.get("size") is not None]
+            scores.append((axis, statistics.fmean(sizes) if sizes else None))
+            continue
+        verdicts = [contrast["verdict"] for contrast in counted]
+        scores.append((axis, (verdicts.count("better") - verdicts.count("worse"))
+                       / len(verdicts) if verdicts else None))
     return scores
 
 
@@ -2810,7 +3391,9 @@ def radar_table(results, arms):
               for arm in arms}
     lines = ["| Axis | %s | Rows |" % " | ".join("`%s`" % arm for arm in arms),
              "| --- | %s | --- |" % " | ".join("---" for _ in arms)]
-    for axis, keys in RADAR_AXES:
+    sized = any("size" in contrast for per in results.values()
+                for contrast in per.values())
+    for axis, keys in ROUND5D_RADAR_AXES if sized else RADAR_AXES:
         lines.append("| %s | %s | %s |" % (
             axis, " | ".join(axis_score(scored[arm][axis]) for arm in arms),
             "; ".join(labels.get(key, key) for key in keys)))
@@ -3880,7 +4463,8 @@ def planted_change_run(revision):
 def rendered(trials, seed, withdrawn):
     """The report a planted run renders, withdrawn metrics blanked first."""
     table = collect(trials)
-    results = contrasts(table, seed, crossed_labels(trials))
+    results = contrasts(table, seed, crossed_labels(trials),
+                        margins_of(trials), is_round5d(trials))
     before = results["change_success"]["full-none"]["verdict"]
     withdraw(withdrawn, table, results)
     scratch = os.path.join(tempfile.gettempdir(),
@@ -4572,6 +5156,7 @@ def self_test(seed):
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
+    checks.extend(round5d_checks(seed))
     checks.extend(band_checks(seed))
     checks.extend(failed_build_checks())
     checks.extend(record_checks())
@@ -4640,7 +5225,9 @@ def main(argv):
     # rather than read against it.
     if is_round5(trials):
         try:
-            problem = registration_problem(options.root, ROUND5_REGISTRATION)
+            problem = registration_problem(
+                options.root, ROUND5D_REGISTRATION if is_round5d(trials)
+                else ROUND5_REGISTRATION)
         except TrialError as error:
             problem = str(error)
         if problem:
@@ -4688,7 +5275,8 @@ def main(argv):
         return 2
     margins = margins_of(trials)
     table = collect(trials)
-    results = contrasts(table, options.seed, crossed_labels(trials), margins)
+    results = contrasts(table, options.seed, crossed_labels(trials), margins,
+                        is_round5d(trials))
     withdrawn = withdrawals(trials)
     withdraw(withdrawn, table, results)
 
@@ -4719,7 +5307,8 @@ def main(argv):
     if posthoc_owed(trials):
         posthoc_table = collect(trials, POSTHOC)
         posthoc = (posthoc_table, contrasts(posthoc_table, options.seed,
-                                            crossed_labels(trials), margins))
+                                            crossed_labels(trials), margins,
+                                            is_round5d(trials)))
     target = write_report(options.root, trials, table, results, options.seed,
                           escalation, out_dir, posthoc, withdrawn, check)
 
