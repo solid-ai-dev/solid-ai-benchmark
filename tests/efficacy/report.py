@@ -1070,6 +1070,13 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
     return results
 
 
+def round_contrasts(trials, table, seed):
+    """`table`'s contrasts read the way the round registered: its margins,
+    its crossings, and round 5d's rules for a round-5d run."""
+    return contrasts(table, seed, crossed_labels(trials), margins_of(trials),
+                     is_round5d(trials))
+
+
 def withdrawals(trials, path=WITHDRAWN):
     """Each withdrawn metric whose grader revision scored any of these trials.
 
@@ -2241,7 +2248,7 @@ def appendix_lines(trials, table, results, escalation, k, seed, generation,
                   "groups, each approach's mean, and each approach against "
                   "`%s`. %s" % (BARE, CONTRAST_LEGEND), "", DEGENERATE_NOTE,
                   ""])
-    for axis, keys in RADAR_AXES:
+    for axis, keys in radar_axes(results):
         lines.extend(["### %s" % axis, ""])
         lines.extend(contrast_table(table, results, keys, active=against,
                                     blocks=k, legend=False))
@@ -2590,7 +2597,11 @@ def leave_two_out(table, label, wanted, seed, margins, results=None):
         for key, verdict in withheld.items():
             reading[key][label]["verdict"] = verdict
         return round5d_hypothesis(reading, label, wanted)[0]
-    state = read(())
+
+    # The reading every drop is compared with is the one the report prints,
+    # at its full resamples, not one recomputed at fewer.
+    state = (round5d_hypothesis(results, label, wanted)[0] if results
+             else read(()))
     treatment, baseline = label.split("-")
     blocks = sorted(set().union(*(
         set(table[key]["values"].get(treatment, {}))
@@ -2776,13 +2787,34 @@ def round5d_checks(seed):
     # losing adherence decide, and the reading is fragile.
     planted_table = table({index: -1.0 for index in range(1, 7)})
     planted_table["adherence"]["values"]["short"].update({1: 0.0, 2: 0.0})
-    shown = {"judge_security": {"short-hand": {"verdict": DISAGREE_VERDICT}}}
-    got = (leave_two_out(planted_table, "short-hand", "held", seed,
+    shown = contrasts(planted_table, seed, (), ROUND5D_MARGINS, True,
+                      only=("short-hand",))
+    published = round5d_hypothesis(shown, "short-hand", "held")[0]
+    shown["judge_security"]["short-hand"]["verdict"] = DISAGREE_VERDICT
+    got = (published,
+           leave_two_out(planted_table, "short-hand", "held", seed,
                          ROUND5D_MARGINS),
            leave_two_out(planted_table, "short-hand", "held", seed,
                          ROUND5D_MARGINS, shown))
     checks.append(("leave-two-out keeps a withheld verdict withheld",
+                   got == ("refuted", "robust", "fragile"), got))
+
+    # Every reading supports, and the report printed inconclusive: each drop
+    # is compared with what the report printed, so the reading is fragile.
+    printed = contrasts(table({}), seed, (), ROUND5D_MARGINS, True,
+                        only=("short-hand",))
+    printed["adherence"]["short-hand"]["verdict"] = "no improvement shown"
+    got = (leave_two_out(table({}), "short-hand", "held", seed,
+                         ROUND5D_MARGINS),
+           leave_two_out(table({}), "short-hand", "held", seed,
+                         ROUND5D_MARGINS, printed))
+    checks.append(("leave-two-out compares with the printed reading",
                    got == ("robust", "fragile"), got))
+
+    # Round 5d's appendix lists the rows its radar reads.
+    got = [axis for axis in radar_axes(printed)] == list(ROUND5D_RADAR_AXES)
+    checks.append(("round 5d's appendix and radar read round 5d's rows",
+                   got and radar_axes({}) == RADAR_AXES, got))
 
     # An earlier round never computes a contrast only round 5d declares.
     earlier_table = {"judge_design": {"label": "x", "direction": UP,
@@ -3331,6 +3363,14 @@ RADAR_THEMES = {
 }
 
 
+def radar_axes(results):
+    """The radar's axes for these contrasts: round 5d's where they carry a
+    size, as only round 5d's do, and the earlier rounds' otherwise."""
+    sized = any("size" in contrast for per in results.values()
+                for contrast in per.values())
+    return ROUND5D_RADAR_AXES if sized else RADAR_AXES
+
+
 def cluster_scores(results, name):
     """Per radar axis, in order, from -1 to +1, or None where no row has a
     verdict: the mean of its rows' sizes where the contrasts carry them, as
@@ -3442,9 +3482,7 @@ def radar_table(results, arms):
               for arm in arms}
     lines = ["| Axis | %s | Rows |" % " | ".join("`%s`" % arm for arm in arms),
              "| --- | %s | --- |" % " | ".join("---" for _ in arms)]
-    sized = any("size" in contrast for per in results.values()
-                for contrast in per.values())
-    for axis, keys in ROUND5D_RADAR_AXES if sized else RADAR_AXES:
+    for axis, keys in radar_axes(results):
         lines.append("| %s | %s | %s |" % (
             axis, " | ".join(axis_score(scored[arm][axis]) for arm in arms),
             "; ".join(labels.get(key, key) for key in keys)))
@@ -4514,8 +4552,7 @@ def planted_change_run(revision):
 def rendered(trials, seed, withdrawn):
     """The report a planted run renders, withdrawn metrics blanked first."""
     table = collect(trials)
-    results = contrasts(table, seed, crossed_labels(trials),
-                        margins_of(trials), is_round5d(trials))
+    results = round_contrasts(trials, table, seed)
     before = results["change_success"]["full-none"]["verdict"]
     withdraw(withdrawn, table, results)
     scratch = os.path.join(tempfile.gettempdir(),
@@ -5324,10 +5361,8 @@ def main(argv):
         print("refused: the run holds K = %d, past the ceiling of "
               "K = %d" % (k, ceiling))
         return 2
-    margins = margins_of(trials)
     table = collect(trials)
-    results = contrasts(table, options.seed, crossed_labels(trials), margins,
-                        is_round5d(trials))
+    results = round_contrasts(trials, table, options.seed)
     withdrawn = withdrawals(trials)
     withdraw(withdrawn, table, results)
 
@@ -5357,9 +5392,8 @@ def main(argv):
     posthoc = None
     if posthoc_owed(trials):
         posthoc_table = collect(trials, POSTHOC)
-        posthoc = (posthoc_table, contrasts(posthoc_table, options.seed,
-                                            crossed_labels(trials), margins,
-                                            is_round5d(trials)))
+        posthoc = (posthoc_table, round_contrasts(trials, posthoc_table,
+                                                  options.seed))
     target = write_report(options.root, trials, table, results, options.seed,
                           escalation, out_dir, posthoc, withdrawn, check)
 
