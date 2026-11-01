@@ -78,8 +78,15 @@ def trace(text, outputs):
         if heading:
             topic = heading.group(1)
             continue
+        line = line.rstrip()
+
+        # A rule's row that fails to parse, such as one with an empty last
+        # cell, would otherwise drop out of the trace and pass unchecked.
         row = ROW.match(line)
         if not row:
+            if re.match(r"^\|\s*FR-", line):
+                problems.append("line %d: a requirement row that does not "
+                                "parse: %s" % (number, line))
             continue
         rule, rule_topic, index, _, cell = row.groups()
         where = "line %d, %s" % (number, rule)
@@ -200,6 +207,13 @@ def self_test():
          == 1, None),
         ("a rule naming nothing fails",
          len(problems_of("| FR-01-01 | A rule. | - |")) == 1, None),
+        ("a rule with an empty last cell fails",
+         len(problems_of(good[0], "| FR-01-02 | A rule. | |")) == 1, None),
+        ("a row with trailing spaces is still traced",
+         problems_of(good[0],
+                     '| FR-01-02 | A rule. | `a.py` "an absent check" |  ')
+         == ['line 6, FR-01-02: a.py prints no check "an absent check"'],
+         None),
         ("a gap that names no issue fails",
          len(problems_of("| FR-01-01 | A rule. | Gap: later |")) == 1, None),
         ("an untestable rule with no reason fails",
