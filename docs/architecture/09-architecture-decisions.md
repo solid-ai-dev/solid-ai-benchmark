@@ -72,6 +72,7 @@ kept.
 | [ADR-017](../decisions/017-a-rounds-registration.md) | A round registers its spec by content, and the harness and the report refuse a trial built from other content | Accepted |
 | [ADR-019](../decisions/019-archive-before-the-report.md) | A round is archived to `braboj/tariff-runs` and verified by restoring it before its report is written | Accepted |
 | [ADR-020](../decisions/020-trial-isolation.md) | A trial is fenced by deny rules and excluded by its transcript, in a pen of its own; a reach voids it | Accepted |
+| [ADR-021](../decisions/021-rescore-after-an-environment-defect.md) | A round scored outside its registered environment is re-scored in full, and its report replaced with a dated note keeping the old verdicts | Accepted |
 
 ## 9.6 Decisions about the templates
 

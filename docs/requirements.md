@@ -175,6 +175,7 @@
 | FR-12-08 | The benchmark shall print a check declared after a run in its own section, with no verdict, outside the verdict vector. | Report |
 | FR-12-09 | The benchmark shall blank a withdrawn metric on every run its grader's revision graded, and keep it on the others. | Report |
 | FR-12-10 | The benchmark shall never re-grade, with a corrected grader, the trials its earlier revision graded. | Owner |
+| FR-12-11 | The benchmark shall re-score in full, in the registered environment, a round scored outside it, and replace its report with a dated note keeping the verdicts it replaces. | Scorer, Owner |
 
 ### 13 Records and archive
 
