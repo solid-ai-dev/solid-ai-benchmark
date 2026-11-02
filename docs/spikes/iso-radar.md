@@ -34,15 +34,7 @@ characteristic, is left out: it does not apply to this backend.
 ## The chart
 
 Lean: the eight axes, the target ring, the system's shape, and one figure.
-
-```text
-                                            $9.30/run, 2.2x none
-              Functionality
-       Flexibility        Performance
-  Maintainability            Compatibility
-        Security          Usability
-              Reliability
-```
+A draw.io drawing follows once the scoring is settled.
 
 - **Cost** sits in the top right corner of each panel, as dollars per run and
   as a multiple of the baseline: `$9.30/run, 2.2x none`. It is shown, not
