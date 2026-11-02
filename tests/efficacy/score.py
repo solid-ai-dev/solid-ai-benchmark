@@ -1723,6 +1723,75 @@ loop = [{include-group = "loop"}]
 '''
 
 
+def ruler_checks(scratch):
+    """Prove the rulers take the harness's configuration, and that a test
+    dependency the lock will not admit leaves coverage missing.
+
+    The tools are stubbed: what is checked is the command each is given and
+    what is recorded when an install fails, not the tools themselves.
+    """
+    called = []
+
+    def stub_module(venv, module, args, cwd=None, timeout=TOOL_TIMEOUT):
+        called.append((module, list(args)))
+        return {"failed": "stubbed", "status": 1, "stdout": "", "stderr": "",
+                "argv": [module] + list(args)}
+
+    def refusing_pip(venv, *args, **kwargs):
+        return {"failed": None, "status": 1, "stdout": "",
+                "stderr": "ResolutionImpossible: ruff conflicts with the lock",
+                "argv": ["pip"] + list(args)}
+
+    planted = os.path.join(scratch, "conflict")
+    os.makedirs(os.path.join(planted, "tests"))
+    with io.open(os.path.join(planted, "pyproject.toml"), "w",
+                 encoding="utf-8") as handle:
+        handle.write(PLANTED_TEST_DEPENDENCIES)
+    saved = {name: globals()[name] for name in ("run_module", "pip")}
+    globals().update(run_module=stub_module, pip=refusing_pip)
+    try:
+        roots = [os.path.join(planted, "pkg")]
+        ruff_findings(planted, planted, roots, {})
+        ruff_format(planted, planted, roots, {})
+        mypy_errors(planted, planted, roots, {})
+        conflicted = own_test_coverage(planted, planted, roots, {})
+    finally:
+        globals().update(saved)
+    ruff_args = [args for module, args in called if module == "ruff"]
+    mypy_args = [args for module, args in called if module == "mypy"]
+    return [
+        ("ruff and mypy take the harness's configuration, not the trial's",
+         len(ruff_args) == 2 and len(mypy_args) == 1
+         and all(RUFF_CONFIG in args for args in ruff_args)
+         and MYPY_CONFIG in mypy_args[0]),
+        ("a test dependency the lock refuses leaves coverage missing",
+         conflicted.get("value") is None
+         and "would not install beside the scoring lock"
+         in (conflicted.get("missing") or "")
+         and "ResolutionImpossible" in (conflicted.get("missing") or "")),
+    ]
+
+
+def adherence_checks(scratch):
+    """Prove the checklist holds its 13 items and reads the bare arm as it
+    reads any other."""
+    planted = os.path.join(scratch, "adherence")
+    os.makedirs(planted)
+    scores = {"ruff": measured(0), "mypy": measured(0),
+              "ruff_format": measured(0), "coverage": measured({"line": 85}),
+              "complexity": measured({"over_15": 0}),
+              "discovery": {"roots": [os.path.join(planted, "src", "pkg")]},
+              "structure": measured({"exception_bases": ["PkgError"],
+                                     "print_calls": [], "citations": [],
+                                     "logging": {"used": True,
+                                                 "null_handler": True}})}
+    read = {arm: adherence(planted, dict(scores, arm=arm))
+            for arm in ("none", "hybrid")}
+    return [("the checklist holds 13 items and reads none as any arm",
+             read["none"].get("total_items") == 13
+             and read["none"] == read["hybrid"])]
+
+
 def coverage_checks(scratch):
     """Prove the coverage run installs what the trial's tests declare.
 
@@ -1920,7 +1989,9 @@ def self_test():
               + lock_checks() + html_checks() + readonly_checks(scratch)
               + lock_source_checks(scratch) + unrun_checks(scratch)
               + claim_checks(scratch) + security_checks(scratch)
-              + coverage_checks(scratch) + python_files_checks(scratch)
+              + coverage_checks(scratch) + ruler_checks(scratch)
+              + adherence_checks(scratch)
+              + python_files_checks(scratch)
               + scope_checks(scratch))
     dropped = create_venv(os.path.join(scratch, "dropped"))
     drop_venv(dropped)

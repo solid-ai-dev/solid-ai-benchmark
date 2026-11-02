@@ -49,8 +49,8 @@ when:
 | FR-02-04 | Self-test | `report.py` "every per-KLOC row carries the static margin"<br>`report.py` "every primary the judge asks for is led with, worded and given its margins" |
 | FR-02-05 | Self-test | `report.py` "round 5 holds adherence within one item, 8 pp" |
 | FR-02-06 | Self-test | `report.py` "a rise inside the band is held"<br>`report.py` "a rise wholly past the band is worse"<br>`report.py` "one that straddles the band is undecided"<br>`report.py` "a band that holds zero is held"<br>`report.py` "round 5 reads a 10 % rise in app code as held" |
-| FR-02-07 | Missing | #109 |
-| FR-02-08 | Missing | #109 |
+| FR-02-07 | Untestable | No script applies it: from round 5d adherence decides nothing, so the rule binds a person reading an earlier round's report. |
+| FR-02-08 | Untestable | No script calls a trim free; a person reading the report applies it, on the held rows the report prints. |
 | FR-02-09 | Self-test | `report.py` "from six blocks no interval is called descriptive"<br>`report.py` "a round too small to decide says so in the report and the appendix" |
 
 ## 03 Trial count and escalation
@@ -83,7 +83,7 @@ when:
 | FR-05-01 | Self-test | `harness.py` "the scratch home is the home"<br>`harness.py` "the settings file carries the rules and the isolation"<br>`harness.py` "a trial reads the workspace's project settings and no other source" |
 | FR-05-02 | Self-test | `harness.py` "ANTHROPIC_API_KEY is removed"<br>`harness.py` "CLAUDECODE is removed"<br>`harness.py` "VIRTUAL_ENV is removed"<br>`harness.py` "the interpreter leaves PATH" |
 | FR-05-03 | Self-test | `harness.py` "other trials, their change tasks, home and void are denied"<br>`harness.py` "this repository and the scoring area are denied"<br>`harness.py` "tarballs and run records are denied"<br>`harness.py` "the templates source is denied whenever one is set"<br>`harness.py` "the trial's own workspace is not denied" |
-| FR-05-04 | Missing | #109 |
+| FR-05-04 | Self-test | `harness.py` "a trial may not fetch or search the web" |
 | FR-05-05 | Self-test | `harness.py` "a planted Git helper answers outside a trial"<br>`harness.py` "it does not answer inside one" |
 | FR-05-06 | Self-test | `harness.py` "every kill by name meets a deny rule" |
 | FR-05-07 | Self-test | `harness.py` "every call reaching past the trial is flagged"<br>`harness.py` "the root, another pen and a climb out of the pen are flagged"<br>`harness.py` "a fetch of the templates is flagged, and only that"<br>`harness.py` "a kill by name that ran, or never answered, is a hit"<br>`harness.py` "a scorable trial with a reach becomes reached"<br>`harness.py` "the trial's own paths are not flagged, a pip extra included" |
@@ -106,18 +106,18 @@ when:
 | -- | ---- | ---------- |
 | FR-07-01 | Self-test | `score.py` "the battery installs from a lock it resolved" |
 | FR-07-02 | Self-test | `score.py` "only the tools reach the lock"<br>`score.py` "the lock carries none of the trial's dependencies" |
-| FR-07-03 | Missing | #109 |
+| FR-07-03 | Self-test | `score.py` "ruff and mypy take the harness's configuration, not the trial's" |
 | FR-07-04 | Self-test | `score.py` "a scoring environment runs the spec's Python"<br>`score.py` "no Python at the spec's version refuses to score"<br>`score.py` "a score on another Python refuses the root"<br>`report.py` "scores on two Pythons are refused" |
 | FR-07-05 | Self-test | `score.py` "the planted package is discovered"<br>`score.py` "an empty tree yields no roots" |
 | FR-07-06 | Self-test | `score.py` "every extra and every group requirement is installed" |
-| FR-07-07 | Missing | #109 |
+| FR-07-07 | Self-test | `score.py` "a test dependency the lock refuses leaves coverage missing" |
 
 ## 08 Flexibility
 
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
 | FR-08-01 | Self-test | `judge.py` "the trial's code reaches the bundle"<br>`judge.py` "scoring's output and the environment's stay out of the bundle"<br>`judge.py` "the skills arm's skills stay out of the bundle" |
-| FR-08-02 | Missing | #109 |
+| FR-08-02 | Self-test | `judge.py` "one seed gives one judging order"<br>`judge.py` "the order is not the arms' order, and holds every repeat"<br>`judge.py` "the unblinding map is written outside the bundles the judge reads" |
 | FR-08-03 | Self-test | `judge.py` "a path naming the trial is a leak"<br>`judge.py` "an escaped path naming the trial is a leak"<br>`judge.py` "a leak in a directory the copy skips is found"<br>`judge.py` "a bundle holding neither has no leak"<br>`generate_arm.py` "the leak scan reports a planted token and passes clean text" |
 
 ## 09 Scoring
@@ -128,7 +128,7 @@ when:
 | FR-09-02 | Self-test | `score.py` "an application that seeds on start, and has no default secret, boots under scoring"<br>`score.py` "a build capped below Python 3.13 installs" |
 | FR-09-03 | Self-test | `score.py` "an hx-* error is set aside and another counts" |
 | FR-09-04 | Self-test | `score.py` "app code is the app's Python and templates, not its tests"<br>`score.py` "test code is a tests directory or a pytest name, anywhere"<br>`score.py` "docs and configuration count toward no size"<br>`score.py` "committed bytecode and a database are artifacts nobody asked for" |
-| FR-09-05 | Missing | #109 |
+| FR-09-05 | Self-test | `score.py` "the checklist holds 13 items and reads none as any arm" |
 | FR-09-06 | Missing | #109 |
 | FR-09-07 | Self-test | `score.py` "churn counts an edit and a new file, not an environment"<br>`score.py` "the churn plant landed" |
 | FR-09-08 | Self-test | `harness.py` "the change prompt names the API and fields the grader drives"<br>`harness.py` "the change prompt is read whole from its file" |
@@ -145,7 +145,7 @@ when:
 | FR-10-05 | Self-test | `report.py` "a direction the other judge reverses loses its verdict"<br>`report.py` "a direction both judges read keeps its verdict"<br>`report.py` "a contrast the other judge did not read keeps its verdict"<br>`report.py` "the rounds' own judge is caught posing as the other" |
 | FR-10-06 | Self-test | `report.py` "the judge is checked by its evidence, not a person" |
 | FR-10-07 | Self-test | `control/control.py` "the domain imports flask"<br>`control/control.py` "ValidationError derives from TariffError"<br>`control/control.py` "the secret key is a literal"<br>`control/control.py` "customer data is written to the log" |
-| FR-10-08 | Missing | #109 |
+| FR-10-08 | Self-test | `control/control.py` "a base archive with another sha256 is refused" |
 | FR-10-09 | Untestable | A judged control root is read by hand, and [validation](validation.md) records each reading. |
 
 ## 11 Security and data protection
@@ -179,7 +179,7 @@ when:
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
 | FR-13-01 | Self-test | `harness.py` "the record is written as every trial starts and ends"<br>`harness.py` "every trial records the CLI's version, read as it starts" |
-| FR-13-02 | Missing | #109 |
+| FR-13-02 | Self-test | `generate_arm.py` "every generated arm's file has its generation record beside it" |
 | FR-13-03 | Self-test | `archive.py` "readings, judgings, map and lock come; bundles do not"<br>`archive.py` "the original tarball's hash is recorded"<br>`archive.py` "the revisions are recorded"<br>`archive.py` "a reading changed in the archive fails the verify" |
 | FR-13-04 | Self-test | `archive.py` "a reading changed after the stamp is a problem"<br>`archive.py` "the report refuses docs/audits/ without a current stamp"<br>`report.py` "a report into a templates source's docs/audits needs the stamp" |
 | FR-13-05 | Self-test | `archive.py` "the restored root reads as the original does"<br>`archive.py` "a restored record points at the restored tarball and void"<br>`archive.py` "a restored transcript keeps its time" |
