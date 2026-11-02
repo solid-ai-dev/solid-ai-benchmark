@@ -33,9 +33,10 @@ characteristic, is left out: it does not apply to this backend.
 
 ## The chart
 
-Lean: the eight axes, the target ring, the system's shape, and one figure.
+Lean: the eight axes, the target ring, the system's shape, `none`'s outline
+for reference, and one figure.
 
-![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met. The top right corner reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
+![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met, and a thin grey outline shows none, the build with no rules file. The top right corner reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
 
 - **Cost** sits in the top right corner of each panel, as dollars per run and
   as a multiple of the baseline: `$9.30/run, 2.2x none`. It is shown, not
@@ -43,6 +44,8 @@ Lean: the eight axes, the target ring, the system's shape, and one figure.
 - **No verdict on the chart.** The verdict word that panels carried before is
   dropped; the report's text gives it.
 - **The target ring** marks where each axis meets its targets.
+- **`none`** is drawn as a thin grey outline with no fill, the reference the
+  cost corner is measured against too.
 
 ## The tables below the chart
 
