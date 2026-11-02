@@ -621,21 +621,31 @@ it, or the bar would move with the results.
 | 3 | Never decides | Never in the verdict vector, a "nothing got worse" claim, or the escalation | FR-12-08 |
 | 4 | Fixed for next time | A check worth deciding on is registered before the next run | — |
 
-### 8.7.5 Withdrawn metrics
+### 8.7.5 Withdrawn metrics and re-scores
 
-A metric whose grader turns out to measure something else is withdrawn, not
-reported.
+A fault found in an instrument, such as the scorer, the hidden suite or the
+environment they run in, is fixed and every trial re-scored. Only a fault a
+re-score cannot repair, one in what the trial itself was asked, withdraws the
+metric.
+
+**Why**
+
+- Numbers from a faulty instrument are known to be wrong; keeping them protects
+  nothing.
+- Faults tend to be hunted where results disappoint, so the old verdicts stay
+  visible beside the new ones.
 
 **Rules**
 
 | # | Rule | In practice | Requirement |
 | - | ---- | ----------- | ----------- |
-| 1 | Withdrawn by revision | Recorded in `tests/efficacy/withdrawn.json` against the grader's revision; every run that revision graded loses the metric, others keep it | FR-12-09 |
-| 2 | Named, not shown | The report names the metric and the reason, with no number, interval or verdict | FR-12-09 |
-| 3 | No re-grade | A corrected grader never re-grades the same trials; it is fixed before the next run | FR-12-10 |
-| 4 | Except a wrong environment | A round scored outside its registered environment, such as on another Python than the spec's, is re-scored in full and its report replaced, keeping the old verdicts in a dated note | FR-12-11 |
+| 1 | Record the fault first | The fault and its fix are written in an issue before any re-score is read | FR-12-10 |
+| 2 | Validate the fix | The fixed instrument passes its own validation again: the hidden suite passes the reference in full and catches every mutation; a script passes its self-test | FR-12-10 |
+| 3 | Every trial, never a subset | Each round that reads the faulty scores is re-scored in full; a root never mixes two suite revisions or two Pythons | FR-12-10 |
+| 4 | Keep the old verdicts | A replaced report opens with a dated note naming the fault and the verdicts it replaces | FR-12-10 |
+| 5 | Withdraw what cannot be fixed | Recorded in `tests/efficacy/withdrawn.json` against the grader's revision; the report names the metric and the reason, with no number, interval or verdict | FR-12-09 |
 
-The re-score rule is ADR-021.
+The decision is ADR-021.
 
 ## 8.8 Records
 
