@@ -34,7 +34,8 @@ characteristic, is left out: it does not apply to this backend.
 ## The chart
 
 Lean: the eight axes, the target ring, the system's shape, and one figure.
-A draw.io drawing follows once the scoring is settled.
+
+![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met. The top right corner reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
 
 - **Cost** sits in the top right corner of each panel, as dollars per run and
   as a multiple of the baseline: `$9.30/run, 2.2x none`. It is shown, not
