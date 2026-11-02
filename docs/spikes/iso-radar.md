@@ -90,11 +90,32 @@ comes from.
   metrics, health, under analysability) and **deploy and rollback** (under
   installability and replaceability).
 
+## Scoring
+
+Each sub-characteristic has measurable targets, each a pass or a fail, written
+as quality requirements (`QG` rows) with a target and a motivation.
+
+| Step | Rule | Why |
+| ---- | ---- | --- |
+| Target | Pass or fail, such as "hidden tests ≥ 98 % pass" | Every axis lands on one scale, 0 to 100 % |
+| Sub-score | The share of its targets one trial meets | |
+| Axis, per trial | The mean of its sub-scores | Each sub-characteristic weighs the same, however many targets it has; a median of so few would hide the weakest one |
+| Axis, per arm | The mean over its trials | A median would hide a few broken builds |
+| ▲ or ▽ against `none` | Only where the whole interval of the difference lies past the axis's margin | Two means a few points apart stay a grey dot |
+
+- **At least three targets** per sub-characteristic; one with fewer is marked
+  in its table, since a single target swings it between 0 and 100 %.
+- **A broken build counts once.** A build that will not install or start counts
+  against Reliability only; every other axis reads the working builds.
+- **Faults are fixed, not averaged away.** A score the instrument got wrong is
+  re-scored (ADR-021); the mean keeps real failures in view.
+- **The margin** is sized per axis from earlier rounds' trial-to-trial noise,
+  before the round runs. The example's 5 points is a placeholder.
+
 ## Open
 
 | Item | Proposal |
 | ---- | -------- |
-| Scoring per axis | Each row has measurable targets, written as quality requirements (`QG` rows) with a target and a motivation. An axis scores the share of its targets met, so the target ring is 100 % |
 | Target values per axis | Set per system, before it is scored |
 | Mapping today's rows | Each metric the benchmark reads is placed under one row: hidden tests under functional correctness, probes under security's rows, coverage and test quality under testability, judge rows under their characteristics |
 | A first re-score | The current system on the new axes; the old chart read Tests high, Reliability and Economy low |
