@@ -172,8 +172,7 @@ when:
 | FR-12-07 | Self-test | `report.py` "the report names each approach and its verdict in plain words"<br>`report.py` "a better primary and no worse answers Yes"<br>`report.py` "a worse primary answers Worse"<br>`report.py` "nothing separated answers No" |
 | FR-12-08 | Self-test | `report.py` "the report prints the section"<br>`report.py` "its row carries no verdict"<br>`report.py` "its row is not in the verdict vector"<br>`report.py` "no after-the-results check is a verdict metric" |
 | FR-12-09 | Self-test | `report.py` "withdrawal blanks every value of the row"<br>`report.py` "its verdict vector row reads withdrawn"<br>`report.py` "the withdrawal section names it and why"<br>`report.py` "a run graded by another revision withdraws nothing"<br>`report.py` "a metric not withdrawn keeps its verdict" |
-| FR-12-10 | Untestable | A working rule; a re-grade and a first grade leave the same record. |
-| FR-12-11 | Self-test | `score.py` "a score on another Python refuses the root"<br>`report.py` "scores on two Pythons are refused" |
+| FR-12-10 | Self-test | `score.py` "a score on another Python refuses the root"<br>`report.py` "scores on two Pythons are refused"<br>`report.py` "a run graded by another revision withdraws nothing" |
 
 ## 13 Records and archive
 

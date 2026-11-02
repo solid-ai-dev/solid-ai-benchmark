@@ -26,6 +26,11 @@ the margins of round 5's H1.
 
 Three things differ: the arms, the order, and a reuse of round 5c's `none`.
 
+Amended 2026-11-02, before any round-5d trial: the hidden suite is the
+revision that imports the build afresh for every test (#116), and round 5c's
+reused trials are re-scored with it in round 5d's root, so every contrast is
+graded by one suite (ADR-021).
+
 ### 13d.2 The arms
 
 | Arm | Trials | Where they come from |
