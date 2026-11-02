@@ -36,7 +36,7 @@ characteristic, is left out: it does not apply to this backend.
 Lean: the eight axes, the target ring, the system's shape, `none`'s outline
 for reference, and one figure.
 
-![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met, and a thin grey outline shows none, the build with no rules file. The top right corner reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
+![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met, and a thin grey outline shows none, the build with no rules file. Each axis carries a filled triangle where it is better than none, a hollow downward triangle where it is worse, and a grey dot where no difference is shown; Security reads 90 % up 30, Reliability 75 % down 10. The top right corner reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
 
 - **Cost** sits in the top right corner of each panel, as dollars per run and
   as a multiple of the baseline: `$9.30/run, 2.2x none`. It is shown, not
@@ -46,6 +46,21 @@ for reference, and one figure.
 - **The target ring** marks where each axis meets its targets.
 - **`none`** is drawn as a thin grey outline with no fill, the reference the
   cost corner is measured against too.
+
+How to read better, worse and lacking:
+
+| Element | Shown as | Says |
+| ------- | -------- | ---- |
+| The system's area | One light fill, always the same | Its shape; area carries no meaning |
+| Better than `none` | Filled ▲ on the axis, green, and "▲ +30" by the label | Past the margin, in the improving direction |
+| Worse than `none` | Hollow ▽ on the axis, red, and "▽ −10" by the label | Past the margin, in the worsening direction |
+| No difference shown | Small grey ● | Within the margin |
+| Lacking | The white gap between the shape and the target ring | How far each axis is from every target met |
+
+- A marker turns ▲ or ▽ only past the axis's margin, so noise stays a grey dot.
+- Shape carries the meaning as well as colour: filled up, hollow down, a dot.
+  The chart reads the same printed in black and white, or by a reader who does
+  not see red and green apart.
 
 ## The tables below the chart
 
