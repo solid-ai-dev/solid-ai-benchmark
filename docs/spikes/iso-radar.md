@@ -36,16 +36,16 @@ characteristic, is left out: it does not apply to this backend.
 Lean: the eight axes, the target ring, the system's shape, `none`'s outline
 for reference, and one figure.
 
-![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met, and a thin grey outline shows none, the build with no rules file. Each axis carries a filled triangle where it is better than none, a hollow downward triangle where it is worse, and a grey dot where no difference is shown; Security reads 90 % up 30, Reliability 75 % down 10. The top right corner reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
+![An example radar with made-up values. Eight axes in ISO order, each scored as the share of its targets met: Functionality 95 %, Performance 70 %, Compatibility 85 %, Usability 60 %, Reliability 75 %, Security 90 %, Maintainability 80 % and Flexibility 55 %. A dashed green ring marks every target met, and a thin grey outline shows none, the build with no rules file. Each axis carries a filled triangle where it is better than none, a hollow downward triangle where it is worse, and a grey dot where no difference is shown; Security reads 90 % up 30, Reliability 75 % down 10. Centred above the chart, the cost reads $9.30/run, 2.2x none](../diagrams/iso-radar-example.png)
 
-- **Cost** sits in the top right corner of each panel, as dollars per run and
-  as a multiple of the baseline: `$9.30/run, 2.2x none`. It is shown, not
+- **Cost** sits centred above each panel, over Functionality, as dollars per
+  run and as a multiple of the baseline: `$9.30/run, 2.2x none`. It is shown, not
   scored: it is not an axis.
 - **No verdict on the chart.** The verdict word that panels carried before is
   dropped; the report's text gives it.
 - **The target ring** marks where each axis meets its targets.
 - **`none`** is drawn as a thin grey outline with no fill, the reference the
-  cost corner is measured against too.
+  cost is measured against too.
 
 How to read better, worse and lacking:
 
