@@ -112,10 +112,54 @@ as quality requirements (`QG` rows) with a target and a motivation.
 - **The margin** is sized per axis from earlier rounds' trial-to-trial noise,
   before the round runs. The example's 5 points is a placeholder.
 
+## Targets
+
+- **Fixed per system, not per round.** They come from the spec and the quality
+  requirements, such as "hidden tests ≥ 98 % pass" or "every security probe
+  passes".
+- **Set once, before the first round scores the system,** so no target moves
+  after its results are seen.
+- **Changed only by a new registration,** like any other rule.
+
+## Mapping today's metrics
+
+A draft for review. Each metric the benchmark reads today sits under one row.
+The app under test serves pages as well as an API, so Usability keeps its
+accessibility and form rows here.
+
+| Axis | Sub-characteristic | Today's metrics |
+| ---- | ------------------ | --------------- |
+| Functionality | Functional correctness | Hidden-test pass rate, on working builds |
+| Functionality | Functional completeness | Public surface: names exported against names the spec requires |
+| Performance | Resource utilisation | Invoice builder's response size and request count |
+| Compatibility | Interoperability | JSON and CSV exports, byte-exact against the seed |
+| Usability | Inclusivity | axe-core WCAG 2.1 AA violations, forms with JavaScript disabled |
+| Usability | User assistance | A README with install and usage |
+| Usability | Operability | HTML validity, less `hx-*` |
+| Reliability | Faultlessness | Installs and boots; `mypy --strict` type errors |
+| Reliability | Fault tolerance | Stack traces in answers to malformed requests |
+| Security | Confidentiality | Plaintext password, account enumeration, hard-coded secret, cookie flags |
+| Security | Integrity | CSRF on sign-in and on forms, open redirect, assembled SQL, stored XSS |
+| Security | Resistance | Debug left on, security headers, vulnerable dependencies, `bandit` findings |
+| Security | Data protection | The three data-protection probes |
+| Maintainability | Modularity | Layering, import cycles, instability, one error hierarchy |
+| Maintainability | Analysability | `ruff`, `ruff format`, cognitive and cyclomatic complexity, docstrings, a `NullHandler` |
+| Maintainability | Modifiability | Change-task churn and pass, extension points, kind ladders, unused code |
+| Maintainability | Testability | Coverage of the agent's own tests, discoverable tests |
+| Flexibility | Installability | `pip install .` in a clean environment, complete packaging metadata |
+
+- **The judge's rows** sit beside the probes and tools under the same
+  sub-characteristics: security and data protection under Security, design
+  under modularity, readability under analysability, maintainability under
+  modifiability, test quality under testability.
+- **Thin axes:** Performance, Compatibility and Flexibility rest on one or two
+  metrics, and Reliability's availability and recoverability on none. An empty
+  sub-characteristic reads "not measured", never 0 %.
+- **Off the radar:** cost, turns and tokens go to the cost line; code size
+  stays a neutral row in the tables.
+
 ## Open
 
 | Item | Proposal |
 | ---- | -------- |
-| Target values per axis | Set per system, before it is scored |
-| Mapping today's rows | Each metric the benchmark reads is placed under one row: hidden tests under functional correctness, probes under security's rows, coverage and test quality under testability, judge rows under their characteristics |
 | A first re-score | The current system on the new axes; the old chart read Tests high, Reliability and Economy low |
