@@ -3180,6 +3180,10 @@ def round5d_checks(seed):
     checks.append(("round 5d's radar is explained by size, not by votes",
                    "bound nearest zero" in " ".join(text.split())
                    and "the share of them better" not in text, None))
+    checks.append(("round 5d's radar names each row's full scale",
+                   "1 point for a judge score, 20 pp for a share, 20 points "
+                   "for coverage, and a factor of 4 for a count or a cost"
+                   in " ".join(text.split()), None))
 
     # H3 predicts a loss: a worse row or a worse reliability supports it,
     # and every row held refutes it.
@@ -3886,15 +3890,23 @@ def by_cost(table, arms):
     return sorted(arms, key=cost)
 
 
+# A row's full scale in words, from the constants the radar draws with, so
+# the caption can never name a scale the drawing does not use.
+FULL_SCALES = (
+    "%g point for a judge score, %g pp for a share, %g points for coverage, "
+    "and a factor of %g for a count or a cost"
+    % (JUDGE_SCALE, 100 * SHARE_SCALE, COVERAGE_SCALE, RATIO_SCALE))
+
 # How to read a radar drawn by size, under it.
 RADAR_SIZE_READING = (
     "One radar per arm, from the cheapest to the dearest. Each axis is the "
     "mean of its rows' moves against `%s`: each row's interval bound nearest "
     "zero over the row's full scale, from -1 at the centre to +1 at the rim, "
-    "and 0 where the interval crosses zero. The dashed ring is `%s`, so "
-    "outside it is better. A hollow point is an axis with no verdict. The "
-    "rows behind each axis, and every number, are in the sections below."
-    % (BARE, BARE))
+    "and 0 where the interval crosses zero. A row's full scale is %s, so a "
+    "reader can work any axis out from the intervals below. The dashed ring "
+    "is `%s`, so outside it is better. A hollow point is an axis with no "
+    "verdict. The rows behind each axis, and every number, are in the "
+    "sections below." % (BARE, FULL_SCALES, BARE))
 
 # How to read the radar, under it.
 RADAR_READING = (
