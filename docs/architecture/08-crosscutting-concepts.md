@@ -633,6 +633,9 @@ reported.
 | 1 | Withdrawn by revision | Recorded in `tests/efficacy/withdrawn.json` against the grader's revision; every run that revision graded loses the metric, others keep it | FR-12-09 |
 | 2 | Named, not shown | The report names the metric and the reason, with no number, interval or verdict | FR-12-09 |
 | 3 | No re-grade | A corrected grader never re-grades the same trials; it is fixed before the next run | FR-12-10 |
+| 4 | Except a wrong environment | A round scored outside its registered environment, such as on another Python than the spec's, is re-scored in full and its report replaced, keeping the old verdicts in a dated note | FR-12-11 |
+
+The re-score rule is ADR-021.
 
 ## 8.8 Records
 
