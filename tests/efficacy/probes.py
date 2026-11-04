@@ -136,7 +136,8 @@ def never_on_import(node):
         return True
     if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
         return True
-    if isinstance(test, ast.Compare):
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(
+            test.ops[0], ast.Eq):
         sides = [test.left] + list(test.comparators)
         names = [side.id for side in sides if isinstance(side, ast.Name)]
         values = [side.value for side in sides
@@ -761,7 +762,8 @@ def web_quality(ctx, workspace):
 # outside what `import tariff` loads though the factory imports it lazily;
 # `db.py` is persistence by its imports and lies outside too; `data/store.py`
 # names Flask and the web module under `if TYPE_CHECKING:`, which loads
-# neither, and `__init__.py` names Werkzeug under a main guard; `data.py`
+# neither, and sqlite3 under an inverted main guard, which does run on
+# import; `__init__.py` names Werkzeug under a main guard; `data.py`
 # loses to the `data` package of the same name, as in Python;
 # `data/__init__.py` lies inside, as the initializer on the way to a module an
 # absolute import names; `broken.py` does not parse.
@@ -870,6 +872,9 @@ if TYPE_CHECKING:
     from flask import Flask  # noqa: F401
     from tariff import web  # noqa: F401
 
+if __name__ != "__main__":
+    import sqlite3  # noqa: F401
+
 
 def load(rule):
     return rule
@@ -951,8 +956,11 @@ def self_test():
          and facts.get("roles", {}).get("db.py") == "persistence"
          and facts.get("roles", {}).get("rules.py") == "domain"),
         ("a module import tariff loads that reaches the store is a violation",
-         facts.get("layering_violations")
-         == [["tariff/data/__init__.py", "sqlite3"]]),
+         ["tariff/data/__init__.py", "sqlite3"]
+         in (facts.get("layering_violations") or [])),
+        ("an inverted main guard runs on import, so its import counts",
+         ["tariff/data/store.py", "sqlite3"]
+         in (facts.get("layering_violations") or [])),
         ("an initializer on the way to an imported module is loaded too",
          "tariff/data/__init__.py" in facts.get("import_closure", [])
          and "tariff/data/store.py" in facts.get("import_closure", [])),
