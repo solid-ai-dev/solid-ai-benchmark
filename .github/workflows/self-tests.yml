@@ -76,7 +76,7 @@ jobs:
           outputs="$RUNNER_TEMP/self-tests"
           mkdir -p "$outputs"
           for module in harness generate_arm score judge report archive reuse \
-              progress security control/control trace; do
+              progress probes security control/control trace; do
             echo "::group::$module"
             python "tests/efficacy/$module.py" --self-test \
               | tee "$outputs/$(basename "$module").txt"
