@@ -9,8 +9,11 @@ Rounds 1 to 5d are the pilot. They shaped the benchmark, and each is re-run
 only from the benchmark at its own commit: the current version carries no
 arm, contrast or rule that only they used. The benchmark proper starts with
 round 6. From there a round is named by a letter for the knob it turns and a
-number for how often that knob has been turned, as `A3` for the third round
-that moved the arms; the trials inside keep their names, `inline-1`, `none-1`.
+number for how many rounds have turned that knob, as `C1` for the first round
+that moves the context file; the trials inside keep their names, `inline-1`,
+`none-1`. The letters are the primer's four knobs, `C` the context file, `S`
+the specification, `M` the builder model and `T` the task
+([ADR-022](../decisions/022-round-names.md)).
 
 | Round | Registered | Asks |
 | ----- | ---------- | ---- |
