@@ -151,63 +151,32 @@ ARMS = {
                "context": "skills/CLAUDE.md", "skills": "skills/skills"},
 }
 
-# Round 1 named its arms by letter and its trials `A1`, `B2`, `C3`. Its run
-# records, tarballs, scores and judgings keep those spellings, and every
-# reader turns them into the words, so the round is never rewritten on disk.
-ROUND_ONE = {"A": "none", "B": "full", "C": "hand"}
-ROUND_ONE_NAME = re.compile(r"^([A-Z])(\d+)$")
-
-
-def arm_name(raw):
-    """An arm as its word, whether a record names it by word or by round 1's
-    letter."""
-    return ROUND_ONE.get(raw, raw)
-
-
 def trial_name(arm, block):
     """A trial's name: the arm's word, a hyphen, the block it runs in."""
     return "%s-%d" % (arm, int(block))
 
 
 def split_name(name):
-    """A trial name as (arm, block), round 1's letters read as their words.
+    """A trial name as (arm, block).
 
     The block is the last hyphenated part, so an arm's word never carries a
     hyphen of its own.
     """
-    match = ROUND_ONE_NAME.match(name)
-    if match and match.group(1) in ROUND_ONE:
-        return ROUND_ONE[match.group(1)], int(match.group(2))
     arm, _, block = name.rpartition("-")
     if not arm or not block.isdigit():
-        raise TrialError("%r is not a trial name; one reads as `full-1`, the "
+        raise TrialError("%r is not a trial name; one reads as `hand-1`, the "
                          "arm's word and its block" % name)
     return arm, int(block)
 
 
 def canonical(name):
-    """A trial name in the form the arms are named today, `none-1` for `A1`."""
+    """A trial name as the arms spell it, `none-1` for `none-01`."""
     return trial_name(*split_name(name))
-
-
-def round_one_name(name):
-    """Round 1's spelling of a trial name, `B1` for `full-1`, or None where
-    the arm was not in round 1."""
-    arm, block = split_name(name)
-    letters = {word: letter for letter, word in ROUND_ONE.items()}
-    return "%s%d" % (letters[arm], block) if arm in letters else None
-
-
-def spellings(name):
-    """Every name a trial's files may be filed under: its canonical name
-    and, for a round 1 arm, its letter."""
-    return [spelled for spelled in (canonical(name), round_one_name(name))
-            if spelled]
 
 
 def name_of(record):
     """The trial a run record or a score describes, by canonical name."""
-    return trial_name(arm_name(record.get("arm")), record.get("trial"))
+    return trial_name(record.get("arm"), record.get("trial"))
 
 # Web access is a confound: an arm that reads the
 # templates online is not the arm being measured. The two web tools are
@@ -1036,9 +1005,9 @@ def freeze(workspace, record_dir, name):
 def frozen_top(tarball, unpacked):
     """The one top-level directory a frozen tarball unpacked to.
 
-    A workspace is frozen under the trial's name as spelled on the day, so a
-    tarball round 1 froze as `B1` unpacks to `B1` whatever the trial is
-    called now, and the reader takes the directory it finds.
+    A workspace is frozen under the name it had on the day, which a reused
+    trial need not keep, so the reader takes the one directory it finds
+    rather than looking for the trial's name.
     """
     entries = os.listdir(unpacked)
     if len(entries) != 1 or not os.path.isdir(os.path.join(unpacked,
@@ -1257,7 +1226,8 @@ def path_forms(paths):
 def path_pattern(paths):
     """A pattern matching any of `paths` the way a command line spells it.
 
-    It ends where the path does, so `A1` matches neither `A10` nor `A1.tar`.
+    It ends where the path does, so `none-1` matches neither `none-10` nor
+    `none-1.tar`.
     """
     return re.compile("(?:%s)%s" % (
         "|".join(re.escape(form) for form in path_forms(paths)), PATH_END))
@@ -1275,9 +1245,9 @@ def outside_pattern(workspace, temp):
         own.append("tmp/" + re.escape(name))
 
     # A sentence can end on the trial's own path, as in "the repo at
-    # ...\A1. I need", so punctuation before the path ends still leaves it
-    # the trial's own, and so does a pip extra, as in `pip install
-    # "...\hybrid-2[dev]"`. A suffix is not punctuation: `A1.tar` stays
+    # ...\none-1. I need", so punctuation before the path ends still leaves
+    # it the trial's own, and so does a pip extra, as in `pip install
+    # "...\hybrid-2[dev]"`. A suffix is not punctuation: `none-1.tar` stays
     # another entry of the root.
     not_own = "(?!(?:%s)(?:\\[[^\\]/\\s\"';,]*\\])?[.:!?)\\]]*%s)" % (
         "|".join(own), PATH_END)
@@ -2359,7 +2329,7 @@ def change_checks():
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-change-self-test")
     remove_tree(scratch)
-    build = os.path.join(scratch, "A1")
+    build = os.path.join(scratch, "frozen-elsewhere")
     os.makedirs(build)
     git(build, "init", "-q")
     with io.open(os.path.join(build, "app.py"), "w",
@@ -2373,9 +2343,9 @@ def change_checks():
                  encoding="utf-8") as handle:
         handle.write("left_uncommitted = True\n")
 
-    # Frozen under round 1's spelling of the trial, so the change task of
-    # `none-1` has to find a top directory named `A1`.
-    frozen = freeze(build, scratch, "A1")
+    # Frozen under another name, as a reused trial's tarball may be, so the
+    # change task of `none-1` has to take the top directory it finds.
+    frozen = freeze(build, scratch, "frozen-elsewhere")
 
     # The plant landed: the build trial ended with work it never committed,
     # which is the state a change task has to take into its starting commit.
@@ -2387,7 +2357,7 @@ def change_checks():
     except TrialError:
         workspace, base = None, None
     checks.append(("the change workspace unpacks under its own name, in its "
-                   "pen, from a tarball frozen under round 1's",
+                   "pen, from a tarball frozen under another name",
                    workspace == trial_workspace(scratch, "change-none-1")
                    and os.path.isfile(os.path.join(workspace, "draft.py"))))
     checks.append(("its starting state is committed", workspace is not None
@@ -2757,9 +2727,10 @@ def leftover_checks():
 
 # On Windows, the folder name the CLI itself wrote for a real trial, so the
 # check holds the harness to the CLI rather than to the harness's own rule.
-PLANTED_TRANSCRIPT = ((r"C:\efficacy\run-v290\A1", "C--efficacy-run-v290-A1")
+PLANTED_TRANSCRIPT = ((r"C:\efficacy\run-v290\none-1",
+                       "C--efficacy-run-v290-none-1")
                       if os.name == "nt" else
-                      ("/efficacy/run-v290/A1", "-efficacy-run-v290-A1"))
+                      ("/efficacy/run-v290/none-1", "-efficacy-run-v290-none-1"))
 
 
 def reach_checks():
@@ -2936,23 +2907,19 @@ def pen_checks():
 
 
 def naming_checks():
-    """A trial is named by its arm's word and its block, and round 1's
-    letters read as the words they became."""
+    """A trial is named by its arm's word and its block, and nothing else
+    reads as one."""
     checks = [
         ("a trial is the arm's word, a hyphen and its block",
          trial_name("short", 2) == "short-2"
          and split_name("short-2") == ("short", 2)),
-        ("round 1's letters read as their words",
-         [split_name(name) for name in ("A1", "B2", "C3")]
-         == [("none", 1), ("full", 2), ("hand", 3)]
-         and canonical("B2") == "full-2"),
-        ("a record names its trial whichever way it spells the arm",
-         name_of({"arm": "B", "trial": 1}) == "full-1"
+        ("a record names its trial by its arm and block",
+         name_of({"arm": "hand", "trial": 1}) == "hand-1"
          and name_of({"arm": "hybrid", "trial": 3}) == "hybrid-3"),
         ("a word name canonicalises to itself",
          canonical("hybrid-3") == "hybrid-3"),
     ]
-    for name in ("none", "D1", "short-x", "-1"):
+    for name in ("none", "A1", "short-x", "-1"):
         try:
             split_name(name)
             checks.append(("%r is refused as a trial name" % name, False))

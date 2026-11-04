@@ -24,7 +24,6 @@ Each risk names what holds it today.
 | - | ---- | ---- | --------- |
 | 1 | Windows-specific handling: `.CMD` shims, `cmd.exe` expansion, process trees | A run on another platform is untested | State the platform in [ch. 2](02-constraints.md), or test one |
 | 2 | `harness.py` and `report.py` each run past 3,000 lines | A change is hard to review in isolation | Split by stage when next touched |
-| 3 | Round 1's trials keep their letter names on disk (`A1`, `B2`, `C3`) | Every reader maps them | None while round 1 is read |
 
 ## 11.3 Confounds and their controls
 

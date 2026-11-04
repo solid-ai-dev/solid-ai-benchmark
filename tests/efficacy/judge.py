@@ -135,7 +135,7 @@ USER_CACHE_DIRS = (("pip", "cache"), ("Microsoft", "Windows"))
 # would have changed what is being judged.
 MARKERS = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "solid-ai-templates",
            "Claude Code", "claude.ai", "CLAUDE", "context file",
-           "arm A", "arm B", "arm C", "arm none", "arm full", "arm short",
+           "arm none", "arm full", "arm short",
            "arm hybrid", "arm hand", "arm reference", "arm inline",
            "arm skills", "SKILL.md")
 
@@ -681,11 +681,7 @@ def refusal(stripped):
 
 
 def trees(root):
-    """Every scored trial's extracted tree, by canonical trial name.
-
-    A tree round 1 scored sits under its letter name, `B1`, and is judged
-    under its word, `full-1`.
-    """
+    """Every scored trial's extracted tree, by canonical trial name."""
     found = {}
     scoring = os.path.join(score.scoring_area(root), "scoring")
     for path in sorted(glob.glob(os.path.join(scoring, "*", "tree", "*"))):
@@ -1251,15 +1247,15 @@ def label_checks(scratch):
     judging = os.path.join(scratch, "labels", "judge")
     os.makedirs(judging)
     plant(judging, {
-        "T3.json": json.dumps({"trial": "B1", "blind_id": "T3",
+        "T3.json": json.dumps({"trial": "inline-1", "blind_id": "T3",
                                "outcome": "judged"}),
-        "T10.json": json.dumps({"trial": "C2", "blind_id": "T10",
+        "T10.json": json.dumps({"trial": "hand-2", "blind_id": "T10",
                                 "outcome": "failed"}),
-        "map.json": json.dumps({"seed": 1, "blind": {"A1": "T12"}}),
+        "map.json": json.dumps({"seed": 1, "blind": {"none-1": "T12"}}),
     })
     return [
         ("a judged trial is known under its word, a failed one is not",
-         judged(judging) == {"full-1": ["T3"]}),
+         judged(judging) == {"inline-1": ["T3"]}),
         ("the highest label counts every file and the map",
          highest_label(judging) == 12),
         ("new labels continue past it",

@@ -1,12 +1,11 @@
 """Bring an earlier round's trials into a run root, scored and judged as
 they were.
 
-Round 2 reuses round 1's `full` and `hand` trials rather than running them
-again. This module copies what the report
-reads for a trial — its run record, frozen tarball, transcripts, score,
-judging and security reading — from the earlier root and scoring area into
-the new ones, under the arm's word, and marks each copy with where it came
-from. The earlier root is never touched, and nothing copied is scored or
+Round 5d reuses round 5c's trials rather than running them again. This
+module copies what the report reads for a trial — its run record, frozen
+tarball, transcripts, score, judging and security reading — from the earlier
+root and scoring area into the new ones, and marks each copy with where it
+came from. The earlier root is never touched, and nothing copied is scored or
 judged again: the scorer, the judge and the security reader skip a trial
 whose result is already there.
 """
@@ -24,10 +23,10 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
-from harness import (ARMS, PROMPT, TrialError, arm_name,  # noqa: E402
+from harness import (ARMS, PROMPT, TrialError,  # noqa: E402
                      assert_outside_repository, canonical, now,
                      project_folder, remove_tree, scorable_trials,
-                     scoring_area, spellings, write_run)
+                     scoring_area, write_run)
 
 # The scoring area's per-trial readings, each a JSON file named for the
 # trial, that a reused trial brings with it.
@@ -35,12 +34,9 @@ READINGS = ("scores", "security-scores")
 
 
 def existing_file(directory, name):
-    """The JSON file a trial's reading is filed under, in either spelling."""
-    for spelled in spellings(name):
-        path = os.path.join(directory, "%s.json" % spelled)
-        if os.path.isfile(path):
-            return path
-    return None
+    """The JSON file a trial's reading is filed under, or None."""
+    path = os.path.join(directory, "%s.json" % canonical(name))
+    return path if os.path.isfile(path) else None
 
 
 def select(source, arms):
@@ -48,10 +44,9 @@ def select(source, arms):
     canonical name."""
     offered = scorable_trials(source, task="build")
     chosen = {name: record for name, record in offered.items()
-              if arm_name(record.get("arm")) in arms}
+              if record.get("arm") in arms}
     for arm in arms:
-        if not any(arm_name(record.get("arm")) == arm
-                   for record in chosen.values()):
+        if not any(record.get("arm") == arm for record in chosen.values()):
             raise TrialError("no scorable build trial of arm %s in %s"
                              % (arm, source))
     return chosen
@@ -102,7 +97,6 @@ def reuse_trial(name, record, source, target):
               "tarball": tarball}
 
     copied = dict(record)
-    copied["arm"] = arm_name(record.get("arm"))
     copied["reused_from"] = origin
     copied["frozen"] = dict(record["frozen"],
                             tarball=os.path.join(target, "%s.tar" % name))
@@ -215,19 +209,19 @@ def reuse(source, target, arms):
 
 
 def plant_source(scratch):
-    """A source root shaped like round 1's: one trial per letter arm, each
-    scored, judged and read for security, with a transcript and a lock."""
+    """A source root of an earlier round: one trial per arm, each scored,
+    judged and read for security, with a transcript and a lock."""
     source = os.path.join(scratch, "earlier")
     area = scoring_area(source)
     records = []
-    for letter, index in (("A", 1), ("B", 1), ("C", 1)):
-        old = "%s%d" % (letter, index)
+    for arm, index in (("none", 1), ("inline", 1), ("hand", 1)):
+        old = "%s-%d" % (arm, index)
         workspace = os.path.join(source, old)
         tarball = os.path.join(source, "%s.tar" % old)
         os.makedirs(workspace)
         with io.open(tarball, "wb") as handle:
             handle.write(b"frozen " + old.encode())
-        records.append({"arm": letter, "trial": index, "task": "build",
+        records.append({"arm": arm, "trial": index, "task": "build",
                         "outcome": "completed", "workspace": workspace,
                         "frozen": {"head": "abc", "tarball": tarball}})
         folder = os.path.join(source, "home", ".claude", "projects",
@@ -240,12 +234,12 @@ def plant_source(scratch):
             os.makedirs(os.path.join(area, kind), exist_ok=True)
             with io.open(os.path.join(area, kind, "%s.json" % old), "w",
                          encoding="utf-8") as handle:
-                json.dump({"name": old, "arm": letter, "trial": index,
+                json.dump({"name": old, "arm": arm, "trial": index,
                            "suite_revision": "planted"}, handle)
     write_run(os.path.join(source, "run-planted.json"),
               datetime.datetime(2026, 9, 15, 12, 0, 0), records)
     os.makedirs(os.path.join(area, "judge"))
-    blind = {"C1": "T1", "B1": "T2", "A1": "T3"}
+    blind = {"hand-1": "T1", "inline-1": "T2", "none-1": "T3"}
     for old, label in blind.items():
         with io.open(os.path.join(area, "judge", "%s.json" % label), "w",
                      encoding="utf-8") as handle:
@@ -272,22 +266,23 @@ def self_test():
         with io.open(os.path.join(*parts), encoding="utf-8") as handle:
             return json.load(handle)
 
-    names, run_file = reuse(source, target, ["full", "hand"])
+    names, run_file = reuse(source, target, ["inline", "hand"])
     records = {r["arm"] + "-" + str(r["trial"]): r
                for r in loaded(run_file)["trials"]}
     checks = [
         ("the chosen arms' trials are copied under the words, and no other",
-         names == ["full-1", "hand-1"]
-         and sorted(os.listdir(target)) == ["full-1.tar", "hand-1.tar",
-                                            "home", os.path.basename(run_file)]
-         and sorted(records) == ["full-1", "hand-1"]),
+         names == ["hand-1", "inline-1"]
+         and sorted(os.listdir(target)) == ["hand-1.tar", "home",
+                                            "inline-1.tar",
+                                            os.path.basename(run_file)]
+         and sorted(records) == ["hand-1", "inline-1"]),
         ("each record names the arm's word, its origin and its copied tarball",
-         records["full-1"]["arm"] == "full"
-         and records["full-1"]["reused_from"]["name"] == "B1"
-         and records["full-1"]["frozen"]["tarball"]
-         == os.path.join(target, "full-1.tar")
-         and io.open(os.path.join(target, "full-1.tar"), "rb").read()
-         == b"frozen B1"),
+         records["inline-1"]["arm"] == "inline"
+         and records["inline-1"]["reused_from"]["name"] == "inline-1"
+         and records["inline-1"]["frozen"]["tarball"]
+         == os.path.join(target, "inline-1.tar")
+         and io.open(os.path.join(target, "inline-1.tar"), "rb").read()
+         == b"frozen inline-1"),
         ("the transcripts come along under the workspace's folder",
          os.path.isfile(os.path.join(
              target, "home", ".claude", "projects",
@@ -298,23 +293,23 @@ def self_test():
              and loaded(area, kind, "%s.json" % name)["reused_from"]["name"]
              == old
              for kind in READINGS
-             for name, old in (("full-1", "B1"), ("hand-1", "C1")))
+             for name, old in (("inline-1", "inline-1"), ("hand-1", "hand-1")))
          and not os.path.exists(os.path.join(area, "scores",
                                              "none-1.json"))),
         ("the judgings keep their labels and the map is theirs alone",
-         loaded(area, "judge", "T2.json")["trial"] == "full-1"
+         loaded(area, "judge", "T2.json")["trial"] == "inline-1"
          and loaded(area, "judge", "T1.json")["trial"] == "hand-1"
          and not os.path.exists(os.path.join(area, "judge", "T3.json"))
          and loaded(area, "judge", "map.json")["blind"]
-         == {"full-1": "T2", "hand-1": "T1"}),
+         == {"inline-1": "T2", "hand-1": "T1"}),
         ("the earlier round's tool lock comes along",
          io.open(os.path.join(area, "tool-lock.txt"),
                  encoding="utf-8").read() == "ruler==1.0\n"),
         ("the target offers the copied trials for scoring under the words",
-         sorted(scorable_trials(target)) == ["full-1", "hand-1"]),
+         sorted(scorable_trials(target)) == ["hand-1", "inline-1"]),
     ]
     try:
-        reuse(source, target, ["full"])
+        reuse(source, target, ["inline"])
         checks.append(("a trial the target already offers is refused",
                        False))
     except TrialError:
@@ -344,7 +339,7 @@ def parse_args(argv):
                              "this repository")
     parser.add_argument("--arms",
                         help="which arms to bring, as words separated by "
-                             "commas: full,hand")
+                             "commas: none,inline")
     parser.add_argument("--self-test", action="store_true",
                         help="prove a reuse copies the chosen trials and "
                              "only those; copy nothing")
