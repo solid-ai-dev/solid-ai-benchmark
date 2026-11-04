@@ -1650,11 +1650,11 @@ def security_checks(scratch):
     reading, and leaves a skipped trial's reading alone."""
     target = os.path.join(scratch, "security-scores")
     os.makedirs(target)
-    for name in ("full-1", "none-1"):
+    for name in ("inline-1", "none-1"):
         with io.open(os.path.join(target, "%s.json" % name), "w",
                      encoding="utf-8") as handle:
             handle.write("{}")
-    owed = security_owed(target, ["full-1", "hand-1", "none-1"], ["none-1"])
+    owed = security_owed(target, ["inline-1", "hand-1", "none-1"], ["none-1"])
     return [("a rescored trial is read again, a skipped one only if unread",
              owed == ["hand-1", "none-1"])]
 

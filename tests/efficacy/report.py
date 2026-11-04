@@ -36,12 +36,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
-from harness import (ARMS, ARMS_DIR, K_CEILING, K_PRIMARY,  # noqa: E402
-                     PROMPT, ROUND5_ARMS, ROUND5_K, ROUND5_SPEC,
-                     ROUND5D_ARMS, SCORABLE,
-                     TEMPLATES_ENV, VOIDING,
-                     TrialError, canonical, git, k_ceiling, order, reach,
-                     read_transcripts, scoring_area, split_name,
+from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
+                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, SCORABLE,
+                     TEMPLATES_ENV, VOIDING, TrialError, canonical, git,
+                     reach, read_transcripts, scoring_area, split_name,
                      templates_root, trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
@@ -80,16 +78,12 @@ WITHDRAWN = os.path.join(HERE, "withdrawn.json")
 RESAMPLES = 10000
 CONFIDENCE = 0.95
 
-# Every contrast declared before the run, each a treatment arm
-# against a baseline. A run
-# prints the contrasts whose arms it holds; the rest are computed as not
-# computed and left out of every table. full - hand is the one an adopter
-# asks: a large full - none beside an equally large hand - none is not a
-# result for the templates. short - hand holds length fixed, hybrid - full
-# the content, and short - full asks whether length matters at all.
-CONTRASTS = (("full", "none"), ("short", "none"), ("hybrid", "none"),
-             ("hand", "none"), ("full", "hand"), ("short", "hand"),
-             ("hybrid", "full"), ("short", "full"),
+# Every contrast declared before the run, each a treatment arm against a
+# baseline. A run prints the contrasts whose arms it holds; the rest are
+# computed as not computed and left out of every table. Each file arm reads
+# against none, and short - hand holds length fixed.
+CONTRASTS = (("short", "none"), ("hybrid", "none"), ("hand", "none"),
+             ("short", "hand"),
 
              # Round 5: each arm against none, the two
              # hypotheses' contrasts against hybrid, and skills against
@@ -102,10 +96,6 @@ CONTRASTS = (("full", "none"), ("short", "none"), ("hybrid", "none"),
              # 40-line file against the same generation without its budget.
              ("inline", "hand"), ("hybrid", "hand"), ("reference", "hand"),
              ("skills", "hand"), ("short", "inline"))
-
-# The contrasts only round 5d declares. Round 2 ran `hybrid` beside `hand`
-# and declared no contrast between them, so its report never prints one.
-ROUND5D_ONLY = CONTRASTS[-5:]
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -174,19 +164,6 @@ WORKING_ONLY = ("task_success",) + PROBE_RATES
 # and count tests kept in the package; files count docs and configuration.
 # They are still printed, without a verdict, so nothing reads them twice.
 SUPERSEDED_IN_ROUND5 = ("source_lines", "tracked_files")
-
-# The app-code rows decide from round 5 on. An earlier round rescored by the
-# current scorer carries them too, but was registered on source lines and
-# files, so it prints them without a verdict and reads as it was reported.
-FROM_ROUND5 = ("app_lines", "app_files")
-
-# The practical thresholds that can owe the one
-# escalation to K = 5. Only a primary dimension triggers it, so no other
-# metric's threshold is carried here, where something could come to read it.
-PRACTICAL = {key: ("0.5 points", 0.5) for key in PRIMARY
-             if key not in PROBE_RATES}
-PRACTICAL.update(security_probe_pass_rate=("9 pp", 0.09),
-                 data_protection_probe_pass_rate=("30 pp", 0.30))
 
 
 def path(payload, *keys):
@@ -458,30 +435,8 @@ CHANGE = ("change_success", "change_regression", "churn_files", "churn_lines",
 
 
 def security_value(trial, key):
-    """A security check's value, or None where it was not taken."""
+    """A security reading's value, or None where it was not taken."""
     return metric_value({"scores": trial.get("security") or {}}, key)
-
-
-# Security checks declared after a run and before any trial was read for them.
-# Their directions were declared with them. They are kept out of METRICS so no
-# verdict, escalation or verdict-vector row can come from a check chosen after
-# the results were seen.
-POSTHOC = (
-    ("security_secret_key", "Hard-coded secret keys", DOWN,
-     lambda t: security_value(t, "secret_key")),
-    ("security_debug", "Debug enabled", DOWN,
-     lambda t: security_value(t, "debug")),
-    ("security_sql_strings", "SQL assembled from untraced values", DOWN,
-     lambda t: security_value(t, "sql_strings")),
-    ("security_vulnerable", "Known vulnerabilities in installed dependencies",
-     DOWN, lambda t: security_value(t, "vulnerable_dependencies")),
-    ("security_cookies", "Session cookie flags set, of three", UP,
-     lambda t: security_value(t, "cookie_flags")),
-    ("security_headers", "Security headers on /, of four", UP,
-     lambda t: security_value(t, "security_headers")),
-    ("security_leaks", "Malformed requests answered with a stack trace, of "
-     "five", DOWN, lambda t: security_value(t, "error_leakage")),
-)
 
 
 def change_value(trial, *keys):
@@ -702,11 +657,7 @@ def is_round5(trials):
 def is_round5d(trials):
     """Whether the run holds a round-5d arm, so that round's registration
     and its verdict rules govern it."""
-
-    # Rounds 2 and 3 ran `hand` and `short` too, always beside `full`, which
-    # round 5d never runs, so `full` tells the earlier rounds apart.
-    arms = {arm_of(name) for name in trials}
-    return bool(arms & set(ROUND5D_ARMS)) and "full" not in arms
+    return any(arm_of(name) in ROUND5D_ARMS for name in trials)
 
 
 # The arms round 5 registers. A block is complete only when every one of
@@ -739,41 +690,14 @@ def blocks_named(blocks):
 
 def margins_of(trials):
     """The margins a run's contrasts are held against."""
-    if is_round5d(trials):
-        return ROUND5D_MARGINS
-    return ROUND5_MARGINS if is_round5(trials) else MARGINS
-
-
-def block_start(root, trials, block):
-    """The first trial of `block` in the order the harness runs it.
-
-    The harness starts each block one arm later than the last, from the
-    order `--arms` named. The run's records show that order in its first
-    block; a run without records is read in the arms' declared order.
-    """
-    named = []
-    for record in run_records(root) if root else []:
-        if record.get("task", "build") != "build":
-            continue
-        try:
-            arm, index = split_name(trial_of(record))
-        except (TrialError, KeyError, TypeError, ValueError):
-            continue
-        if index == 1 and arm not in named:
-            named.append(arm)
-    present = {arm_of(name) for name in trials}
-    arms = ([arm for arm in named if arm in present]
-            or [arm for arm in ARMS if arm in present])
-    return trial_name(*order(arms, block)[len(arms) * (block - 1)])
+    return ROUND5D_MARGINS if is_round5d(trials) else ROUND5_MARGINS
 
 
 def active_contrasts(trials):
     """The declared contrasts whose both arms the run holds, in the declared
     order."""
     present = {arm_of(name) for name in trials}
-    later = () if is_round5d(trials) else ROUND5D_ONLY
-    return [pair for pair in CONTRASTS
-            if set(pair) <= present and pair not in later]
+    return [pair for pair in CONTRASTS if set(pair) <= present]
 
 
 def contrast_arms(active):
@@ -810,14 +734,10 @@ def collect(trials, metrics=METRICS, later_rules=None):
     """Metric values by metric, arm and trial index, read by round 5d's
     rules for a round-5d run or where `later_rules` asks for them."""
     working_only = is_round5d(trials) if later_rules is None else later_rules
-
-    # Round 5d's rules are round 5's size rows too, so a round read by them
-    # decides on app code, whichever round it was.
-    superseded = (SUPERSEDED_IN_ROUND5 if is_round5(trials) or working_only
-                  else FROM_ROUND5)
     table = {}
     for key, label, direction, accessor in metrics:
-        if key in superseded or (working_only and key == "adherence"):
+        if key in SUPERSEDED_IN_ROUND5 or (working_only
+                                           and key == "adherence"):
             direction = NEUTRAL
         row = {}
         for name, trial in sorted(trials.items()):
@@ -1100,11 +1020,6 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
             label = "%s-%s" % (treatment, baseline)
             if only and label not in only:
                 continue
-
-            # Only round 5d declares these, so no earlier round computes
-            # them, and none can owe an escalation or a finding to one.
-            if not strict and (treatment, baseline) in ROUND5D_ONLY:
-                continue
             left = entry["values"].get(treatment, {})
             right = entry["values"].get(baseline, {})
             # Round 5d reads a contrast with an earlier round's arm unpaired,
@@ -1327,64 +1242,11 @@ def cross_check_section(check):
     return lines
 
 
-def escalation_triggers(results):
-    """The rows that owe the escalation to K = 5, in one set of contrasts.
-
-    A row owes it where a primary dimension's interval contains zero while its
-    mean paired difference exceeds that dimension's practical threshold.
-    """
-    triggers = []
-    for key in PRIMARY:
-        label, threshold = PRACTICAL[key]
-        for treatment, baseline in CONTRASTS:
-            name = "%s-%s" % (treatment, baseline)
-            contrast = results[key].get(name)
-            if contrast is None:
-                continue
-            low = contrast["interval"].get("low")
-            high = contrast["interval"].get("high")
-            if low is None or high is None or not contrast["pairs"]:
-                continue
-
-            # Read by size in either direction: an escalation owed only to a
-            # favourable effect would lean the stopping rule toward "better".
-            effect = statistics.fmean(contrast["pairs"])
-            if low <= 0 <= high and abs(effect) > threshold:
-                triggers.append({"metric": key, "contrast": name,
-                                 "mean": round(effect, 4), "low": low,
-                                 "high": high, "threshold": label})
-    return triggers
-
-
-def assess_escalation(trials, results, seed, withdrawn=None, root=None):
-    """Whether the escalation to K = 5 is owed, and whether it was run.
-
-    A run past K = 3 is judged on its first three blocks alone, because that is
-    the vector which had to owe the escalation. Their contrasts are kept, so
-    the report prints the K = 3 vector beside the K = 5 one, with `withdrawn`
-    blanked from them as it is from `results`. A round-5 run registers its
-    own K and no escalation; `root` is read for the order its run took.
-    """
-    k = max((index_of(name) for name in trials), default=0)
-    if is_round5(trials):
-        return {"k": k, "state": "registered", "owed": None, "triggers": [],
-                "owed_blocks": owed_blocks(trials)}
-    if k < K_PRIMARY:
-        return {"k": k, "state": "not assessed", "owed": None, "triggers": []}
-    if k == K_PRIMARY:
-        triggers = escalation_triggers(results)
-        return {"k": k, "state": "assessed", "owed": bool(triggers),
-                "triggers": triggers,
-                "from": block_start(root, trials, K_PRIMARY + 1)}
-    first = {name: trial for name, trial in trials.items()
-             if index_of(name) <= K_PRIMARY}
-    earlier = contrasts(collect(first), seed)
-    withdraw(withdrawn or {}, {}, earlier)
-    triggers = escalation_triggers(earlier)
-    return {"k": k,
-            "state": "escalated" if k == K_CEILING else "part-escalated",
-            "owed": bool(triggers), "triggers": triggers,
-            "results_k3": earlier}
+def blocks_state(trials):
+    """How far the run has come toward its registered K: the blocks it
+    holds, and those that still miss a registered arm's trial."""
+    return {"k": max((index_of(name) for name in trials), default=0),
+            "owed_blocks": owed_blocks(trials)}
 
 
 def number(value):
@@ -1711,16 +1573,15 @@ def unrecorded_voids(root, sequence, recorded):
     return lost
 
 
-def write_report(root, trials, table, results, seed, escalation,
-                 out_dir, posthoc=None, withdrawn=None, cross=None):
+def write_report(root, trials, table, results, seed, out_dir,
+                 withdrawn=None, cross=None):
     """The dated round report, written to `out_dir`.
 
     The directory has no default so a shakedown of the writer renders into
     a scratch directory. A fabricated run must not be able to leave a file
     among the real audits, where its date alone would read as a result.
-    `posthoc` is the table and contrasts of the checks declared after the
-    run, printed in their own section and nowhere else. `withdrawn` maps each
-    withdrawn metric to its record, already blanked from `table` and `results`.
+    `withdrawn` maps each withdrawn metric to its record, already blanked
+    from `table` and `results`.
     `cross` is the other vendor's judge's reading, already applied to
     `results`.
     """
@@ -1769,8 +1630,8 @@ def write_report(root, trials, table, results, seed, escalation,
                          newline="\n") as handle:
                 handle.write(radar_svg(panels, theme))
             radar[theme] = image
-    lines.extend(executive_section(trials, table, results, escalation,
-                                   withdrawn or {}, lost, scans, radar))
+    lines.extend(executive_section(trials, table, results, withdrawn or {},
+                                   lost, scans, radar))
     lines.append("")
 
     lines.extend(["## What produced these numbers", ""])
@@ -1794,7 +1655,7 @@ def write_report(root, trials, table, results, seed, escalation,
                                 blocks=k))
     lines.append("")
 
-    lines.extend(escalation_section(escalation))
+    lines.extend(blocks_section(trials))
     lines.append("")
 
     lines.append("## Task success, adherence and cost")
@@ -1825,10 +1686,6 @@ def write_report(root, trials, table, results, seed, escalation,
                                 blocks=k))
     lines.append("")
 
-    if posthoc:
-        lines.extend(posthoc_section(*posthoc, active=active, blocks=k))
-        lines.append("")
-
     if is_round5(trials) and not is_round5d(trials):
         lines.extend(round5_section(trials, table, results))
         lines.append("")
@@ -1841,13 +1698,11 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.append("")
     lines.append("| Metric | %s |" % " | ".join(names))
     lines.append("|---|%s" % ("---|" * len(names)))
-    raw = [(table, METRICS)] + ([(posthoc[0], POSTHOC)] if posthoc else [])
-    for source, metrics in raw:
-        for key, label, direction, _ in metrics:
-            row = source[key]["values"]
-            cells = [number(row.get(arm_of(name), {}).get(index_of(name)))
-                     for name in names]
-            lines.append("| %s | %s |" % (label, " | ".join(cells)))
+    for key, label, direction, _ in METRICS:
+        row = table[key]["values"]
+        cells = [number(row.get(arm_of(name), {}).get(index_of(name)))
+                 for name in names]
+        lines.append("| %s | %s |" % (label, " | ".join(cells)))
     lines.append("")
 
     lines.append("## Trials, and what was measured on them")
@@ -1918,15 +1773,15 @@ def write_report(root, trials, table, results, seed, escalation,
     lines.append("")
 
     lines.extend(["## Verdict vector", ""])
-    lines.extend(vector_lines(results, active, escalation, k))
+    lines.extend(vector_lines(results, active))
     lines.append("")
 
     os.makedirs(out_dir, exist_ok=True)
     width = markdown_width()
     documents = {
         record: lines,
-        appendix: appendix_lines(trials, table, results, escalation, k, seed,
-                                 generation, report, record),
+        appendix: appendix_lines(trials, table, results, k, seed, generation,
+                                 report, record),
         report: plain_report_lines(root, trials, table, results, radar,
                                    appendix, k)}
     for document, text in documents.items():
@@ -2072,32 +1927,15 @@ def provenance_lines(trials, names, arms, k, seed, generation):
     return lines
 
 
-def vector_lines(results, active, escalation, k):
-    """The verdict vector: every metric's verdict in every contrast, the
-    first three blocks' beside them where the run escalated."""
-    lines = []
-    lines.append("The whole vector, which the summary's scores digest "
-                 "and never replace.")
-    lines.append("")
-
-    # A run that escalated reports both vectors, so
-    # each contrast at K = 5 sits beside the same contrast over the first
-    # three blocks rather than in a second table a reader has to line up.
-    earlier = escalation.get("results_k3")
-    header = []
-    for treatment, baseline in active:
-        column = "%s−%s" % (treatment, baseline)
-        header.extend(["%s, K = %d" % (column, K_PRIMARY),
-                       "%s, K = %d" % (column, k)] if earlier else [column])
+def vector_lines(results, active):
+    """The verdict vector: every metric's verdict in every contrast."""
+    lines = ["The whole vector, which the summary's scores digest and never "
+             "replace.", ""]
+    header = ["%s−%s" % pair for pair in active]
     lines.append("| Metric | %s |" % " | ".join(header))
     lines.append("|---|%s" % ("---|" * len(header)))
     for key, label, direction, _ in METRICS:
-        cells = []
-        for pair in active:
-            name = "%s-%s" % pair
-            if earlier:
-                cells.append(earlier[key][name]["verdict"])
-            cells.append(results[key][name]["verdict"])
+        cells = [results[key]["%s-%s" % pair]["verdict"] for pair in active]
         lines.append("| %s | %s |" % (label, " | ".join(cells)))
     return lines
 
@@ -2112,7 +1950,6 @@ PLAIN_ARMS = {
     "skills": "a root file plus one skill per kind of task",
     "hand": "a short file a person wrote",
     "short": "the templates' rules cut down to 40 lines",
-    "full": "the templates' full file, from an earlier round",
 }
 
 # Each radar axis in plain words, as a sentence names it.
@@ -2292,12 +2129,10 @@ def sureness_lines(trials, k):
         lines.append("- With only %d runs per approach, no difference here can "
                      "be called established. Read every result as a hint."
                      % k)
-    if is_round5(trials):
-        owed = owed_blocks(trials)
-        if owed:
-            lines.append("- The round is not complete: %s still miss a run, so "
-                         "every answer here is provisional."
-                         % blocks_named(owed))
+    owed = owed_blocks(trials)
+    if owed:
+        lines.append("- The round is not complete: %s still miss a run, so "
+                     "every answer here is provisional." % blocks_named(owed))
     return lines
 
 
@@ -2392,8 +2227,8 @@ def rerun_lines(lost):
     return lines
 
 
-def appendix_lines(trials, table, results, escalation, k, seed, generation,
-                   report, record):
+def appendix_lines(trials, table, results, k, seed, generation, report,
+                   record):
     """The technical appendix: what produced the results, the radar's axes
     row by row, and the verdict vector."""
     names = ordered(trials)
@@ -2419,7 +2254,7 @@ def appendix_lines(trials, table, results, escalation, k, seed, generation,
                                     blocks=k, legend=False))
         lines.append("")
     lines.extend(["## The verdict vector", ""])
-    lines.extend(vector_lines(results, active, escalation, k))
+    lines.extend(vector_lines(results, active))
     return lines
 
 
@@ -2461,36 +2296,6 @@ def wrap_prose(lines, width):
     return wrapped
 
 
-def posthoc_owed(trials):
-    """Whether the run's security readings are the post-hoc checks.
-
-    From round 3 the same checks are probes, fixed before the run and read
-    through the two pass rates, so a run whose readings carry probes has no
-    post-hoc section: printed, it would call them declared after the run.
-    """
-    readings = [trial["security"] for trial in trials.values()
-                if trial["security"]]
-    return bool(readings) and not any("probes" in reading
-                                      for reading in readings)
-
-
-def posthoc_section(table, results, active=None, blocks=None):
-    """The report's lines on the security checks declared after the run."""
-    lines = ["## Security, read with checks declared after the results",
-             "",
-             "The run's own security checks passed on every trial and "
-             "separated nothing. These were declared after the run and before "
-             "any trial was read for them, so each row gives the means and the "
-             "interval and no verdict, and none of them reaches the verdict "
-             "vector or the escalation.",
-             ""]
-    lines.extend(contrast_table(table, results,
-                                [key for key, _, _, _ in POSTHOC],
-                                verdicts=False, active=active,
-                                blocks=blocks))
-    return lines
-
-
 def spoken(names):
     """Names as a sentence lists them: a, b and c."""
     return names[0] if len(names) == 1 else "%s and %s" % (
@@ -2522,8 +2327,8 @@ COUNTED = ("no", "one", "two", "three", "four", "five")
 NOT_MEASURED = "not measured"
 
 # A run whose hidden-suite pass rate sits under the bare arm's mean by more
-# than this is named in the finding table. It is the practical threshold
-# registered for task success; nothing else reads it.
+# than this is named in the finding table. It is the smallest change that
+# matters for task success, as registered; nothing else reads it.
 SUITE_DIP = 0.05
 
 
@@ -2898,17 +2703,18 @@ def round5d_checks(seed):
                    "server error", got == [1.0, 0.0, 0.0, 0.0], got))
 
     # A broken build's task success is left out in round 5d and is zero in
-    # round 2, which ran `full` beside `hand`.
+    # a round read by the earlier rules.
     broken = dict(boot(False, False, None)["scores"],
                   hidden_suite={"value": None, "missing": "no install"})
     working = dict(boot(True, True, 302)["scores"],
                    hidden_suite={"value": 0.9})
     run = {"hand-1": {"scores": broken}, "short-1": {"scores": working}}
     later = collect(run)
-    earlier = collect(dict(run, **{"full-1": {"scores": working}}))
+    earlier = collect({"none-1": {"scores": broken},
+                       "inline-1": {"scores": working}})
     got = (later["task_success"]["values"]["hand"][1],
            later["reliability"]["values"]["hand"][1],
-           earlier["task_success"]["values"]["hand"][1])
+           earlier["task_success"]["values"]["none"][1])
     checks.append(("round 5d reads task success on working builds only",
                    got == (None, 0.0, 0.0), got))
 
@@ -3055,14 +2861,14 @@ def round5d_checks(seed):
     checks.append(("the cross-check reads a contrast across rounds unpaired",
                    got == 1.0, got))
 
-    # The same for an earlier round read post-hoc: round 2's reused `full`
+    # The same for an earlier round read post-hoc: its reused `inline`
     # against `none`, read by the later rules.
-    earlier_ours = {"full-1": judged(3, True), "full-2": judged(3, True),
+    earlier_ours = {"inline-1": judged(3, True), "inline-2": judged(3, True),
                     "none-3": judged(2)}
     got = (cross_check(earlier_ours, earlier_ours, seed)["results"][
-        "judge_design"]["full-none"]["mean"],
+        "judge_design"]["inline-none"]["mean"],
            cross_check(earlier_ours, earlier_ours, seed, True)["results"][
-        "judge_design"]["full-none"]["mean"])
+        "judge_design"]["inline-none"]["mean"])
     checks.append(("an earlier round's cross-check is unpaired post-hoc",
                    got == (None, 1.0), got))
 
@@ -3094,16 +2900,6 @@ def round5d_checks(seed):
     got = [axis for axis in radar_axes(printed)] == list(ROUND5D_RADAR_AXES)
     checks.append(("round 5d's appendix and radar read round 5d's rows",
                    got and radar_axes({}) == RADAR_AXES, got))
-
-    # An earlier round never computes a contrast only round 5d declares.
-    earlier_table = {"judge_design": {"label": "x", "direction": UP,
-                                      "values": {"hybrid": {1: 4.0, 2: 4.0},
-                                                 "hand": {1: 3.0, 2: 3.0}}}}
-    got = ("hybrid-hand" in contrasts(earlier_table, seed)["judge_design"],
-           "hybrid-hand" in contrasts(earlier_table, seed, (), None,
-                                      True)["judge_design"])
-    checks.append(("an earlier round computes no round-5d contrast",
-                   got == (False, True), got))
 
     def planted(*pairs):
         return {key: {"x": {"verdict": verdict, "size": size}}
@@ -3220,15 +3016,15 @@ def round5d_checks(seed):
     checks.append(("the post-hoc reading takes a cross-check",
                    crossed_ok is True, crossed_ok))
 
-    # A round before round 5 read by the later rules decides on app code,
-    # while its registered reading keeps source lines and files.
+    # A round read by the later rules decides on app code and prints source
+    # lines without a verdict, as round 5 does.
     sized_run = {trial_name(arm, 1): {"scores": {}} for arm in ("none",
-                                                                 "full")}
+                                                                 "inline")}
     got = (collect(sized_run, later_rules=True)["app_lines"]["direction"],
            collect(sized_run, later_rules=True)["source_lines"]["direction"],
            collect(sized_run)["source_lines"]["direction"])
     checks.append(("the later rules read app code in any round",
-                   got == (DOWN, NEUTRAL, DOWN), got))
+                   got == (DOWN, NEUTRAL, NEUTRAL), got))
     scratch = os.path.join(tempfile.gettempdir(), "efficacy-posthoc-rules")
     shutil.rmtree(scratch, ignore_errors=True)
     page = write_posthoc_rules(earlier, later_table, later_results, seed,
@@ -3314,12 +3110,12 @@ def round5_checks():
     trials["skills-1"]["security"] = {"probes": {"x": {"passed": True}}}
     trials["skills-2"]["security"] = {"probes": {"x": {"passed": True}}}
     trials["skills-3"]["security"] = {"probes": {"x": {"passed": None}}}
-    full = pairwise_agreement(security_sets(trials, "skills"))
+    alike = pairwise_agreement(security_sets(trials, "skills"))
     trials["skills-2"]["security"] = {"probes": {"x": {"passed": False}}}
     none = pairwise_agreement(security_sets(trials, "skills"))
     checks.append(("security agreement counts two empty sets as agreement "
                    "and leaves out an unmeasured trial",
-                   (full, none) == (1.0, 0.0), (full, none)))
+                   (alike, none) == (1.0, 0.0), (alike, none)))
 
     def results(verdict, within):
         contrast = {"verdict": verdict, "non_inferior": {"within": within}}
@@ -3346,7 +3142,7 @@ def round5_checks():
         "change": None, "judge": None,
         "security": {"probes": {"x": {"passed": True}}}}
         for arm in ("none", "reference", "inline", "hybrid", "skills")
-        for index in range(1, K_PRIMARY + 1)}
+        for index in range(1, 4)}
     _, _, text = rendered(run, 0, {})
     section = text[text.find("## Round 5"):]
     checks.append(("a five-arm report prints conventions, structure and "
@@ -3358,15 +3154,11 @@ def round5_checks():
                                        "hybrid", "skills")),
                    section[:600]))
 
-    # Round 5 registers its K, so a run short of it is part-run and no run
-    # of it owes the escalation of a K = 3 round.
-    state = assess_escalation(run, {}, 0)["state"]
+    # Round 5 registers its K, so a run short of it is part-run.
     runs = " ".join(text[text.find("## Runs per arm"):][:400].split())
-    checks.append(("a round-5 run owes no escalation and names the blocks "
-                   "still owed", state == "registered"
-                   and "## The escalation" not in text
-                   and "blocks %d to %d" % (K_PRIMARY + 1, ROUND5_K) in runs,
-                   (state, runs)))
+    checks.append(("a round-5 run short of its K names the blocks still owed",
+                   "## The escalation" not in text
+                   and "blocks %d to %d" % (4, ROUND5_K) in runs, runs))
 
     # From six blocks a run's intervals are no longer only descriptions.
     longer = {trial_name(arm, index): dict(run[trial_name(arm, 1)])
@@ -3388,7 +3180,7 @@ def round5_checks():
     whole = dict(almost, **{trial_name(arm, ROUND5_K): {}
                             for arm in ROUND5_RUN})
     got = [owed_blocks(run) for run in (almost, gap, whole)]
-    named = escalation_section(assess_escalation(almost, {}, 0))
+    named = blocks_section(almost)
     checks.append(("one trial of the last block leaves the round part-run",
                    got == [[ROUND5_K], [7, ROUND5_K], []]
                    and "block %d still misses" % ROUND5_K in "\n".join(named)
@@ -3930,8 +3722,8 @@ def radar_panels(table, results, active):
     return panels
 
 
-def executive_section(trials, table, results, escalation=None,
-                      withdrawn=None, lost=(), scans=(), radar=None):
+def executive_section(trials, table, results, withdrawn=None, lost=(),
+                      scans=(), radar=None):
     """The report's first sections: the summary, a radar per file arm read
     against no file where `radar` names its two images, light and dark;
     then the arms against no file: the finding table, one line per file on
@@ -3954,9 +3746,7 @@ def executive_section(trials, table, results, escalation=None,
     scored = between_files(results, active)
     if scored:
         lines.extend(["", scored])
-    if escalation is not None:
-        lines.extend(["", caveats_line(trials, escalation, withdrawn or {},
-                                       lost, scans)])
+    lines.extend(["", caveats_line(trials, withdrawn or {}, lost, scans)])
     return lines
 
 
@@ -4049,9 +3839,8 @@ def between_files(results, active):
     """One line scoring the contrasts between two files, 1 to 10 with the
     wins and the fails, or None where the run holds none.
 
-    The score was declared after round 1's results were seen, and stays
-    for the pairings the finding table has no column for. It digests the
-    verdict vector and decides nothing.
+    A score kept for the pairings the finding table has no column for. It
+    digests the verdict vector and decides nothing.
     """
     parts = []
     for treatment, baseline in active:
@@ -4076,22 +3865,17 @@ def between_files(results, active):
             % "; ".join(parts))
 
 
-def caveats_line(trials, escalation, withdrawn, lost, scans):
-    """One line of what qualifies the run: the escalation, withdrawals,
-    lost trials, reaches and the judge's check."""
+def caveats_line(trials, withdrawn, lost, scans):
+    """One line of what qualifies the run: the blocks in, withdrawals, lost
+    trials, reaches and the judge's check."""
     labels = {key: label for key, label, _, _ in METRICS}
     judged = [trial["judge"] for trial in trials.values() if trial["judge"]]
     reached = []
     for scan in scans:
         if scan["hits"] and scan["name"] not in reached:
             reached.append(scan["name"])
-    if escalation["state"] == "registered":
-        runs = ("%d of the %d blocks round 5 registers complete, with no "
-                "escalation" % (ROUND5_K - len(escalation["owed_blocks"]),
-                                ROUND5_K))
-    else:
-        runs = "escalation to K = %d %s" % (K_CEILING,
-                                            escalation_phrase(escalation))
+    runs = ("%d of the %d registered blocks complete"
+            % (ROUND5_K - len(owed_blocks(trials)), ROUND5_K))
     caveats = ["%d trials, %d judged" % (len(trials), len(judged)),
                runs,
                "withdrawn: %s" % ("; ".join(labels.get(key, key)
@@ -4108,22 +3892,6 @@ def caveats_line(trials, escalation, withdrawn, lost, scans):
         caveats.insert(1, "reused from an earlier round: %s"
                        % spoken([arm for arm, _ in reused]))
     return "Caveats: %s." % "; ".join(caveats)
-
-
-def escalation_phrase(escalation):
-    """The escalation's state, as the summary states it."""
-    state, owed, k = escalation["state"], escalation["owed"], escalation["k"]
-    if state == "not assessed":
-        return "not assessed, the run holding K = %d" % k
-    if state == "assessed":
-        return ("owed and not yet run" if owed
-                else "not owed, so K stays %d" % K_PRIMARY)
-    if not owed:
-        return ("run without a trigger, so only the K = %d vector counts"
-                % K_PRIMARY)
-    if state == "part-escalated":
-        return "owed and part-run, at K = %d" % k
-    return "owed and run to K = %d" % K_CEILING
 
 
 def withdrawn_section(withdrawn):
@@ -4146,90 +3914,25 @@ def withdrawn_section(withdrawn):
     return lines
 
 
-def thresholds():
-    """Each primary's practical threshold in words, a shared one said once."""
-    worded = []
-    for key in PRIMARY:
-        label = PRACTICAL[key][0]
-        if key in PROBE_RATES:
-            label = "%s for the %s" % (label, SHORT[key])
-        if label not in worded:
-            worded.append(label)
-    if len(worded) == 1:
-        return worded[0]
-    return "%s or %s" % (", ".join(worded[:-1]), worded[-1])
-
-
-def escalation_section(escalation):
-    """The report's lines on the one escalation to K = 5 allowed, or on the
-    K round 5 registers in its place."""
-    k = escalation["k"]
-    if escalation["state"] == "registered":
-        lines = ["## Runs per arm",
-                 "",
-                 "Fixed before the run: round 5 runs K = %d blocks, sized "
-                 "from the noise of the rounds before it, and allows no "
-                 "escalation." % ROUND5_K,
-                 ""]
-        owed = escalation["owed_blocks"]
-        if owed:
-            lines.append("**Part-run.** A block is complete when every "
-                         "registered arm has its trial in it; %s still %s a "
-                         "trial before any verdict below is the round's."
-                         % (blocks_named(owed),
-                            "misses" if len(owed) == 1 else "miss"))
-        else:
-            lines.append("**Complete.** Every registered arm has its trial "
-                         "in all %d blocks." % ROUND5_K)
-        return lines
-    lines = ["## The escalation to K = %d" % K_CEILING,
+def blocks_section(trials):
+    """The report's lines on the K the round registers, and how many of its
+    blocks the run holds."""
+    lines = ["## Runs per arm",
              "",
-             "Fixed before the run: one escalation is owed where a primary "
-             "dimension's interval contains zero while its mean paired "
-             "difference exceeds %s in either direction, on any contrast. "
-             "K never exceeds %d." % (thresholds(), K_CEILING),
+             "Fixed before the run: the round runs K = %d blocks, sized from "
+             "the noise of the rounds before it, and adds none once results "
+             "are seen." % ROUND5_K,
              ""]
-    state, owed = escalation["state"], escalation["owed"]
-    if state == "not assessed":
-        lines.append("Not assessed: the run holds K = %d, and the rule reads "
-                     "K = %d." % (k, K_PRIMARY))
-        return lines
-    if state == "assessed" and owed:
-        lines.append("**Owed.** Run blocks %d to %d with `--k %d --from %s`, "
-                     "then report again. A row still containing zero at K = "
-                     "%d is reported as no improvement shown."
-                     % (K_PRIMARY + 1, K_CEILING, K_CEILING,
-                        escalation["from"], K_CEILING))
-    elif state == "assessed":
-        lines.append("**Not owed.** No primary dimension's row meets the "
-                     "rule, so K stays %d." % K_PRIMARY)
-    elif not owed:
-        lines.append("**Run without a trigger.** The first %d blocks owed no "
-                     "escalation, so every block past them was sampled outside "
-                     "the escalation rule. Read the K = %d vector; the K = %d "
-                     "rows are not evidence." % (K_PRIMARY, K_PRIMARY, k))
-    elif state == "part-escalated":
-        lines.append("**Part-run.** The first %d blocks owed it and the run "
-                     "holds K = %d, so block %d is still owed before the K = "
-                     "%d vector is read." % (K_PRIMARY, k, K_CEILING,
-                                             K_CEILING))
+    owed = owed_blocks(trials)
+    if owed:
+        lines.append("**Part-run.** A block is complete when every "
+                     "registered arm has its trial in it; %s still %s a "
+                     "trial before any verdict below is the round's."
+                     % (blocks_named(owed),
+                        "misses" if len(owed) == 1 else "miss"))
     else:
-        lines.append("**Run.** The first %d blocks owed it, on the rows "
-                     "below. No further escalation is permitted: a row still "
-                     "containing zero at K = %d is reported as no improvement "
-                     "shown." % (K_PRIMARY, K_CEILING))
-    if escalation["triggers"]:
-        labels = {key: label for key, label, _, _ in METRICS}
-        lines.append("")
-        lines.append("| Metric | Contrast | Mean difference | Interval "
-                     "| Threshold |")
-        lines.append("|---|---|---|---|---|")
-        for row in escalation["triggers"]:
-            lines.append("| %s | %s | %s | (%s, %s) | %s |"
-                         % (labels[row["metric"]],
-                            row["contrast"].replace("-", "−"),
-                            number(row["mean"]), number(row["low"]),
-                            number(row["high"]), row["threshold"]))
+        lines.append("**Complete.** Every registered arm has its trial "
+                     "in all %d blocks." % ROUND5_K)
     return lines
 
 
@@ -4495,7 +4198,7 @@ def lost_checks():
 def band_checks(seed):
     """App code's size reads against a band: a rise inside the margin is
     held, only one wholly past it worse; round 5 reports the rows it
-    supersedes without a verdict, and an earlier round keeps them."""
+    supersedes without a verdict."""
 
     # A margin of 20 lines: the loss side of each interval, for a metric that
     # improves downward, placed against it.
@@ -4523,19 +4226,10 @@ def band_checks(seed):
     results = contrasts(collect(trials), seed, (), ROUND5_MARGINS)
     app = results["app_lines"]["skills-none"]["verdict"]
     files = results["tracked_files"]["skills-none"]["verdict"]
-    earlier = {name.replace("skills", "full"): value
-               for name, value in trials.items()}
-    reread = contrasts(collect(earlier), seed)
-    kept = reread["tracked_files"]["full-none"]
-    later = reread["app_lines"]["full-none"]["verdict"]
     checks.extend([
-        ("an earlier round rescored prints app code without a verdict",
-         later == "reported without a verdict", later),
         ("round 5 reads a 10 % rise in app code as held", app == "held", app),
         ("round 5 reports the files it supersedes without a verdict",
-         files == "reported without a verdict", files),
-        ("an earlier round still reads its files row", kept["verdict"]
-         == "worse", kept["verdict"])])
+         files == "reported without a verdict", files)])
     return checks
 
 
@@ -4741,14 +4435,14 @@ def rescan_checks():
     shutil.rmtree(scratch, ignore_errors=True)
     workspace = os.path.join(scratch, "none-2")
     os.makedirs(workspace)
-    os.makedirs(os.path.join(scratch, "full-1"))
+    os.makedirs(os.path.join(scratch, "inline-1"))
     folder = "".join(char if char.isalnum() else "-"
                      for char in os.path.abspath(workspace))
     projects = os.path.join(scratch, "home", ".claude", "projects", folder)
     os.makedirs(projects)
     entry = {"type": "assistant", "message": {"content": [
         {"type": "tool_use", "name": "Bash",
-         "input": {"command": "cat ../full-1/src/tariff/pricing.py"}}]}}
+         "input": {"command": "cat ../inline-1/src/tariff/pricing.py"}}]}}
     with io.open(os.path.join(projects, "planted.jsonl"), "w",
                  encoding="utf-8") as handle:
         handle.write(json.dumps(entry) + "\n")
@@ -4769,195 +4463,14 @@ def rescan_checks():
     shutil.rmtree(scratch, ignore_errors=True)
     return [("the planted transcript carries one call", landed),
             ("its record's clean scan is read again and flagged",
-             terms == ["../full-1"])]
-
-
-# One row on each side of the escalation rule. The interval is planted beside
-# its pairs, so each case turns on the rule rather than on the bootstrap.
-ESCALATING = (
-    ("a crossing interval with an effect of 0.67 owes it", "judge_design",
-     "full-none", [2.0, -1.0, 1.0], -1.0, 2.0, True),
-    ("the same row on C-A owes it", "judge_readability", "hand-none",
-     [2.0, -1.0, 1.0], -1.0, 2.0, True),
-    ("an effect of 0.67 the other way owes it", "judge_maintainability",
-     "full-hand", [-2.0, 1.0, -1.0], -2.0, 1.0, True),
-    ("an effect of exactly 0.5 does not", "judge_design", "full-none",
-     [1.5, -1.0, 1.0], -1.0, 1.5, False),
-    ("an interval clear of zero does not", "judge_design", "full-none",
-     [1.0, 1.0, 1.0], 1.0, 1.0, False),
-    ("a row outside the primary dimensions does not", "task_success", "full-none",
-     [2.0, -1.0, 1.0], -1.0, 2.0, False),
-    ("an interval not computed does not", "judge_design", "full-none", [2.0],
-     None, None, False),
-)
-
-
-def planted_results(key, name, pairs, low, high):
-    """Contrasts with one planted row, every other row measured nothing."""
-    results = {metric: {"%s-%s" % pair: {"pairs": [],
-                                         "interval": {"low": None,
-                                                      "high": None}}
-                        for pair in CONTRASTS}
-               for metric, _, _, _ in METRICS}
-    results[key][name] = {"pairs": pairs,
-                          "interval": {"low": low, "high": high}}
-    return results
-
-
-def escalation_checks(seed):
-    """The escalation rule on planted rows, and a planted K = 5 run rendered."""
-    checks = []
-    for label, key, name, pairs, low, high, expected in ESCALATING:
-        triggers = escalation_triggers(planted_results(key, name, pairs, low,
-                                                       high))
-        checks.append((label, bool(triggers) == expected, triggers))
-
-    # An owed escalation names the first trial of block four the way the
-    # harness spells it, so the printed command runs as written.
-    three = {trial_name(arm, 1): {} for arm in ("none", "full", "hand")}
-    owed = "\n".join(escalation_section({
-        "k": K_PRIMARY, "state": "assessed", "owed": True, "triggers": [],
-        "from": block_start(None, three, K_PRIMARY + 1)}))
-    checks.append(("an owed escalation's command names a trial the harness "
-                   "takes", "--from none-4" in owed and "--from A" not in owed,
-                   owed))
-
-    # Block four starts one arm later per block after block one: read off
-    # the run's own first block where its records show it, and off the arms'
-    # declared order where none do.
-    five = {trial_name(arm, 1): {}
-            for arm in ("none", "inline", "hybrid", "reference", "skills")}
-    root = tempfile.mkdtemp(prefix="efficacy-report-block-start-")
-    with io.open(os.path.join(root, "run-2026-10-27T00-00-00.json"), "w",
-                 encoding="utf-8") as handle:
-        json.dump({"trials": [{"arm": arm, "trial": 1} for arm in (
-            "none", "inline", "hybrid", "reference", "skills")]}, handle)
-    got = (block_start(root, five, K_PRIMARY + 1),
-           block_start(None, five, K_PRIMARY + 1))
-    shutil.rmtree(root, ignore_errors=True)
-    checks.append(("block four starts where the run's own order puts it",
-                   got == ("reference-4", "inline-4"), got))
-
-    # Five blocks of judged trials. The first three alone must decide the
-    # escalation, and the report must print their vector beside the fifth's.
-    design = {"none": [3, 3, 3, 3, 3], "full": [5, 2, 4, 4, 4],
-              "hand": [3, 3, 3, 3, 3]}
-    trials = {trial_name(arm, index): {
-        "scores": {}, "change": None,
-        "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
-        for arm, scores in design.items()
-        for index, score in enumerate(scores, 1)}
-    table = collect(trials)
-    results = contrasts(table, seed)
-    escalation = assess_escalation(trials, results, seed)
-    earlier = escalation.get("results_k3") or {}
-    checks.append(("a K = 5 run is judged on its first three blocks",
-                   escalation["state"] == "escalated"
-                   and len(path(earlier, "judge_design", "full-none", "pairs")
-                           or []) == K_PRIMARY
-                   and len(results["judge_design"]["full-none"]["pairs"])
-                   == K_CEILING, escalation["state"]))
-
-    first = {name: trial for name, trial in trials.items()
-             if index_of(name) <= K_PRIMARY}
-    state = assess_escalation(first, contrasts(collect(first), seed),
-                              seed)["state"]
-    checks.append(("a K = 3 run is assessed on its own vector",
-                   state == "assessed", state))
-
-    scratch = os.path.join(tempfile.gettempdir(),
-                           "efficacy-report-escalation-self-test")
-    shutil.rmtree(scratch, ignore_errors=True)
-    os.makedirs(scratch)
-    target = write_report(scratch, trials, table, results, seed,
-                          escalation, out_dir=scratch)
-    with io.open(target[:-len(".md")] + "-record.md",
-                 encoding="utf-8") as handle:
-        text = handle.read()
-    shutil.rmtree(scratch, ignore_errors=True)
-    checks.append(("the report carries the escalation section",
-                   "## The escalation to K = 5" in text, None))
-    checks.append(("an escalated report prints both vectors",
-                   "| Metric | full−none, K = 3 | full−none, K = 5 |" in text,
-                   None))
-    checks.append(("the judge is checked by its evidence, not a person",
-                   "No person scores the judge." in text
-                   and "holdout" not in text.lower(), None))
-
-    # The planted report carries prose far over the width, such as the
-    # escalation rule's paragraph, so the wrap is exercised, not assumed.
-    width = markdown_width()
-    long_prose = [line for line in text.splitlines()
-                  if len(line) > width and not line.startswith(("|", "#"))]
-    checks.append(("no prose line exceeds the declared width",
-                   width == 88 and "exceeds 0.5 points" in text
-                   and not long_prose, long_prose[:2]))
-    return checks
-
-
-def posthoc_checks(seed):
-    """Checks declared after a run are printed, and decide nothing."""
-    keys = {key for key, _, _, _ in POSTHOC}
-    checks = [("no after-the-results check is a verdict metric",
-               not keys & {key for key, _, _, _ in METRICS}, sorted(keys))]
-
-    # Arm full sets every header on every trial and the bare arm sets none,
-    # so the row would
-    # read "better" if a verdict were ever computed for it.
-    headers = {"none": 0, "full": 4, "hand": 2}
-    trials = {trial_name(arm, index): {
-        "scores": {}, "change": None, "judge": None,
-        "security": {"security_headers": {"value": value, "missing": None}}}
-        for arm, value in headers.items() for index in range(1, K_PRIMARY + 1)}
-    table = collect(trials)
-    results = contrasts(table, seed)
-    posthoc_table = collect(trials, POSTHOC)
-    posthoc = (posthoc_table, contrasts(posthoc_table, seed))
-    checks.append(("the planted row would read better",
-                   posthoc[1]["security_headers"]["full-none"]["verdict"]
-                   == "better", posthoc[1]["security_headers"]["full-none"]))
-
-    # A round-3 reading carries its probes, and its checks were fixed before
-    # the run, so the section that calls them post-hoc is not printed for it.
-    probed = {name: dict(trial, security=dict(trial["security"], probes={}))
-              for name, trial in trials.items()}
-    checks.append(("a run whose readings carry probes has no post-hoc section",
-                   posthoc_owed(trials) and not posthoc_owed(probed),
-                   (posthoc_owed(trials), posthoc_owed(probed))))
-
-    scratch = os.path.join(tempfile.gettempdir(),
-                           "efficacy-report-posthoc-self-test")
-    shutil.rmtree(scratch, ignore_errors=True)
-    os.makedirs(scratch)
-    target = write_report(scratch, trials, table, results, seed,
-                          assess_escalation(trials, results, seed),
-                          out_dir=scratch, posthoc=posthoc)
-    with io.open(target[:-len(".md")] + "-record.md",
-                 encoding="utf-8") as handle:
-        text = handle.read()
-    shutil.rmtree(scratch, ignore_errors=True)
-
-    label = "Security headers on /, of four"
-    heading = "## Security, read with checks declared after the results"
-    section = text.split(heading)[1].split("\n## ")[0] if heading in text \
-        else ""
-    row = [line for line in section.splitlines() if line.startswith(
-        "| " + label)]
-    vector = text.split("## Verdict vector")[-1]
-    checks.append(("the report prints the section", bool(row), None))
-    checks.append(("its row carries no verdict",
-                   bool(row) and not any(word in row[0] for word in
-                                         ("better", "worse", "improvement")),
-                   row))
-    checks.append(("its row is not in the verdict vector",
-                   label not in vector, None))
-    return checks
+             terms == ["../inline-1"])]
 
 
 def planted_change_run(revision):
-    """K = 3 change tasks graded at `revision`, arm full ahead on every row."""
-    rates = {"none": 0.25, "full": 0.75, "hand": 0.5}
-    lines = {"none": 300, "full": 200, "hand": 250}
+    """K = 3 change tasks graded at `revision`, arm skills ahead on every
+    row."""
+    rates = {"none": 0.25, "skills": 0.75, "hybrid": 0.5}
+    lines = {"none": 300, "skills": 200, "hybrid": 250}
 
     def change(arm, index):
         return {"suite_revision": revision,
@@ -4969,21 +4482,20 @@ def planted_change_run(revision):
     return {trial_name(arm, index): {"scores": {}, "judge": None,
                                     "security": None,
                                     "change": change(arm, index)}
-            for arm in rates for index in range(1, K_PRIMARY + 1)}
+            for arm in rates for index in range(1, 4)}
 
 
 def rendered(trials, seed, withdrawn):
     """The report a planted run renders, withdrawn metrics blanked first."""
     table = collect(trials)
     results = round_contrasts(trials, table, seed)
-    before = results["change_success"]["full-none"]["verdict"]
+    before = results["change_success"]["skills-none"]["verdict"]
     withdraw(withdrawn, table, results)
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-withdrawal-render")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
     target = write_report(scratch, trials, table, results, seed,
-                          assess_escalation(trials, results, seed, withdrawn),
                           out_dir=scratch, withdrawn=withdrawn)
     with io.open(target[:-len(".md")] + "-record.md",
                  encoding="utf-8") as handle:
@@ -5037,7 +4549,7 @@ def withdrawal_checks(seed):
         ("the planted row read better before withdrawal", before == "better",
          before),
         ("withdrawal blanks every value of the row",
-         len(values) == 3 * K_PRIMARY
+         len(values) == 9
          and all(value is None for value in values), values),
         ("its change-task row prints no number or verdict",
          len(change) == 1 and "withdrawn" in change[0] and not any(
@@ -5062,7 +4574,7 @@ def withdrawal_checks(seed):
          and "## Summary" not in text, None),
         ("the line between files scores the verdicts, the withdrawn metric "
          "not among them",
-         "full − hand 10.0 (1 won, 0 failed)" in finding, finding),
+         "skills − hybrid 10.0 (1 won, 0 failed)" in finding, finding),
         ("it names the withdrawal among the caveats",
          "withdrawn: %s;" % label in finding, None),
     ])
@@ -5074,7 +4586,7 @@ def withdrawal_checks(seed):
                    and "## Withdrawn measurements" not in text, kept))
     finding = finding_of(text)
     checks.append(("that run's line between files counts the row a win",
-                   "full − hand 10.0 (2 won, 0 failed)" in finding
+                   "skills − hybrid 10.0 (2 won, 0 failed)" in finding
                    and "withdrawn: nothing;" in finding, finding))
 
     # The rule at its ends and in the middle: round 1's templates against no
@@ -5117,35 +4629,35 @@ def executive_checks(seed):
         checks.append((label, got == expected, got))
 
     # The reading sets the longer file's answer beside the shorter's.
-    lengths = {"full": 400, "hand": 40}
+    lengths = {"inline": 400, "hand": 40}
     for label, answers, expected in (
             ("a short Yes beside a long No reads length is not quality",
-             {"full": "No", "hand": "Yes"},
+             {"inline": "No", "hand": "Yes"},
              "length is not quality — the long file spent the agent's "
              "attention on conventions, the short one on the code"),
             ("a long Yes beside a short Worse reads the long file's gain",
-             {"full": "Yes", "hand": "Worse"},
+             {"inline": "Yes", "hand": "Worse"},
              "the long file added quality, the short one did not"),
             ("two Yes answers read long or short",
-             {"full": "Yes", "hand": "Yes"},
+             {"inline": "Yes", "hand": "Yes"},
              "a context file adds quality, long or short"),
-            ("two No answers read neither", {"full": "No", "hand": "No"},
+            ("two No answers read neither", {"inline": "No", "hand": "No"},
              "neither file added quality"),
             ("an unmeasured column reads not measured",
-             {"full": "Not measured", "hand": "Yes"}, NOT_MEASURED)):
+             {"inline": "Not measured", "hand": "Yes"}, NOT_MEASURED)):
         got = reading(answers, lengths)
         checks.append((label, got == expected, got))
 
     # With more than two files the reading names the two it compares; with
     # two it needs no names, since the columns are the only ones.
-    four = {"full": 391, "short": 39, "hybrid": 516, "hand": 40}
+    four = {"inline": 391, "short": 39, "hybrid": 516, "hand": 40}
     named = compared({arm: "No" for arm in four}, four)
     checks.append(("a reading over four files names the two it compares",
                    named == ", reading the longest file beside the shortest "
                             "(`hybrid`, `short`)", named))
     checks.append(("a reading over two files names none",
-                   compared({"full": "No", "hand": "No"}, lengths) == "",
-                   compared({"full": "No", "hand": "No"}, lengths)))
+                   compared({"inline": "No", "hand": "No"}, lengths) == "",
+                   compared({"inline": "No", "hand": "No"}, lengths)))
 
     # An interval over fewer pairs than the round's blocks names its count;
     # one over every block does not.
@@ -5242,38 +4754,38 @@ def executive_checks(seed):
     # A why-line says, in words, what stands on a record or verdict below:
     # the run that could not boot, the structure built beyond the task and
     # the work it took, what the judge read, and the patterns missed.
-    trials = {"full-1": {"scores": {"boot": {"value": {
+    trials = {"inline-1": {"scores": {"boot": {"value": {
                   "factory": False, "factory_error": "planted error"}}}},
-              "full-2": {"scores": {"boot": {"value": {"factory": True}}}},
+              "inline-2": {"scores": {"boot": {"value": {"factory": True}}}},
               "none-1": {"scores": {"boot": {"value": {"factory": False}}}}}
-    got = boot_failures(trials, "full")
+    got = boot_failures(trials, "inline")
     checks.append(("boot failures are the arm's own, with the error",
                    got == (["planted error"], 2), got))
-    planted = {key: {"full-none": {"mean": 0.0, "verdict": shown}}
+    planted = {key: {"inline-none": {"mean": 0.0, "verdict": shown}}
                for key, _, _, _ in METRICS}
-    planted["tracked_files"]["full-none"]["verdict"] = "worse"
-    planted["turns"]["full-none"]["verdict"] = "worse"
-    planted["churn_lines"]["full-none"]["verdict"] = "worse"
-    planted["patterns_missed"]["full-none"]["verdict"] = "worse"
-    planted["judge_readability"]["full-none"]["verdict"] = "better"
-    planted["adherence"]["full-none"]["verdict"] = "better"
-    got = why_line(trials, planted, "full", "full-none", "No", 400)
+    planted["tracked_files"]["inline-none"]["verdict"] = "worse"
+    planted["turns"]["inline-none"]["verdict"] = "worse"
+    planted["churn_lines"]["inline-none"]["verdict"] = "worse"
+    planted["patterns_missed"]["inline-none"]["verdict"] = "worse"
+    planted["judge_readability"]["inline-none"]["verdict"] = "better"
+    planted["adherence"]["inline-none"]["verdict"] = "better"
+    got = why_line(trials, planted, "inline", "inline-none", "No", 400)
     checks.append(("the why-line says what the records and verdicts hold",
-                   got == "**`full`, No.** One run of two left the "
+                   got == "**`inline`, No.** One run of two left the "
                    "app unable to boot (`planted error`). It built more than "
                    "the task asked for: more files, and took more turns to "
                    "do it; the follow-up change had to move through that "
                    "structure too. The judge read its code as more "
                    "readable; it missed more of the patterns the domain "
                    "called for.", got))
-    trials["full-1"]["scores"]["boot"]["value"]["factory_error"] = \
+    trials["inline-1"]["scores"]["boot"]["value"]["factory_error"] = \
         "ModuleNotFoundError(\"No module named 'planted'\")"
-    planted["judge_readability"]["full-none"]["verdict"] = shown
-    got = why_line(trials, planted, "full", "full-none", "No", 400)
+    planted["judge_readability"]["inline-none"]["verdict"] = shown
+    got = why_line(trials, planted, "inline", "inline-none", "No", 400)
     checks.append(("a module missing after a clean install is a declared "
                    "dependency, and a win the judge did not give is a tool "
                    "count",
-                   got.startswith("**`full`, No.** One run of two "
+                   got.startswith("**`inline`, No.** One run of two "
                                   "declared its dependencies so that a clean "
                                   "install left the app unable to boot.")
                    and got.endswith("The judge saw none of it as better "
@@ -5314,33 +4826,36 @@ def executive_checks(seed):
          < text.find("## Arms against `none`"), None),
         ("it has a row per arm, the bare arm first, with the files' lines",
          0 < text.find("| `none` | no file | — |")
-         < text.find(row_start("full", "Not measured")) and context_lines("full")
-         > context_lines("hand"), prose_of(text, "## Arms against `none`")),
+         < text.find(row_start("hybrid", "Not measured"))
+         and context_lines("skills") > context_lines("hybrid"),
+         prose_of(text, "## Arms against `none`")),
         ("an unmeasured run answers Not measured in every cell",
-         row_start("full", "Not measured") + " not measured |" in text
-         and row_start("hand", "Not measured") + " not measured |" in text
-         and "Together: not measured. K = %d," % K_PRIMARY in text,
+         row_start("hybrid", "Not measured") + " not measured |" in text
+         and row_start("skills", "Not measured") + " not measured |" in text
+         and "Together: not measured. K = 3," in text,
          prose_of(text, "## Arms against `none`")),
         ("each file's why-line sits between the table and the reading",
          "▲ better and ▼ worse" in text
          and 0 < text.find("▲ better and ▼ worse")
-         < text.find("**`full`, Not measured.** Every win is "
+         < text.find("**`hybrid`, Not measured.** Every win is "
                      "something a tool counts.")
-         < text.find("**`hand`, Not measured.**")
+         < text.find("**`skills`, Not measured.**")
          < text.find("Together:"), prose_of(text, "## Arms against `none`")),
     ])
 
-    # A round 2 run: five arms, `full` and `hand` reused from round 1, the
-    # judge's design score constant per arm so each contrast's verdict is
-    # known. Every declared contrast is printed, one column per file arm,
-    # and the reused arms and the contrasts crossing rounds are named.
-    design = {"none": 3, "full": 3, "short": 4, "hybrid": 3, "hand": 4}
+    # A run reusing an earlier round's trials: five arms, `hybrid` and
+    # `reference` reused, the judge's design score constant per arm so each
+    # contrast's verdict is known. Every declared contrast is printed, one
+    # column per file arm, and the reused arms and the contrasts crossing
+    # rounds are named.
+    design = {"none": 3, "inline": 3, "hybrid": 3, "reference": 4,
+              "skills": 4}
     trials = {trial_name(arm, index): {
         "scores": ({"reused_from": {"name": "planted"}}
-                   if arm in ("full", "hand") else {}),
+                   if arm in ("hybrid", "reference") else {}),
         "change": None, "security": None,
         "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
-        for arm, score in design.items() for index in range(1, K_PRIMARY + 1)}
+        for arm, score in design.items() for index in range(1, 4)}
     _, _, text = rendered(trials, seed, {})
     finding = prose_of(text, "## Arms against `none`")
 
@@ -5350,7 +4865,7 @@ def executive_checks(seed):
     checks.extend([
         ("a five-arm run prints one row per arm",
          all("| `%s` |" % arm in finding
-             for arm in ("none", "full", "short", "hybrid", "hand")),
+             for arm in ("none", "inline", "hybrid", "reference", "skills")),
          finding),
         ("it prints every declared contrast its arms ran",
          all("%s − %s" % pair in finding for pair in active_contrasts(trials)
@@ -5360,17 +4875,18 @@ def executive_checks(seed):
                  .split(" | ")) == len(active_contrasts(trials)) + 1,
          finding),
         ("the reused arms and the contrasts crossing rounds are named",
-         "Reused from an earlier round: full (3 trials) and hand (3 "
+         "Reused from an earlier round: hybrid (3 trials) and reference (3 "
          "trials). Pairing them with this round's trials, across days: "
-         "full − none, hand − none, short − hand, hybrid − full and "
-         "short − full."
-         in finding and "reused from an earlier round: full and hand"
+         "hybrid − none, reference − none and skills − hybrid."
+         in finding and "reused from an earlier round: hybrid and reference"
          in finding, finding),
         ("the reading sets the longest measured file against the shortest",
-         "Together: length is not quality" in finding
+         "Together: the long file added quality, the short one did not"
+         in finding
          and all(row_start(arm, verdict) in finding for arm, verdict in
-                 (("full", "Not measured"), ("short", "Yes"),
-                  ("hybrid", "No"), ("hand", "Not measured"))), finding),
+                 (("hybrid", "Not measured"), ("inline", "No"),
+                  ("reference", "Not measured"), ("skills", "Yes"))),
+         finding),
         ("a trial's repeats are meaned, and one judging means itself",
          judge_score({"judgings": [
              {"answer": {"rubric": {"design": {"score": 4}}}},
@@ -5382,10 +4898,9 @@ def executive_checks(seed):
              "design") == 3, None),
         ("a contrast crossing rounds carries no verdict and counts nowhere",
          CROSSING_VERDICT in text
-         and "short − hand unscored (0 won, 0 failed)" in finding
-         and "hybrid − full unscored (0 won, 0 failed)" in finding, finding),
+         and "skills − hybrid unscored (0 won, 0 failed)" in finding, finding),
         ("a three-arm run prints only its own contrasts",
-         "| Metric | full−none | hand−none | full−hand |"
+         "| Metric | hybrid−none | skills−none | skills−hybrid |"
          in rendered(planted_change_run("r"), seed, {})[2], None),
     ])
     return checks
@@ -5396,12 +4911,12 @@ def exclusion_checks():
     task takes only its change reading; a reached trial is a lost one."""
     def planted():
         return {name: {"scores": {"name": name}, "change": {"name": name}}
-                for name in ("none-1", "full-1", "hand-1")}
+                for name in ("none-1", "inline-1", "hand-1")}
 
     hit = [{"tool": "Bash", "term": "hidden-suite", "call": "planted"}]
     trials = planted()
     left_out = exclude_reached(trials, [
-        {"name": "full-1", "hits": hit},
+        {"name": "inline-1", "hits": hit},
         {"name": "hand-1" + CHANGE_TASK, "hits": hit},
         {"name": "none-1", "hits": []},
         {"name": "short-1", "hits": hit}])
@@ -5411,26 +4926,26 @@ def exclusion_checks():
     with io.open(os.path.join(scratch, "run-planted.json"), "w",
                  encoding="utf-8") as handle:
         json.dump({"trials": [
-            {"arm": "full", "trial": 1, "task": "build",
+            {"arm": "inline", "trial": 1, "task": "build",
              "outcome": "reached", "reason": "planted",
              "started_at": "2026-10-15T10:00:00"},
-            {"arm": "full", "trial": 1, "task": "build",
+            {"arm": "inline", "trial": 1, "task": "build",
              "outcome": "completed",
              "started_at": "2026-10-15T11:00:00"}]}, handle)
     lost = lost_trials(scratch)
     shutil.rmtree(scratch, ignore_errors=True)
     return [
         ("a reached build trial is left out whole",
-         "full-1" not in trials and "none-1" in trials, sorted(trials)),
+         "inline-1" not in trials and "none-1" in trials, sorted(trials)),
         ("a reached change task takes only its change reading",
          trials["hand-1"]["change"] is None
          and trials["hand-1"]["scores"] == {"name": "hand-1"},
          trials.get("hand-1")),
         ("only what was flagged and held is named as left out",
-         left_out == ["full-1", "hand-1" + CHANGE_TASK], left_out),
+         left_out == ["inline-1", "hand-1" + CHANGE_TASK], left_out),
         ("a reached trial is listed among the lost, with its re-run",
          [(entry["name"], entry["rerun"]) for entry in lost]
-         == [("full-1", "completed")], lost),
+         == [("inline-1", "completed")], lost),
     ]
 
 
@@ -5445,24 +4960,24 @@ def cross_checks(seed):
         return {"scores": {}, "judge": judging, "judgings": [judging],
                 "change": None, "security": None}
 
-    # The rounds' judge reads full better on both rows. The other reads full
+    # The rounds' judge reads inline better on both rows. The other reads full
     # worse on design and better on readability.
     ours, theirs = {}, {}
-    for index, (full_design, other_design, full_reads, other_reads) in \
+    for index, (treated_design, other_design, treated_reads, other_reads) in \
             enumerate(((4, 2, 4, 4), (4, 2, 5, 4), (5, 1, 4, 5)), 1):
         ours["none-%d" % index] = judged("ours", 2, 3)
-        ours["full-%d" % index] = judged("ours", full_design, full_reads)
+        ours["inline-%d" % index] = judged("ours", treated_design, treated_reads)
         theirs["none-%d" % index] = judged("theirs", 4, 3)
-        theirs["full-%d" % index] = judged("theirs", other_design,
+        theirs["inline-%d" % index] = judged("theirs", other_design,
                                            other_reads)
     results = contrasts(collect(ours), seed)
-    before = (results["judge_design"]["full-none"]["verdict"],
-              results["judge_readability"]["full-none"]["verdict"])
+    before = (results["judge_design"]["inline-none"]["verdict"],
+              results["judge_readability"]["inline-none"]["verdict"])
     check = cross_check(ours, theirs, seed)
     withheld = disagree(results, check)
     text = "\n".join(cross_check_section(check))
 
-    # Only the none trials read: the full-none contrast has no other reading,
+    # Only the none trials read: the inline-none contrast has no other reading,
     # so the rounds' judge's verdict stands.
     unread = contrasts(collect(ours), seed)
     partial = cross_check(ours, {name: trial for name, trial
@@ -5470,15 +4985,15 @@ def cross_checks(seed):
                           seed)
     disagree(unread, partial)
     return [
-        ("the planted rounds' judge reads full better on both rows",
+        ("the planted rounds' judge reads inline better on both rows",
          before == ("better", "better"), before),
         ("a direction the other judge reverses loses its verdict",
-         results["judge_design"]["full-none"]["verdict"] == DISAGREE_VERDICT
+         results["judge_design"]["inline-none"]["verdict"] == DISAGREE_VERDICT
          and [entry["metric"] for entry in withheld] == ["judge_design"],
-         results["judge_design"]["full-none"]["verdict"]),
+         results["judge_design"]["inline-none"]["verdict"]),
         ("a direction both judges read keeps its verdict",
-         results["judge_readability"]["full-none"]["verdict"] == "better",
-         results["judge_readability"]["full-none"]["verdict"]),
+         results["judge_readability"]["inline-none"]["verdict"] == "better",
+         results["judge_readability"]["inline-none"]["verdict"]),
         ("agreement is counted per row over the trials both read",
          check["rows"]["judge_design"] == {"trials": 6,
                                            "mean_difference": -0.3333,
@@ -5486,11 +5001,11 @@ def cross_checks(seed):
          and check["rows"]["judge_readability"]["within_one"] == 1.0,
          check["rows"]),
         ("the section names the model and the withheld verdict",
-         "`theirs` read 6 trial(s)" in text and "- design, full-none" in text,
+         "`theirs` read 6 trial(s)" in text and "- design, inline-none" in text,
          text[:200]),
         ("a contrast the other judge did not read keeps its verdict",
-         unread["judge_design"]["full-none"]["verdict"] == "better",
-         unread["judge_design"]["full-none"]["verdict"]),
+         unread["judge_design"]["inline-none"]["verdict"] == "better",
+         unread["judge_design"]["inline-none"]["verdict"]),
         ("a root with no judgings yields no cross-check",
          load_cross_check(os.path.join(HERE, "no-such-root"), ours) == {},
          None),
@@ -5508,13 +5023,12 @@ def documents_checks(seed):
     trials = planted_change_run("any-revision")
     table = collect(trials)
     results = contrasts(table, seed, crossed_labels(trials))
-    results["task_success"]["full-none"]["verdict"] = "worse"
+    results["task_success"]["skills-none"]["verdict"] = "worse"
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-documents-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
     target = write_report(scratch, trials, table, results, seed,
-                          assess_escalation(trials, results, seed),
                           out_dir=scratch)
     stem = target[:-len(".md")]
     texts = {}
@@ -5530,9 +5044,12 @@ def documents_checks(seed):
                 if line.startswith("## ")]
     return [
         ("the report names each approach and its verdict in plain words",
-         "### `full`" in report and "### `hand`" in report
+         "### `skills`" in report and "### `hybrid`" in report
          and "**Verdict: worse**, because of the hidden tests." in report
          and PLAIN_VERDICT_RULE[:40] in report, report[:400]),
+        ("the judge is checked by its evidence, not a person",
+         "No person scores the judge." in texts["-record"]
+         and "holdout" not in texts["-record"].lower(), None),
         ("the report links its appendix, and the appendix the record",
          "-appendix.md)" in report and "-record.md)" in appendix, None),
         ("the appendix holds what produced the results, the radar's axes "
@@ -5547,8 +5064,8 @@ def documents_checks(seed):
          "appendix", "can be called established" in report
          and "Every interval below is descriptive." in appendix, None),
         ("a comparison across rounds reads as not given, not too few runs",
-         plain_verdict({key: {"full-none": {"verdict": CROSSING_VERDICT}}
-                        for key in ANSWERED}, "full-none", "Not measured")
+         plain_verdict({key: {"inline-none": {"verdict": CROSSING_VERDICT}}
+                        for key in ANSWERED}, "inline-none", "Not measured")
          .startswith("**Verdict: not given.**"), None),
         ("a round 5 run short of its last block says it is provisional",
          any("block %d still miss a run" % ROUND5_K in line
@@ -5564,15 +5081,15 @@ def documents_checks(seed):
         ("a broken build is named even where reliability reads neutral",
          any(line.startswith("- Noted, though reliability")
              for line in plain_arm_lines(
-                 {"full-1": {"scores": {"boot": {"value": {
-                     "factory": False}}}}, "full-2": {"scores": {}}},
+                 {"inline-1": {"scores": {"boot": {"value": {
+                     "factory": False}}}}, "inline-2": {"scores": {}}},
                  {"task_success": {"values": {"none": {1: 1.0, 2: 1.0},
-                                              "full": {1: 0.0, 2: 1.0}}},
-                  "cost_usd": {"values": {"none": {1: 1.0}, "full": {1: 1.0}}}},
-                 {key: {"full-none": {"verdict": "no improvement shown"}}
+                                              "inline": {1: 0.0, 2: 1.0}}},
+                  "cost_usd": {"values": {"none": {1: 1.0}, "inline": {1: 1.0}}}},
+                 {key: {"inline-none": {"verdict": "no improvement shown"}}
                   for _, keys in RADAR_AXES for key in keys}
-                 | {key: {"full-none": {"verdict": "no improvement shown"}}
-                    for key in ANSWERED}, "full", 391)), None),
+                 | {key: {"inline-none": {"verdict": "no improvement shown"}}
+                    for key in ANSWERED}, "inline", 391)), None),
         ("run counts come from the runs scored, a spread where they differ",
          times({"none": 15, "skills": 12, "hybrid": 15},
                ["skills", "hybrid"]) == "between 12 and 15 times"
@@ -5581,8 +5098,8 @@ def documents_checks(seed):
 
 
 def self_test(seed):
-    """Check the verdict rule, the relative margin, the escalation rule, the
-    withdrawal of a metric and the reach section."""
+    """Check the verdict rule, the relative margin, the withdrawal of a
+    metric and the reach section."""
     checks = []
     for label, differences, direction, expected in WORKED:
         interval = bca_interval(list(differences), seed)
@@ -5627,8 +5144,8 @@ def self_test(seed):
     metric_keys = {key for key, _, _, _ in METRICS}
     worded = {key for key, _ in READS}
     lacking = sorted(key for key in PRIMARY
-                     if not (key in MARGINS and key in PRACTICAL
-                             and key in SHORT and key in metric_keys
+                     if not (key in MARGINS and key in SHORT
+                             and key in metric_keys
                              and (key in worded or key in PROBE_RATES)))
     unmatched = sorted(judged.symmetric_difference(
         key for key in PRIMARY if key not in PROBE_RATES))
@@ -5659,8 +5176,6 @@ def self_test(seed):
                                          "seen": {"lines": 1500}}}}
     got = per_kloc(planted, "complexity", "over_15")
     checks.append(("a nested count is taken per KLOC", got == 2.0, got))
-    checks.extend(escalation_checks(seed))
-    checks.extend(posthoc_checks(seed))
     checks.extend(withdrawal_checks(seed))
     checks.extend(executive_checks(seed))
     checks.extend(documents_checks(seed))
@@ -5775,14 +5290,12 @@ def main(argv):
         print("no trial is left to report once the reached ones are out")
         return 2
 
-    # A round escalates once, to K = 5, or registers its own K, and goes no
-    # further, so a run past its ceiling is refused rather than reported as
-    # though the bound held.
+    # A round registers its K and goes no further, so a run past it is
+    # refused rather than reported as though the bound held.
     k = max(index_of(name) for name in trials)
-    ceiling = k_ceiling({arm_of(name) for name in trials})
-    if k > ceiling:
-        print("refused: the run holds K = %d, past the ceiling of "
-              "K = %d" % (k, ceiling))
+    if k > ROUND5_K:
+        print("refused: the run holds K = %d, past the registered K = %d"
+              % (k, ROUND5_K))
         return 2
     table = collect(trials)
     results = round_contrasts(trials, table, options.seed)
@@ -5810,24 +5323,15 @@ def main(argv):
             return 2
         check = cross_check(trials, other, options.seed)
         disagree(results, check)
-    escalation = assess_escalation(trials, results, options.seed, withdrawn,
-                                   options.root)
-    posthoc = None
-    if posthoc_owed(trials):
-        posthoc_table = collect(trials, POSTHOC)
-        posthoc = (posthoc_table, round_contrasts(trials, posthoc_table,
-                                                  options.seed))
     target = write_report(options.root, trials, table, results, options.seed,
-                          escalation, out_dir, posthoc, withdrawn, check)
+                          out_dir, withdrawn, check)
 
     with io.open(os.path.join(scoring_area(options.root), "aggregate.json"),
                  "w", encoding="utf-8") as handle:
         json.dump({"seed": options.seed, "table": table, "results": results,
-                   "escalation": escalation,
+                   "blocks": blocks_state(trials),
                    "withdrawn": withdrawn,
-                   "cross_check": check,
-                   "posthoc": {"table": posthoc[0], "results": posthoc[1]}
-                   if posthoc else None},
+                   "cross_check": check},
                   handle, indent=2, sort_keys=True)
     print("Report: %s" % target)
 

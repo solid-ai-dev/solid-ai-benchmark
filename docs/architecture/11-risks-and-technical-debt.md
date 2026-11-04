@@ -7,7 +7,7 @@ Each risk names what holds it today.
 
 | # | Risk | Held by | Open |
 | - | ---- | ------- | ---- |
-| 1 | Three trials cannot reach significance: 27 distinct resamples, a minimum two-sided p of 0.25 | Below K = 6 every interval is printed as descriptive. Round 5 registers K = 15, sized from rounds 3 and 4's noise | Round 4's escalations are owed and not run. Round 3's cannot run, its raw data lost |
+| 1 | Three trials cannot reach significance: 27 distinct resamples, a minimum two-sided p of 0.25 | Below K = 6 every interval is printed as descriptive. Round 5 registers K = 15, sized from rounds 3 and 4's noise | Rounds 1 to 4, registered at K = 3, are retired; the benchmark proper starts with round 6 |
 | 2 | One app: every effect may be `tariff`'s | `ledger` stays sealed for the final claim | No second app has run |
 | 3 | One builder agent | | Another agent reading `AGENTS.md` is untested |
 | 4 | A judge that shares a vendor with the builder may favour the templates' own style | From round 5 the judge is `gpt-6-astra`, another vendor's model than every builder | |

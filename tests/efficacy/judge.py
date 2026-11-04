@@ -135,7 +135,7 @@ USER_CACHE_DIRS = (("pip", "cache"), ("Microsoft", "Windows"))
 # would have changed what is being judged.
 MARKERS = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "solid-ai-templates",
            "Claude Code", "claude.ai", "CLAUDE", "context file",
-           "arm none", "arm full", "arm short",
+           "arm none", "arm short",
            "arm hybrid", "arm hand", "arm reference", "arm inline",
            "arm skills", "SKILL.md")
 
@@ -962,14 +962,14 @@ def bundle_checks(scratch):
     The planted tree is shaped like one scoring leaves behind: the trial's code
     beside tool caches that hold absolute paths through the scoring area.
     """
-    tree = os.path.join(scratch, "scoring", "full-2", "tree", "full-2")
-    scored = "/".join((scratch.replace(os.sep, "/"), "scoring", "full-2", "tree",
-                       "full-2", "src"))
+    tree = os.path.join(scratch, "scoring", "inline-2", "tree", "inline-2")
+    scored = "/".join((scratch.replace(os.sep, "/"), "scoring", "inline-2", "tree",
+                       "inline-2", "src"))
     code = os.path.join("src", "app.py")
 
     # The trial's name outside a path, where an implementation may use it,
     # is not a leak.
-    plant(tree, {code: 'CELL = "full-2"\n', "CLAUDE.md": "# rules\n"})
+    plant(tree, {code: 'CELL = "inline-2"\n', "CLAUDE.md": "# rules\n"})
 
     # The skills arm's skills, in both folders they can sit in, name the arm.
     skills = [os.path.join(".claude", "skills", "review", "SKILL.md"),
@@ -1026,15 +1026,15 @@ def bundle_checks(scratch):
 
         # The plant landed: the bundle lacked the file and now holds it.
         checks.append((label, not before and os.path.exists(landed)
-                       and [relative, "full-2", "as a path segment"] in found))
+                       and [relative, "inline-2", "as a path segment"] in found))
 
     # The scan reads the directories the copy leaves out, because the judge
     # reads whatever the bundle holds.
     hidden = os.path.join(".git", "config")
     plant(bundle, {hidden: "worktree = %s\n" % scored})
     checks.append(("a leak in a directory the copy skips is found",
-                   [hidden, "full-2", "as a path segment"]
-                   in surviving_markers(bundle, "full-2")))
+                   [hidden, "inline-2", "as a path segment"]
+                   in surviving_markers(bundle, "inline-2")))
     return checks
 
 

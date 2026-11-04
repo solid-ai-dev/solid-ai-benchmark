@@ -299,8 +299,7 @@ def figures(root, seed):
     withdrawn = report.withdrawals(trials)
     report.withdraw(withdrawn, table, results)
     return {"table": table, "results": results, "withdrawn": withdrawn,
-            "escalation": report.assess_escalation(trials, results, seed,
-                                                   withdrawn, root),
+            "owed_blocks": report.owed_blocks(trials),
             "reach": report.reaches(root),
             "lost": [{key: value for key, value in loss.items()
                       if key != "kept"}
@@ -390,7 +389,7 @@ def plant_root(scratch):
     area = scoring_area(root)
     started = datetime.datetime(2026, 10, 1, 12, 0, 0)
     records = []
-    for arm, task in (("none", "build"), ("full", "build"),
+    for arm, task in (("none", "build"), ("hybrid", "build"),
                       ("none", "change")):
         name = "%s-1" % arm if task == "build" else "change-%s-1" % arm
         workspace = os.path.join(root, name)
@@ -403,17 +402,17 @@ def plant_root(scratch):
                         "started_at": started.isoformat(),
                         "frozen": {"head": "h", "tarball": tarball}})
 
-    # The voided attempt ran in full-1's workspace before its re-run, so its
+    # The voided attempt ran in hybrid-1's workspace before its re-run, so its
     # transcript sits in the same folder and is older than the re-run's start.
-    void_dir = os.path.join(root, "void", "full-1-2026-10-01T11-00-00")
+    void_dir = os.path.join(root, "void", "hybrid-1-2026-10-01T11-00-00")
     os.makedirs(void_dir)
-    records.insert(1, {"arm": "full", "trial": 1, "task": "build",
+    records.insert(1, {"arm": "hybrid", "trial": 1, "task": "build",
                        "outcome": "blocked", "reason": "planted",
                        "workspace": records[1]["workspace"],
                        "started_at": "2026-10-01T11:00:00",
                        "void": {"dir": void_dir},
                        "frozen": {"tarball": os.path.join(void_dir,
-                                                          "full-1.tar")}})
+                                                          "hybrid-1.tar")}})
     write_run(os.path.join(root, "run-planted.json"), started, records)
     for record in records:
         if record["outcome"] != "completed":
@@ -435,7 +434,7 @@ def plant_root(scratch):
                  "w", encoding="utf-8") as handle:
         handle.write('{"token": "planted-secret"}')
 
-    for name, arm in (("none-1", "none"), ("full-1", "full")):
+    for name, arm in (("none-1", "none"), ("hybrid-1", "hybrid")):
         for kind in READINGS:
             dump_json(os.path.join(area, kind, "%s.json" % name),
                       {"name": name, "arm": arm, "trial": 1,
@@ -487,12 +486,12 @@ def self_test():
          len(manifest["transcripts"]) == 4
          and not any("credentials" in key for key in files)),
         ("readings, judgings, map and lock come; bundles do not",
-         {"scoring/scores/none-1.json", "scoring/security-scores/full-1.json",
+         {"scoring/scores/none-1.json", "scoring/security-scores/hybrid-1.json",
           "scoring/scores-change/none-1.json", "scoring/judge/T1.json",
           "scoring/judge/map.json", "scoring/tool-lock.txt"} <= set(files)
          and not any("bundle" in key for key in files)),
         ("a voided directory is kept as a marker",
-         manifest["voided"] == ["full-1-2026-10-01T11-00-00"]
+         manifest["voided"] == ["hybrid-1-2026-10-01T11-00-00"]
          and os.path.isfile(os.path.join(into, "void", manifest["voided"][0],
                                          VOID_MARKER))),
         ("the revisions are recorded",
@@ -508,7 +507,7 @@ def self_test():
          records[0]["frozen"]["tarball"]
          == os.path.join(restored, "none-1.tar")
          and records[1]["void"]["dir"]
-         == os.path.join(restored, "void", "full-1-2026-10-01T11-00-00")
+         == os.path.join(restored, "void", "hybrid-1-2026-10-01T11-00-00")
          and records[0]["workspace"] == os.path.join(root, "none-1")),
         ("a restored transcript keeps its time",
          abs(os.path.getmtime(os.path.join(restored, relative))
@@ -520,7 +519,7 @@ def self_test():
     # The control: a reading changed in the archive must show in the verify,
     # or its clean result above proves nothing.
     changed = os.path.join(scoring_area(into), "security-scores",
-                           "full-1.json")
+                           "hybrid-1.json")
     before = load_json(changed).get("security_probe_pass_rate")
     dump_json(changed, dict(load_json(changed),
                             security_probe_pass_rate={"value": 0.5}))
@@ -552,7 +551,7 @@ def self_test():
     leftovers = [os.path.join(area, "scoring", "none-1", "tree"),
                  os.path.join(area, "scoring", "none-1", "venv"),
                  os.path.join(area, "scoring-change", "none-1", "tree"),
-                 os.path.join(area, "security", "full-1", "venv")]
+                 os.path.join(area, "security", "hybrid-1", "venv")]
     for folder in leftovers:
         os.makedirs(folder, exist_ok=True)
         with io.open(os.path.join(folder, "left.txt"), "w") as handle:

@@ -24,7 +24,7 @@ setting, not a choice the benchmark made. Chapter 9 records the choices.
 | - | ---------- | ----------- |
 | 1 | One owner runs and reads every round | No step may wait for a person, and no person may score. A person in the loop would leak judgement into an arm |
 | 2 | Rules are registered before the trials they govern | A new hypothesis is committed to its round's registration before its first trial. A check chosen afterwards describes and never decides |
-| 3 | K is fixed before a round's first trial: at most 5 after one escalation from 3, or 15 in round 5 | Sampling until an interval clears zero is not possible |
+| 3 | K is fixed before a round's first trial, 15 from round 5, and no run goes past it | Sampling until an interval clears zero is not possible |
 | 4 | `ledger`, a second app, stays sealed | Every round so far measures `tariff`, the development app |
 | 5 | The templates live in another repository | Every run names a templates source with `--templates` or `BENCHMARK_TEMPLATES`, and reports land in that source's `docs/audits/` |
 

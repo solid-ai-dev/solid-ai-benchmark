@@ -48,9 +48,8 @@ BRIEF = os.path.join(HERE, "brief.txt")
 # The arms this module makes, each with the directory under `arms/` its file
 # and record live in, and how it is made: fixed text, a model generation in
 # one of `agents.md`'s models, or the emitter, and a model arm's budget as
-# (lines, width) where it has one. Round 3's `full` and `hand` keep their
-# committed files and records; they were made through an interview that no
-# longer ships upstream.
+# (lines, width) where it has one. `hand` is a person's file, kept verbatim
+# with no record, so it is not made here.
 GENERATED = {
     "reference": {"dir": "reference", "kind": "fixed"},
     "inline": {"dir": "inline", "kind": "model", "model": "inline"},
