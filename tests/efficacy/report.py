@@ -627,8 +627,8 @@ def non_inferior(key, interval, direction, baseline_mean=None, margins=None):
 def load(root):
     """Every scored trial, with its judging attached where one exists.
 
-    Keyed by canonical name: a score, judging or reading round 1 wrote names
-    its trial `A1`, and is read here as `none-1`.
+    Keyed by canonical name, so a trial's score, judging and reading meet
+    however each spelled it.
     """
     area = scoring_area(root)
     trials = {}
@@ -1670,9 +1670,8 @@ def lost_trials(root):
 
 
 # A voided directory is named for the workspace it held and when it was
-# voided, as `change-hand-2-2026-09-16T20-29-18`; round 1 spelled the trial
-# `C2`.
-VOIDED = re.compile(r"^(change-)?([a-z]+-\d+|[A-Z]\d+)-(\d{4}-\d{2}-\d{2})"
+# voided, as `change-hand-2-2026-09-16T20-29-18`.
+VOIDED = re.compile(r"^(change-)?([a-z]+-\d+)-(\d{4}-\d{2}-\d{2})"
                     r"T(\d{2})-(\d{2})-(\d{2})$")
 
 
@@ -4417,13 +4416,13 @@ def reach_checks():
     hit = {"tool": "Bash", "term": "solid-ai-templates",
            "call": "curl https://github.com/solid-ai-dev/solid-ai-templates"}
     planted = [
-        {"arm": "B", "trial": 1, "outcome": "completed",
+        {"arm": "inline", "trial": 1, "outcome": "completed",
          "reach": {"transcripts": ["planted"], "hits": [hit]}},
-        {"arm": "A", "trial": 1, "outcome": "completed",
+        {"arm": "none", "trial": 1, "outcome": "completed",
          "reach": {"transcripts": ["planted"], "hits": []}},
-        {"arm": "C", "trial": 1, "outcome": "completed",
-         "workspace": os.path.join(scratch, "C1")},
-        {"arm": "A", "trial": 2, "outcome": "blocked",
+        {"arm": "hand", "trial": 1, "outcome": "completed",
+         "workspace": os.path.join(scratch, "hand-1")},
+        {"arm": "none", "trial": 2, "outcome": "blocked",
          "reach": {"transcripts": ["planted"], "hits": [hit]}},
     ]
     with io.open(os.path.join(scratch, "run-planted.json"), "w",
@@ -4436,7 +4435,7 @@ def reach_checks():
     checks = [("the planted run record is read",
                len(run_records(scratch)) == len(planted)),
               ("a trial whose scan hit is named",
-               [row.split(" | ")[0] for row in rows] == ["| full-1"]),
+               [row.split(" | ")[0] for row in rows] == ["| inline-1"]),
               ("a trial with no transcript is not scanned",
                "Not scanned, having no transcript: hand-1." in lines)]
     shutil.rmtree(scratch, ignore_errors=True)
@@ -4448,25 +4447,26 @@ def lost_checks():
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-lost-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
-    recorded = os.path.join(scratch, "void", "A1-2026-09-15T10-00-00")
-    unrecorded = os.path.join(scratch, "void", "change-C2-2026-09-16T18-30-00")
+    recorded = os.path.join(scratch, "void", "none-1-2026-09-15T10-00-00")
+    unrecorded = os.path.join(scratch, "void",
+                              "change-hand-2-2026-09-16T18-30-00")
     for directory in (recorded, unrecorded):
         os.makedirs(directory)
 
-    # A1 was blocked and recorded; the run holding change C2 stopped before
-    # recording it, and C2's change task re-ran in a later run.
+    # none-1 was blocked and recorded; the run holding change hand-2 stopped
+    # before recording it, and hand-2's change task re-ran in a later run.
     runs = {
         "run-2026-09-15T09-00-00.json": [
-            {"arm": "A", "trial": 1, "task": "build", "outcome": "blocked",
+            {"arm": "none", "trial": 1, "task": "build", "outcome": "blocked",
              "started_at": "2026-09-15T09:00:00", "reason": "planted",
              "void": {"dir": recorded}},
-            {"arm": "A", "trial": 1, "task": "build",
+            {"arm": "none", "trial": 1, "task": "build",
              "outcome": "completed", "started_at": "2026-09-15T10:05:00"}],
         "run-2026-09-16T17-00-00.json": [
-            {"arm": "C", "trial": 2, "task": "build",
+            {"arm": "hand", "trial": 2, "task": "build",
              "outcome": "completed", "started_at": "2026-09-16T17:00:00"}],
         "run-2026-09-16T20-00-00.json": [
-            {"arm": "C", "trial": 2, "task": "change",
+            {"arm": "hand", "trial": 2, "task": "change",
              "outcome": "completed", "started_at": "2026-09-16T20:00:00"}],
     }
     for file, trials in runs.items():
@@ -4475,7 +4475,8 @@ def lost_checks():
             json.dump({"trials": trials}, handle)
 
     landed = (sorted(os.listdir(os.path.join(scratch, "void")))
-              == ["A1-2026-09-15T10-00-00", "change-C2-2026-09-16T18-30-00"]
+              == ["change-hand-2-2026-09-16T18-30-00",
+                  "none-1-2026-09-15T10-00-00"]
               and len(run_records(scratch)) == 4)
     lost = lost_trials(scratch)
     shutil.rmtree(scratch, ignore_errors=True)

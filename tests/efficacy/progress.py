@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 from harness import (ROUND5_K, SCORABLE, VOIDING, LiveRunError,  # noqa: E402
-                     TrialError, arm_name, claim_path, now, read_claim,
+                     TrialError, claim_path, now, read_claim,
                      result_of, running_as, scoring_area, split_name)
 from report import ROUND5_RUN  # noqa: E402
 
@@ -60,7 +60,7 @@ def arms_in(trials):
     # so each gets a bar from its first trial on; none is dropped as unknown.
     found = list(ROUND5_RUN)
     for record in trials:
-        arm = arm_name(record.get("arm"))
+        arm = record.get("arm")
         if arm and arm not in found:
             found.append(arm)
     return tuple(found)
@@ -93,7 +93,7 @@ def tally(trials, arms):
     arms = {arm: {"done": set(), "voided": 0, "cost": 0.0, "running": None}
             for arm in arms}
     for record in trials:
-        arm = arms.get(arm_name(record.get("arm")))
+        arm = arms.get(record.get("arm"))
         if arm is None:
             continue
         outcome = record.get("outcome")
@@ -173,7 +173,7 @@ def arm_of(name):
 
 def blocks_of(names, arm):
     """The blocks of `arm` that `names` hold, each once however it is
-    spelled: round 1's `A1` and its word `none-1` are one trial."""
+    spelled: `none-01` and `none-1` are one trial."""
     found = set()
     for name in names:
         try:
@@ -380,8 +380,6 @@ def self_test():
         dated(os.path.join(area, "scores", "%s.json" % name), minutes)
     dated(os.path.join(area, "security-scores", "none-1.json"), 6)
 
-    # Round 1's spelling of none-1, left beside the word a rescore wrote.
-    dated(os.path.join(area, "scores", "A1.json"), 4)
     dated(os.path.join(area, "scoring", "inline-2"), 20, folder=True)
     dated(os.path.join(area, "scoring", "hybrid-1"), 40, folder=True)
     dated(os.path.join(area, "scoring", "tools"), 50, folder=True)
@@ -471,8 +469,6 @@ def self_test():
          and not any("  scoring " in line for line in securing)),
         ("the security pass shows no scoring estimate, bar short or not",
          not any("left" in line for line in securing)),
-        ("a trial scored under two spellings counts once",
-         " 1/15" in scored.get("none", "")),
         ("a rescore shows its time in and no time left",
          any(" h in" in line for line in rescore_pace)
          and not any("h left" in line for line in rescore_pace)),

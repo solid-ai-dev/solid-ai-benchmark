@@ -39,9 +39,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lib  # noqa: E402
 import probes  # noqa: E402
 from harness import (SCORABLE, LiveRunError, TrialError,  # noqa: E402
-                     arm_name, canonical, claim_area, claim_refusal_check,
+                     canonical, claim_area, claim_refusal_check,
                      frozen_top, name_of, release_area, remove_tree,
-                     scorable_trials, scoring_area, spellings)
+                     scorable_trials, scoring_area)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.basename(__file__)
@@ -230,8 +230,8 @@ def extract(tarball, into, name):
     with tarfile.open(tarball) as archive:
         archive.extractall(into, filter="data")
 
-    # The tarball's top directory carries the trial's name as spelled when it
-    # was frozen; round 1's `B1` is scored under `full-1` today.
+    # The tarball's top directory carries the name the trial had when it was
+    # frozen, which a reused trial need not keep.
     try:
         top = frozen_top(tarball, into)
     except TrialError as error:
@@ -1172,7 +1172,7 @@ def score_trial(record, options, suite, lock):
     files = python_files(workspace)
     venv = create_venv(os.path.join(scoring, "venv"))
 
-    scores = {"arm": arm_name(record["arm"]), "trial": record["trial"],
+    scores = {"arm": record["arm"], "trial": record["trial"],
               "name": name,
               "workspace": workspace, "templates_tree": record.get(
                   "templates_tree"),
@@ -1313,7 +1313,7 @@ def score_change_trial(record, options, suite):
                         os.path.join(scoring, "tree"), frozen)
     venv = create_venv(os.path.join(scoring, "venv"))
 
-    scores = {"arm": arm_name(record["arm"]), "trial": record["trial"],
+    scores = {"arm": record["arm"], "trial": record["trial"],
               "name": name,
               "task": "change", "workspace": workspace,
               "base": record.get("base"), "model": record.get("model"),
@@ -1390,27 +1390,25 @@ def run_record_checks(scratch):
                      encoding="utf-8") as handle:
             json.dump({"trials": trials}, handle)
 
-    # Round 1's records name their arms by letter, and a record of this round
-    # by word; both are offered under the words.
-    plant("run-1.json", [{"arm": "A", "trial": 1, "outcome": "blocked"},
-                         {"arm": "A", "trial": 1, "outcome": "completed"},
-                         {"arm": "B", "trial": 1, "outcome": "budget"},
-                         {"arm": "C", "trial": 1, "outcome": "refused"},
+    plant("run-1.json", [{"arm": "none", "trial": 1, "outcome": "blocked"},
+                         {"arm": "none", "trial": 1, "outcome": "completed"},
+                         {"arm": "inline", "trial": 1, "outcome": "budget"},
+                         {"arm": "hand", "trial": 1, "outcome": "refused"},
                          {"arm": "short", "trial": 1, "outcome": "timeout"}])
     offered = scorable_trials(scratch)
     checks = [("only completed, budget and timeout endings are offered, "
                "under the arms' words",
-               sorted(offered) == ["full-1", "none-1", "short-1"]),
+               sorted(offered) == ["inline-1", "none-1", "short-1"]),
               ("a blocked trial yields to its re-run",
                offered["none-1"]["outcome"] == "completed")]
 
-    plant("run-2.json", [{"arm": "A", "trial": 1, "outcome": "completed",
+    plant("run-2.json", [{"arm": "none", "trial": 1, "outcome": "completed",
                           "task": "change"}])
     checks.append(("a change task is offered only as a change task",
                    sorted(scorable_trials(scratch, task="change"))
                    == ["none-1"]
                    and sorted(scorable_trials(scratch))
-                   == ["full-1", "none-1", "short-1"]))
+                   == ["inline-1", "none-1", "short-1"]))
 
     plant("run-3.json", [{"arm": "none", "trial": 1, "outcome": "completed"}])
     try:
@@ -1419,16 +1417,16 @@ def run_record_checks(scratch):
     except TrialError:
         checks.append(("a trial two records offer refuses", True))
 
-    # A score round 1 wrote under its letter is the trial's score under its
-    # word, and a revision it was graded at is read back.
+    # An existing score is found by its trial's name, and the revision it was
+    # graded at is read back.
     written = os.path.join(scratch, "scores")
     os.makedirs(written)
-    with io.open(os.path.join(written, "A1.json"), "w",
+    with io.open(os.path.join(written, "none-1.json"), "w",
                  encoding="utf-8") as handle:
-        json.dump({"name": "A1", "suite_revision": "earlier"}, handle)
-    checks.append(("an existing score is found under either spelling",
+        json.dump({"name": "none-1", "suite_revision": "earlier"}, handle)
+    checks.append(("an existing score is found, and its revision read back",
                    existing_score(written, "none-1")
-                   == os.path.join(written, "A1.json")
+                   == os.path.join(written, "none-1.json")
                    and existing_score(written, "short-1") is None
                    and graded_revisions(written) == {"earlier"}))
     return checks
@@ -1475,7 +1473,7 @@ def churn_checks(scratch):
 def lock_checks():
     """A trial's own package never reaches the lock, and a replaced one shows."""
     freeze = ("ruff==0.16.0\n"
-              "tariff @ file:///C:/efficacy/run/scoring/A1/tree/A1\n"
+              "tariff @ file:///C:/efficacy/run/scoring/none-1/tree/none-1\n"
               "-e git+https://example.invalid/other.git#egg=other\n"
               "Tariff==0.1.0\n"
               "pytest==9.1.1\n")
@@ -1487,9 +1485,11 @@ def lock_checks():
             ("only the tools reach the lock",
              lock_lines(freeze) == ["ruff==0.16.0", "pytest==9.1.1"]),
             ("a package that stays put is not flagged",
-             package_moved("file:///run/B1", "file:///run/B1") is None),
+             package_moved("file:///run/inline-1", "file:///run/inline-1")
+             is None),
             ("a package the battery replaced is flagged",
-             package_moved("file:///run/B1", "file:///run/A1") is not None)]
+             package_moved("file:///run/inline-1", "file:///run/none-1")
+             is not None)]
 
 
 # The validator's JSON report in the shape html5validator 0.4.2 prints: the
@@ -1534,17 +1534,17 @@ def readonly_checks(scratch):
     with io.open(planted, "w", encoding="utf-8") as handle:
         handle.write("planted")
     os.chmod(planted, 0o444)
-    source = os.path.join(scratch, "readonly-source", "A1")
+    source = os.path.join(scratch, "readonly-source", "frozen-elsewhere")
     os.makedirs(source)
     with io.open(os.path.join(source, "app.py"), "w",
                  encoding="utf-8") as handle:
         handle.write("fresh = True\n")
 
-    # Frozen under round 1's spelling, so the extract under the word has to
+    # Frozen under another name, so the extract under the trial's name has to
     # take the directory it finds and rename it.
-    tarball = os.path.join(scratch, "readonly-A1.tar")
+    tarball = os.path.join(scratch, "readonly-elsewhere.tar")
     with tarfile.open(tarball, "w") as archive:
-        archive.add(source, arcname="A1")
+        archive.add(source, arcname="frozen-elsewhere")
 
     # The plant landed: the file the extract must replace is read-only, which
     # is what stops a plain removal on Windows.
@@ -1562,7 +1562,7 @@ def readonly_checks(scratch):
 
 
 # The grader's report as `run_suite.py` writes it, cut to the counts: five
-# checks skipped for want of a browser, as a re-score of A1 recorded.
+# checks skipped for want of a browser, as a re-score of none-1 recorded.
 PLANTED_SUITE_REPORT = {"graded": True, "pass_rate": 0.9973,
                         "counts": {"error": 0, "failed": 1, "passed": 371,
                                    "skipped": 5, "total": 377}}
@@ -2045,13 +2045,9 @@ def self_test():
 
 
 def existing_score(target, name):
-    """The score file already written for a trial, in either spelling, or
-    None."""
-    for spelled in spellings(name):
-        path = os.path.join(target, "%s.json" % spelled)
-        if os.path.isfile(path):
-            return path
-    return None
+    """The score file already written for a trial, or None."""
+    path = os.path.join(target, "%s.json" % canonical(name))
+    return path if os.path.isfile(path) else None
 
 
 def graded_revisions(target):

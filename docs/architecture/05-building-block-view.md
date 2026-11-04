@@ -100,9 +100,6 @@ paired with `none-2`. Blocks run in order and arms interleave within each,
 each block starting one arm later than the last: `none-1`, `inline-1`,
 `hybrid-1`, `reference-1`, `skills-1`, then `inline-2`, `hybrid-2`, and so on.
 
-Round 1 named its arms by letter. Reading its report, A is `none`, B is
-`full` and C is `hand`.
-
 ### 5.5.3 How the generated files are made
 
 **One non-interactive invocation per generated arm, and no person answers
