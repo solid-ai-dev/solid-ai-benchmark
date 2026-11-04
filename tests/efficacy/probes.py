@@ -119,16 +119,141 @@ for path, tree in TREES.items():
         roles[path] = "domain"
 report["roles"] = {os.path.basename(p): r for p, r in roles.items()}
 
+
+
 # The contract the specification states in its own words: `import tariff`
-# works without Flask and without touching the database, so no domain module
-# may reach either.
-violations = []
-for path, tree in TREES.items():
-    if roles[path] != "domain":
-        continue
-    for name in sorted(imported_names(tree) & (WEB | STORE)):
-        violations.append([os.path.basename(path), name])
-report["layering_violations"] = violations
+# works without Flask and without touching the database. So the modules that
+# import loads, the package's `__init__` and every module it reaches through
+# the package's own imports, may import neither. A role says nothing here: a
+# module that imports Flask is web by that fact, so asking whether a domain
+# module imports Flask asks nothing.
+def never_on_import(node):
+    """An `if` whose body never runs on import: `if TYPE_CHECKING:`, which
+    only a type checker reads, and `if __name__ == "__main__":`, which runs
+    only for a script. Both are read by name, as a build writes them."""
+    test = node.test
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(
+            test.ops[0], ast.Eq):
+        sides = [test.left] + list(test.comparators)
+        names = [side.id for side in sides if isinstance(side, ast.Name)]
+        values = [side.value for side in sides
+                  if isinstance(side, ast.Constant)]
+        return "__name__" in names and "__main__" in values
+    return False
+
+
+def import_time(tree):
+    """The nodes that run when the module is imported. A function body does
+    not, so an import inside one, the factory's lazy `from . import web` the
+    specification allows, is not what `import tariff` loads; nor is an import
+    under a guard that never holds on import."""
+    pending = list(ast.iter_child_nodes(tree))
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.Lambda)):
+            continue
+        if isinstance(node, ast.If) and never_on_import(node):
+            pending.extend(node.orelse)
+            continue
+        yield node
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def import_time_names(tree):
+    """The top-level names a module imports at import time. A relative
+    import names the package's own module, whatever it is called, and is
+    followed by `package_imports` instead."""
+    names = set()
+    for node in import_time(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def resolve(base, parts):
+    """The files Python runs to import `parts` under `base`: each package
+    initializer on the way, then the module or its own initializer."""
+    found = []
+    for depth in range(1, len(parts)):
+        initializer = os.path.join(base, *(parts[:depth] + ["__init__.py"]))
+        if initializer in TREES:
+            found.append(initializer)
+    # A package wins over a module of the same name, as Python's finder has
+    # it.
+    stem = os.path.join(base, *parts) if parts else base
+    for candidate in (os.path.join(stem, "__init__.py"), stem + ".py"):
+        if candidate in TREES:
+            found.append(candidate)
+            break
+    return found
+
+
+def package_imports(path, tree):
+    found = []
+    here = os.path.dirname(path)
+    top = os.path.dirname(ENTRY)
+    for node in import_time(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = here
+                for _ in range(node.level - 1):
+                    base = os.path.dirname(base)
+                parts = node.module.split(".") if node.module else []
+            elif node.module and node.module.split(".")[0] == PACKAGE:
+                base, parts = top, node.module.split(".")[1:]
+            else:
+                continue
+            found.extend(resolve(base, parts))
+            for alias in node.names:
+                found.extend(resolve(base, parts + [alias.name]))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] == PACKAGE:
+                    found.extend(resolve(top, parts[1:]))
+    return found
+
+
+def under_package(path):
+    """A file's path from the package's parent, with forward slashes, so two
+    initializers are told apart."""
+    relative = os.path.relpath(path, os.path.dirname(os.path.dirname(ENTRY)))
+    return relative.replace(os.sep, "/")
+
+
+ENTRY = None
+for path in TREES:
+    if os.path.basename(path) == "__init__.py" and os.path.basename(
+            os.path.dirname(path)) == PACKAGE:
+        ENTRY = path
+if ENTRY is None:
+    for path in TREES:
+        if os.path.basename(path) == PACKAGE + ".py":
+            ENTRY = path
+if ENTRY is None:
+    report["layering_violations"] = None
+    report["import_closure"] = None
+else:
+    closure, queue = [], [ENTRY]
+    while queue:
+        path = queue.pop(0)
+        if path in closure:
+            continue
+        closure.append(path)
+        queue.extend(package_imports(path, TREES[path]))
+    violations = []
+    for path in closure:
+        for name in sorted(import_time_names(TREES[path]) & (WEB | STORE)):
+            violations.append([under_package(path), name])
+    report["layering_violations"] = violations
+    report["import_closure"] = [under_package(path) for path in closure]
 
 
 def is_route(node):
@@ -636,7 +761,16 @@ def web_quality(ctx, workspace):
 
 # A build planted with one finding per design probe, so each probe's answer
 # can be checked against what was planted. `web.py` names Flask but is never
-# imported, so the plant needs nothing installed; `broken.py` does not parse.
+# imported at import time, so the plant needs nothing installed, and it lies
+# outside what `import tariff` loads though the factory imports it lazily;
+# `db.py` is persistence by its imports and lies outside too; `data/store.py`
+# names Flask and the web module under `if TYPE_CHECKING:`, which loads
+# neither, and sqlite3 under an inverted main guard, which does run on
+# import, and imports the package's own `data/sqlalchemy.py` relatively;
+# `__init__.py` names Werkzeug under a main guard; `data.py`
+# loses to the `data` package of the same name, as in Python;
+# `data/__init__.py` lies inside, as the initializer on the way to a module an
+# absolute import names; `broken.py` does not parse.
 PLANTED_BUILD = {
     "tariff/__init__.py": '''\
 """A planted build."""
@@ -644,7 +778,7 @@ import logging
 from decimal import Decimal
 
 from .rules import BulkRule, CouponRule, PercentageRule, Rule, TieredRule
-from .store import load
+from .rules import load
 
 __all__ = ["Product", "Catalog", "InvoiceLine", "Invoice", "Jurisdiction",
            "PercentageRule", "BulkRule", "TieredRule", "CouponRule", "price",
@@ -686,9 +820,20 @@ def apply(rule, verbose: bool = False):
     if verbose:
         print("applying", rule)
     return load(rule)
+
+
+def create_app(database):
+    from . import web
+    return web.app
+
+
+if __name__ == "__main__":
+    import werkzeug  # noqa: F401
 ''',
     "tariff/rules.py": '''\
 from abc import ABC
+
+from tariff.data.store import load  # noqa: F401
 
 
 class Rule(ABC):
@@ -720,13 +865,27 @@ def rate_for(rule):
         return 3
     return 0
 ''',
-    "tariff/store.py": '''\
-import sqlite3
+    "tariff/db.py": "import sqlite3\n\n\ndef connect():\n"
+                    "    return sqlite3.connect(':memory:')\n",
+    "tariff/data.py": "import jinja2  # noqa: F401\n",
+    "tariff/data/__init__.py": "import sqlite3  # noqa: F401\n",
+    "tariff/data/store.py": '''\
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flask import Flask  # noqa: F401
+    from tariff import web  # noqa: F401
+
+if __name__ != "__main__":
+    import sqlite3  # noqa: F401
+
+from .sqlalchemy import nothing  # noqa: E402, F401
 
 
 def load(rule):
-    return sqlite3.connect(":memory:")
+    return rule
 ''',
+    "tariff/data/sqlalchemy.py": "nothing = None\n",
     "tariff/web.py": '''\
 from decimal import Decimal
 
@@ -778,8 +937,11 @@ def self_test():
             with io.open(path, "w", encoding="utf-8") as handle:
                 handle.write(text)
         roots = [os.path.join(workspace, "tariff")]
-        seen = {"files": 5}
+        seen = {"files": 9}
         metric = structure(planted_context(), workspace, roots, seen)
+        headless = structure(planted_context(), workspace,
+                             [os.path.join(workspace, "tariff", "rules.py")],
+                             seen)
         rootless = structure(planted_context(), workspace, [], seen)
         broken = structure(planted_context(failing="exited 1"), workspace,
                            roots, seen)
@@ -798,8 +960,39 @@ def self_test():
          metric["missing"] is None and all(key in facts for key in probes)),
         ("a module's role follows what it imports",
          facts.get("roles", {}).get("web.py") == "web"
-         and facts.get("roles", {}).get("store.py") == "persistence"
+         and facts.get("roles", {}).get("db.py") == "persistence"
          and facts.get("roles", {}).get("rules.py") == "domain"),
+        ("a module import tariff loads that reaches the store is a violation",
+         ["tariff/data/__init__.py", "sqlite3"]
+         in (facts.get("layering_violations") or [])),
+        ("an inverted main guard runs on import, so its import counts",
+         ["tariff/data/store.py", "sqlite3"]
+         in (facts.get("layering_violations") or [])),
+        ("a relative import names the package's module, not a driver",
+         "tariff/data/sqlalchemy.py" in (facts.get("import_closure") or [])
+         and not any(name == "sqlalchemy" for _, name in
+                     facts.get("layering_violations") or [])),
+        ("an initializer on the way to an imported module is loaded too",
+         "tariff/data/__init__.py" in facts.get("import_closure", [])
+         and "tariff/data/store.py" in facts.get("import_closure", [])),
+        ("an import inside a function is outside what import tariff loads",
+         facts.get("import_closure")
+         == ["tariff/__init__.py", "tariff/rules.py", "tariff/data/__init__.py",
+             "tariff/data/store.py", "tariff/data/sqlalchemy.py"]),
+        ("an import under if TYPE_CHECKING loads nothing",
+         not any(name == "flask" for _, name in
+                 facts.get("layering_violations") or [])
+         and "tariff/web.py" not in (facts.get("import_closure") or [])),
+        ("an import under a main guard loads nothing",
+         not any(name == "werkzeug" for _, name in
+                 facts.get("layering_violations") or [])),
+        ("a package wins over a module of its name, as in Python",
+         "tariff/data.py" not in (facts.get("import_closure") or [])
+         and not any(name == "jinja2" for _, name in
+                     facts.get("layering_violations") or [])),
+        ("without a package entry the layering reading is missing, not zero",
+         (headless.get("value") or {}).get("layering_violations") is None
+         and (headless.get("value") or {}).get("files_parsed") == 1),
         ("Decimal arithmetic inside a route is money in a route",
          facts.get("money_in_routes") == [["web.py", "total"]]),
         ("a bool parameter is named by file, function and argument",
@@ -827,7 +1020,7 @@ def self_test():
         ("a file that does not parse is named, and the rest are read",
          [entry[0] for entry in facts.get("unparsed", [])]
          == [os.path.join(workspace, "tariff", "broken.py")]
-         and facts.get("files_parsed") == 4),
+         and facts.get("files_parsed") == 8),
         ("without source roots the structure metric is missing, not zero",
          rootless["value"] is None and "no source roots" in rootless["missing"]),
         ("a probe that fails leaves its metric missing, with the command",
