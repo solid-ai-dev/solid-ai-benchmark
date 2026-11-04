@@ -57,7 +57,7 @@ report shows first.
 
 | Record | Decision | Status |
 | ------ | -------- | ------ |
-| [ADR-003](../decisions/003-k-blocks-and-escalation.md) | A round fixes K before its first trial, 15 from round 5 with no escalation; a round at K = 3 escalates at most to 5 | Accepted |
+| [ADR-003](../decisions/003-k-blocks-and-escalation.md) | A round fixes K before its first trial, 15 from round 5, and no run goes past it; the escalation of rounds registered at K = 3 retired with them | Accepted |
 | [ADR-013](../decisions/013-what-the-report-opens-with.md) | The report opens with the finding table, and keeps the score table only for contrasts between two files | Accepted |
 | [ADR-015](../decisions/015-contrasts-and-verdicts.md) | A contrast gets a verdict only when both its arms run in the same round | Accepted |
 

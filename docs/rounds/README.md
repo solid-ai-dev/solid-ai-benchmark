@@ -5,6 +5,13 @@ before its first trial runs. Nothing in a registration changes once a
 trial of that round has run. The rules every round shares are in
 [chapter 8](../architecture/08-crosscutting-concepts.md).
 
+Rounds 1 to 5d are the pilot. They shaped the benchmark, and each is re-run
+only from the benchmark at its own commit: the current version carries no
+arm, contrast or rule that only they used. The benchmark proper starts with
+round 6. From there a round is named by a letter for the knob it turns and a
+number for how often that knob has been turned, as `A3` for the third round
+that moved the arms; the trials inside keep their names, `inline-1`, `none-1`.
+
 | Round | Registered | Asks |
 | ----- | ---------- | ---- |
 | [Round 4](round-4.md) | Before its first trial, after round 3 | Does a file supply what a thin spec leaves out, and help a weaker model more |

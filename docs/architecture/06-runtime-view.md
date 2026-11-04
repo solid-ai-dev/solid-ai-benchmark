@@ -207,8 +207,8 @@ restoring it, then the report.
 | 2-3 | The rubric is a JSON Schema, so a score is read by machine. Each primary row has anchors at 1, 3 and 5 in this domain's terms | [ch. 8.6.6](08-crosscutting-concepts.md) |
 | 4 | Every quoted line is looked up in its bundle. A judge that never opened the code still returns plausible numbers | [ch. 8.6.7](08-crosscutting-concepts.md) |
 | 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | [ADR-019](../decisions/019-archive-before-the-report.md) |
-| 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, escalation, reach scan and lost trials are computed from both. Any difference fails | [ADR-019](../decisions/019-archive-before-the-report.md) |
-| 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and whether the one escalation to K = 5 is owed | [ch. 8.1](08-crosscutting-concepts.md) |
+| 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, blocks, reach scan and lost trials are computed from both. Any difference fails | [ADR-019](../decisions/019-archive-before-the-report.md) |
+| 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and how many of the registered blocks are in | [ch. 8.1](08-crosscutting-concepts.md) |
 | 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 10 | The finding table first, then the record behind every cell | [ch. 8.7.3](08-crosscutting-concepts.md) |
 
@@ -257,18 +257,12 @@ original time, which the report reads to tell a re-run's sessions from those
 of the blocked attempt before it. Scoring and judging then run on it as on
 any root, which is how a later round re-reads an earlier one.
 
-### 6.4.3 The escalation in the report
+### 6.4.3 The blocks in the report
 
-The report computes the one escalation to K = 5 of a round registered at
-K = 3, so nobody decides it by eye. At K = 3 it names the rows that owe it and
-the `--k 5 --from` run that settles it, from the trial the rotated order puts
-first in block 4. At K = 5 it reads the first three blocks alone, prints their
-verdicts beside the K = 5 ones, and flags an escalation no row owed.
-
-Round 5 registers K = 15 and no escalation. Its report says how many of the 15
-blocks are in, and calls a run short of them part-run. The harness refuses
-`--k` above 5, or above 15 for a run holding a round-5 arm, and the report
-refuses a run past it.
+A round registers K = 15 and adds no block once results are seen. The report
+says how many of the 15 blocks are in, and calls a run short of them part-run,
+with none of its verdicts the round's. The harness refuses `--k` above 15, and
+the report refuses a run past it.
 
 ### 6.4.4 Reusing an earlier round's trials
 
@@ -276,6 +270,5 @@ refuses a run past it.
 its run record, tarball, transcripts, score, judgings and security reading,
 marked with where they came from. The earlier round's tool lock comes along,
 so both rounds are measured with one ruler. Nothing copied is measured again
-unless a tool is given `--rescore`, `--rejudge` or `--reread`. Round 2 reused
-round 1's `full` and `hand`. Later rounds reuse nothing, because the spec and
-the judge changed.
+unless a tool is given `--rescore`, `--rejudge` or `--reread`. Round 5d
+reuses round 5c's trials, re-scored with it on one hidden suite.

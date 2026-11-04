@@ -55,13 +55,13 @@
 | FR-02-08 | The benchmark shall call a trim free only where every metric held. | Report |
 | FR-02-09 | The benchmark shall call every interval descriptive below K = 6. | Report |
 
-### 03 Trial count and escalation
+### 03 Trial count
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-03-01 | The benchmark shall owe an escalation to K = 5 where a primary's interval contains zero while its mean difference exceeds the smallest change that matters, in any contrast and either direction. | Report |
-| FR-03-02 | The benchmark shall run an escalation as two more blocks, once, and never past K = 5. | Harness, Report |
-| FR-03-03 | The benchmark shall print an escalated round's K = 3 and K = 5 results side by side, and a row still open at K = 5 as inconclusive. | Report |
+| FR-03-01 | Removed: the escalation to K = 5 belonged to rounds registered at K = 3, retired with rounds 1 to 4. | - |
+| FR-03-02 | Removed: with FR-03-01. | - |
+| FR-03-03 | Removed: with FR-03-01. | - |
 | FR-03-04 | The benchmark shall refuse a block past the K a round registers. | Harness |
 | FR-03-05 | The benchmark shall call a run short of its registered K part-run, and give none of its verdicts as the round's. | Report |
 
@@ -172,7 +172,7 @@
 | FR-12-05 | The benchmark shall write a report, an appendix and a record for each round, each linking the next. | Report |
 | FR-12-06 | The benchmark shall draw one radar panel per file arm against `none`, in both themes, each axis better minus worse over its rows with a verdict. | Report |
 | FR-12-07 | The benchmark shall give each approach Yes where a deciding measure is better and none worse, Worse where any is worse, and No where none moved. | Report |
-| FR-12-08 | The benchmark shall print a check declared after a run in its own section, with no verdict, outside the verdict vector. | Report |
+| FR-12-08 | Removed: rounds 1 and 2's security checks, declared after their runs, were printed apart; from round 3 every check is a probe declared before the run, and those rounds are retired. | - |
 | FR-12-09 | The benchmark shall blank a withdrawn metric on every run its grader's revision graded, and keep it on the others. | Report |
 | FR-12-10 | The benchmark shall fix a fault found in its instruments, validate the fix, re-score in full every round that reads the faulty scores, and replace each report with a dated note keeping the verdicts it replaces. | Scorer, Report, Owner |
 | FR-12-11 | Removed: merged into FR-12-10. | - |

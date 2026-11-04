@@ -79,7 +79,7 @@ The margins:
 | 5 | Round 5 holds adherence to one item | 8 pp, one checklist item of 13, as [its registration](../rounds/round-5.md) states | FR-02-05 |
 | 6 | Few blocks describe | Below K = 6, every interval is called descriptive | FR-02-09 |
 
-### 8.1.3 Trial count and escalation
+### 8.1.3 Trial count
 
 A round fixes K, the number of blocks, before its first trial.
 
@@ -89,18 +89,15 @@ A round fixes K, the number of blocks, before its first trial.
   arrangement of three reaches conventional significance. Three trials
   describe; they do not prove.
 - Sampling until an interval clears zero is the failure the bound on K
-  prevents.
-
-![A round registered at K = 3 runs three blocks. If an escalation is owed it runs blocks 4 and 5 once and reports K = 3 and K = 5 side by side; otherwise it reports at K = 3. A round registered at a larger K, such as 15, runs K blocks and reports the round if all ran, and is part-run with no verdict of its own if not](../diagrams/escalation.png)
+  prevents. Rounds 1 to 4 were registered at K = 3 with one bounded
+  escalation to 5; they are retired, and their escalation with them.
 
 **Rules**
 
 | # | Rule | In practice | Requirement |
 | - | ---- | ----------- | ----------- |
-| 1 | One escalation, under fixed conditions | Owed where a primary's interval contains zero while its mean exceeds the smallest change that matters, in any contrast and either direction; the report computes it | FR-03-01 |
-| 2 | Never past K = 5 by escalation | Two more blocks, once; a row still open is reported inconclusive | FR-03-02, FR-03-03 |
-| 3 | Or a larger K, sized beforehand | From earlier rounds' per-trial noise; no block added once results are seen. Round 5 registers K = 15 ([13.5](../rounds/round-5.md)) | FR-03-04 |
-| 4 | A short run decides nothing | A run short of its K is part-run, and none of its verdicts is the round's | FR-03-05 |
+| 1 | K is sized beforehand | From earlier rounds' per-trial noise; no block added once results are seen. Round 5 registers K = 15 ([13.5](../rounds/round-5.md)) | FR-03-04 |
+| 2 | A short run decides nothing | A run short of its K is part-run, and none of its verdicts is the round's | FR-03-05 |
 
 ### 8.1.4 Failed and lost trials
 
@@ -617,9 +614,12 @@ it, or the bar would move with the results.
 | # | Rule | In practice | Requirement |
 | - | ---- | ----------- | ----------- |
 | 1 | Declared before it is read | In writing, with its direction, before any trial is read for it | — |
-| 2 | Printed apart | Its own section, with means and intervals and no verdict | FR-12-08 |
-| 3 | Never decides | Never in the verdict vector, a "nothing got worse" claim, or the escalation | FR-12-08 |
-| 4 | Fixed for next time | A check worth deciding on is registered before the next run | — |
+| 2 | Never decides | Never in the verdict vector or a "nothing got worse" claim | — |
+| 3 | Fixed for next time | A check worth deciding on is registered before the next run | — |
+
+Rounds 1 and 2 read their security checks this way, in a section of their own
+with no verdict. From round 3 every check is a probe declared before the run,
+so no report prints such a section.
 
 ### 8.7.5 Withdrawn metrics and re-scores
 

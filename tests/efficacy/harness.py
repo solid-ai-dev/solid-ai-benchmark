@@ -67,18 +67,16 @@ PROMPT = (
 BUDGET_USD = 100.0
 TIMEOUT_S = 7200
 
-# K as registered, and the ceiling of the one escalation allowed. No run
-# goes past the ceiling, because sampling until an interval clears zero is the
-# failure the bound exists to prevent.
-K_PRIMARY = 3
-K_CEILING = 5
-
-# Round 5 registers its own K instead, with no escalation. Fifteen blocks
-# were sized before its first trial from the rounds before it, whose per-trial
-# noise left three blocks unable to decide its hypotheses. A run holding one
-# of its arms may go that far and no further.
+# A round registers its K before its first trial and no run goes past it,
+# because sampling until an interval clears zero is the failure the bound
+# exists to prevent. Round 5 registers fifteen blocks, sized from the
+# per-trial noise of the rounds before it, which left three blocks unable to
+# decide its hypotheses.
 ROUND5_ARMS = ("inline", "reference", "skills")
 ROUND5_K = 15
+
+# A run is short unless the registered K is asked for by name.
+K_DEFAULT = 3
 
 # Round 5d runs `hand` and `short` under round 5's design: its K, its spec
 # at its registered content, against round 5c's arms.
@@ -128,15 +126,13 @@ ROUND5_DECLINED = [
 SKILLS_INTO = ".claude/skills"
 
 # The arms, each a word, and the context file each starts with, relative to
-# `arms/`. Arm `none` carries no file: it is the bare agent. The two files
-# round 1 ran keep the directories its generation record names. `inline`,
-# `reference` and `skills` are round 5's; `hybrid` was regenerated for it,
-# and an arm's vendored ref comes from its generation record. `short` was
-# made again from round 5's chain, under round 3's budget.
+# `arms/`. Arm `none` carries no file: it is the bare agent. `hand` is a
+# person's file, kept verbatim. `inline`, `reference` and `skills` are round
+# 5's; `hybrid` was regenerated for it, and an arm's vendored ref comes from
+# its generation record. `short` was made again from round 5's chain, under a
+# 40-line budget.
 ARMS = {
     "none": {"label": "no context file", "context": None},
-    "full": {"label": "the templates' file, inline",
-             "context": "full/CLAUDE.md"},
     "short": {"label": "the templates' file, inline, 40 lines",
               "context": "short/CLAUDE.md"},
     "hybrid": {"label": "the templates' file, hybrid",
@@ -246,7 +242,7 @@ def reach_denials(root, workspace):
     # Every block any run may hold, so no trial of a long round is left
     # readable by the trials of its other blocks.
     names = {trial_name(arm, trial) for arm in ARMS
-             for trial in range(1, max(K_CEILING, ROUND5_K) + 1)}
+             for trial in range(1, ROUND5_K + 1)}
     names |= {"change-" + name for name in names}
     targets = [repository_root(), scoring_area(root),
                os.path.join(root, "home"), os.path.join(root, "void")]
@@ -1838,22 +1834,11 @@ def order(arms, k):
             for trial in range(1, k + 1) for place in range(count)]
 
 
-def k_ceiling(arms):
-    """The most blocks a run of these arms may hold."""
-    return (ROUND5_K if set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS)
-            else K_CEILING)
-
-
 def pending_trials(arms, k, start=None):
     """The interleaved order, from `start` onwards where one is given."""
-    ceiling = k_ceiling(arms)
-    if ceiling == ROUND5_K:
-        why = "round 5 registers K = %d and no escalation" % ROUND5_K
-    else:
-        why = ("a round escalates once to K = %d and never further"
-               % K_CEILING)
-    if not 1 <= k <= ceiling:
-        raise TrialError("--k %d is outside 1 to %d: %s" % (k, ceiling, why))
+    if not 1 <= k <= ROUND5_K:
+        raise TrialError("--k %d is outside 1 to %d: a round registers its K "
+                         "and runs no block past it" % (k, ROUND5_K))
     trials = order(arms, k)
     if start is None:
         return trials
@@ -2176,14 +2161,13 @@ def resume_checks():
     except TrialError:
         checks.append(("--from an unknown trial refuses", True))
     try:
-        pending_trials(["none", "hybrid"], K_CEILING + 1)
-        checks.append(("a K past the escalation's ceiling refuses", False))
+        pending_trials(["none", "hybrid"], ROUND5_K + 1)
+        checks.append(("a K past the registered ceiling refuses", False))
     except TrialError:
-        checks.append(("a K past the escalation's ceiling refuses", True))
-    first_escalated = trial_name("none", K_PRIMARY + 1)
+        checks.append(("a K past the registered ceiling refuses", True))
     names = [trial_name(*pair)
-             for pair in pending_trials(arms, K_CEILING, first_escalated)]
-    checks.append(("the escalation runs its blocks from none-4",
+             for pair in pending_trials(arms, 5, trial_name("none", 4))]
+    checks.append(("--from a later block keeps the rotated order",
                    names == ["none-4", "short-4", "hybrid-4", "short-5",
                              "hybrid-5", "none-5"]))
 
@@ -2464,7 +2448,7 @@ def dry_run_checks():
 
     # The thin specification reaches its workspace under the one name the
     # prompt gives, so the prompt stays a single text across specifications.
-    thin_workspace, _ = prepare_workspace("full", 1, root, SPECS["thin"])
+    thin_workspace, _ = prepare_workspace("inline", 1, root, SPECS["thin"])
     with io.open(os.path.join(thin_workspace, "SPEC.md"), "rb") as handle:
         given = handle.read()
     with io.open(SPECS["thin"], "rb") as handle:
@@ -3248,7 +3232,7 @@ def denial_checks():
          or denied(templates_root(required=False))),
         ("other trials, their change tasks, home and void are denied",
          all(denied(os.path.join(root, entry))
-             for entry in ("full-1", "none-2", "change-none-1",
+             for entry in ("inline-1", "none-2", "change-none-1",
                            "change-hand-5", "home", "void"))),
         ("a round-5 run's last block is denied too",
          all(denied(os.path.join(root, trial_name(arm, ROUND5_K)))
@@ -3269,7 +3253,7 @@ def denial_checks():
 # The command that ended round 4's thin run, and its kin. Each MUST meet a
 # deny rule; a stop by PID or by port MUST meet none.
 KILLS = {
-    "Bash": ['cd "C:/runs/full-1" && powershell -NoProfile -Command '
+    "Bash": ['cd "C:/runs/inline-1" && powershell -NoProfile -Command '
              '"Get-Process -Name python -ErrorAction SilentlyContinue | '
              'Where-Object { $_.MainWindowTitle -eq \'\' } | '
              'Stop-Process -Force"',
@@ -3579,11 +3563,9 @@ def parse_args(argv):
                              "commas, from %s; their order is block 1's. "
                              "Required for a run, so a run names the arms "
                              "it holds" % ",".join(ARMS))
-    parser.add_argument("--k", type=int, default=K_PRIMARY,
-                        help="trials per arm (default %d; at most %d, the "
-                             "escalation's ceiling, or %d for a run holding "
-                             "a round-5 arm)"
-                             % (K_PRIMARY, K_CEILING, ROUND5_K))
+    parser.add_argument("--k", type=int, default=K_DEFAULT,
+                        help="trials per arm (default %d; at most %d, the K a "
+                             "round registers)" % (K_DEFAULT, ROUND5_K))
     parser.add_argument("--cli",
                         help="the Claude CLI file every trial runs, in place "
                              "of `claude` on PATH; its version is recorded "

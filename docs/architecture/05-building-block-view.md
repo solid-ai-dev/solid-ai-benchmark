@@ -24,7 +24,7 @@ dependency with its keyword.
 | `security.py` | Seeds each app, signs in its administrator, runs the 11 security and 3 data-protection probes | The scored trees | `security-scores/` |
 | `judge.py` | Builds a blind bundle per trial, runs the judge CLI against the rubric, checks every quoted line | The scored trees | `judge/` |
 | `control/control.py` | Builds the rubric control: trees damaged or improved on one row each, from two pinned bases | `base.zip`, `base-2.zip`, `overlay/` | A control root for `judge.py` |
-| `report.py` | Pairs trials, computes intervals, verdicts and the escalation, applies withdrawals, prints the report | The run root, the scoring area, `withdrawn.json` | `docs/audits/YYYY-MM-DD-efficacy.md` in the templates source |
+| `report.py` | Pairs trials, computes intervals and verdicts, applies withdrawals, prints the report | The run root, the scoring area, `withdrawn.json` | `docs/audits/YYYY-MM-DD-efficacy.md` in the templates source |
 | `archive.py` | Copies a round's raw data to the private archive, restores it, recomputes the report's figures from both | The run root, the scoring area | The archive clone, `archived.json` |
 
 ## 5.2 Inputs
@@ -48,7 +48,7 @@ harness and `reuse.py`.
 
 | Path | Holds |
 | ---- | ----- |
-| `<arm>-<block>/` | A trial's pen, such as `full-2/`: everything the trial owns |
+| `<arm>-<block>/` | A trial's pen, such as `skills-2/`: everything the trial owns |
 | `<arm>-<block>/<arm>-<block>/` | The trial's workspace, inside its pen |
 | `<arm>-<block>/tmp/<trial>/` | The trial's own temporary directory, inside its pen |
 | `<arm>-<block>.tar` | The frozen workspace, the only copy scoring reads |
@@ -86,7 +86,6 @@ Every arm starts from an empty git repository holding `SPEC.md`. All but
 | Arm | Adds | Budget | Asks |
 |---|---|---|---|
 | `none` | nothing: the bare agent | — | the baseline every file is compared with |
-| `full` | the file the interview generates, inline | none | do the templates help as shipped |
 | `short` | one generation from `agents.md`, inline, under a budget | ≤ 40 lines, ≤ 88 characters wide | does a short generated file help |
 | `hybrid` | the file the interview generates in its hybrid model, with the templates vendored into the workspace | none | does the model the owner's projects use help |
 | `hand` | a hand-written file | ≤ 40 lines | is the effect the templates, or merely having a file |

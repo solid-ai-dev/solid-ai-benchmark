@@ -53,15 +53,12 @@ when:
 | FR-02-08 | Untestable | No script calls a trim free; a person reading the report applies it, on the held rows the report prints. |
 | FR-02-09 | Self-test | `report.py` "from six blocks no interval is called descriptive"<br>`report.py` "a round too small to decide says so in the report and the appendix" |
 
-## 03 Trial count and escalation
+## 03 Trial count
 
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
-| FR-03-01 | Self-test | `report.py` "a crossing interval with an effect of 0.67 owes it"<br>`report.py` "an effect of 0.67 the other way owes it"<br>`report.py` "the same row on C-A owes it"<br>`report.py` "an effect of exactly 0.5 does not"<br>`report.py` "an interval clear of zero does not"<br>`report.py` "an interval not computed does not"<br>`report.py` "a row outside the primary dimensions does not" |
-| FR-03-02 | Self-test | `harness.py` "a K past the escalation's ceiling refuses"<br>`harness.py` "the escalation runs its blocks from none-4"<br>`report.py` "an owed escalation's command names a trial the harness takes" |
-| FR-03-03 | Self-test | `report.py` "an escalated report prints both vectors"<br>`report.py` "the report carries the escalation section"<br>`report.py` "a K = 5 run is judged on its first three blocks"<br>`report.py` "a K = 3 run is assessed on its own vector"<br>`report.py` "an open row leaves both inconclusive" |
-| FR-03-04 | Self-test | `harness.py` "a round-5 run takes K = 15 and refuses more"<br>`harness.py` "a round-5d run of hand and short takes K = 15 too" |
-| FR-03-05 | Self-test | `report.py` "one trial of the last block leaves the round part-run"<br>`report.py` "a round 5 run short of its last block says it is provisional"<br>`report.py` "a round-5 run owes no escalation and names the blocks still owed" |
+| FR-03-04 | Self-test | `harness.py` "a round-5 run takes K = 15 and refuses more"<br>`harness.py` "a K past the registered ceiling refuses"<br>`harness.py` "a round-5d run of hand and short takes K = 15 too" |
+| FR-03-05 | Self-test | `report.py` "one trial of the last block leaves the round part-run"<br>`report.py` "a round 5 run short of its last block says it is provisional"<br>`report.py` "a round-5 run short of its K names the blocks still owed" |
 
 ## 04 Failed and lost trials
 
@@ -165,12 +162,11 @@ when:
 | -- | ---- | ---------- |
 | FR-12-01 | Self-test | `report.py` "a contrast crossing rounds carries no verdict and counts nowhere"<br>`report.py` "a comparison across rounds reads as not given, not too few runs" |
 | FR-12-02 | Self-test | `report.py` "a contrast across rounds is unpaired, with a verdict"<br>`report.py` "a round-5d run reads H4 against a reused `none`, unpaired"<br>`report.py` "an unpaired contrast leaves out two trials, not blocks" |
-| FR-12-03 | Self-test | `report.py` "it prints every declared contrast its arms ran"<br>`report.py` "a three-arm run prints only its own contrasts"<br>`report.py` "an earlier round computes no round-5d contrast" |
-| FR-12-04 | Self-test | `report.py` "an earlier round rescored prints app code without a verdict"<br>`report.py` "round 5 reports the files it supersedes without a verdict" |
+| FR-12-03 | Self-test | `report.py` "it prints every declared contrast its arms ran"<br>`report.py` "a three-arm run prints only its own contrasts" |
+| FR-12-04 | Self-test | `report.py` "round 5 reports the files it supersedes without a verdict" |
 | FR-12-05 | Self-test | `report.py` "the report links its appendix, and the appendix the record"<br>`report.py` "the appendix holds what produced the results, the radar's axes and the verdict vector, and nothing else" |
 | FR-12-06 | Self-test | `report.py` "the radar draws a panel per arm, with the bare ring, in both themes"<br>`report.py` "an axis is better minus worse over its rows with a verdict, None without one"<br>`report.py` "the summary is the radar, one image per theme" |
 | FR-12-07 | Self-test | `report.py` "the report names each approach and its verdict in plain words"<br>`report.py` "a better primary and no worse answers Yes"<br>`report.py` "a worse primary answers Worse"<br>`report.py` "nothing separated answers No" |
-| FR-12-08 | Self-test | `report.py` "the report prints the section"<br>`report.py` "its row carries no verdict"<br>`report.py` "its row is not in the verdict vector"<br>`report.py` "no after-the-results check is a verdict metric" |
 | FR-12-09 | Self-test | `report.py` "withdrawal blanks every value of the row"<br>`report.py` "its verdict vector row reads withdrawn"<br>`report.py` "the withdrawal section names it and why"<br>`report.py` "a run graded by another revision withdraws nothing"<br>`report.py` "a metric not withdrawn keeps its verdict" |
 | FR-12-10 | Self-test | `score.py` "a score on another Python refuses the root"<br>`report.py` "scores on two Pythons are refused"<br>`report.py` "a run graded by another revision withdraws nothing" |
 
