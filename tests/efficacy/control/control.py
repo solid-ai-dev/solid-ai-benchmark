@@ -755,6 +755,17 @@ def main(argv):
         try:
             made = build(os.path.join(scratch, "run"))
             rows = landings(made)
+
+            # A base whose content changed would compare a later run against
+            # a different application, so any digest but the pinned one stops
+            # the build.
+            try:
+                pinned(BASE, "0" * 64)
+                refused = False
+            except ControlError:
+                refused = True
+            rows.append(("a base archive with another sha256 is refused",
+                         {}, refused))
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
     elif options.root:

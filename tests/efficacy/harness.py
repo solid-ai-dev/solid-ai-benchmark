@@ -3472,7 +3472,14 @@ def round5_checks():
     checks.append(("a trial reads the workspace's project settings and no "
                    "other source",
                    argv[argv.index("--setting-sources") + 1] == "project"))
-    listed = "review\n- write-tests\n`add-check`\ndataviz"
+
+    # The web tools go after the flag that names them; anything else there
+    # would be read as one more tool to refuse, or as the prompt.
+    refused = (argv[argv.index("--disallowed-tools") + 1:][:2]
+               if "--disallowed-tools" in argv else [])
+    checks.append(("a trial may not fetch or search the web",
+                   sorted(refused) == ["WebFetch", "WebSearch"]))
+    listed ="review\n- write-tests\n`add-check`\ndataviz"
     checks.append(("the skills probe finds a listed kind and names a missing "
                    "one",
                    missing_skills(listed, ["add-check", "review",

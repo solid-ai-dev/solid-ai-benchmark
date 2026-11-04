@@ -505,6 +505,22 @@ def self_test():
         print("FAIL: the budget clause is not in short's instruction alone")
         return 1
     print("the budget is stated in short's instruction and no other")
+
+    # A generated file without its record cannot say which source, model and
+    # ref made it, so the report could not cite how its arm was built.
+    for arm in GENERATED:
+        path = record_path(arm)
+        if not os.path.isfile(output_path(arm)):
+            continue
+        try:
+            with io.open(path, encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            record = {}
+        if record.get("arm") != arm or record.get("outcome") != "generated":
+            print("FAIL: %s has no generation record beside it" % arm)
+            return 1
+    print("every generated arm's file has its generation record beside it")
     return 0
 
 
