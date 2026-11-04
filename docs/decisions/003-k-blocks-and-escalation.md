@@ -18,9 +18,9 @@ blocks until an effect turns significant is sampling to significance.
 
 ## Decision
 
-A round fixes K before its first trial, at K = 15 with no escalation from
-round 5, while a round registered at K = 3 escalates at most once, to K = 5, on
-an effect in either direction.
+A round fixes K before its first trial, at K = 15 from round 5, and no run
+goes past it. Rounds 1 to 4, registered at K = 3 with one bounded escalation
+to K = 5, are retired, and the escalation with them.
 
 ## Rationale
 
@@ -40,7 +40,7 @@ The rules a round's K follows:
 | # | Rule | In practice |
 | - | ---- | ----------- |
 | 1 | K is registered | Fixed by the round's registration before its first trial |
-| 2 | Escalation | Only a round registered at K = 3: one step to K = 5, owed by an effect in either direction on any contrast; a row with no interval triggers nothing |
+| 2 | No escalation | A run stops at its registered K; the one bounded escalation of a K = 3 round is retired with rounds 1 to 4 |
 | 3 | Block order | Each block starts one arm later than the last |
 | 4 | One lettered block | Round 5 runs block A alone; blocks B and C wait for a later round |
 
@@ -51,6 +51,7 @@ What the history of this decision left behind:
 | Consequence | Effect |
 | ----------- | ------ |
 | Round 3 stays at K = 3 | Its K = 5 escalation is recorded as unrunnable, since its run root no longer exists |
+| Rounds 1 to 4 are retired | Their `full` arm, their contrasts and the escalation leave the benchmark; each is re-run only from the benchmark at its own commit, and the benchmark proper starts with round 6 |
 
 ## History
 
@@ -62,3 +63,4 @@ Every change to this decision, oldest first:
 | 2026-09-15 | The escalation reads the effect in either direction, on any contrast; a row with no interval triggers nothing | An escalation owed only to a favourable effect would lean toward "better" | — |
 | 2026-10-15 | Round 3's K = 5 escalation is recorded as unrunnable, and its report stays at K = 3 | The escalation adds blocks 4 and 5 to round 3's root, which no longer exists; re-running the whole round would not reproduce the three blocks its report read | solid-ai-templates#1767 |
 | 2026-10-27 | Round 5 runs block A alone, at K = 15 with no escalation, each block starting one arm later; adherence is held within 8 pp, and H2 reads the mean over pairs of trials. Blocks B and C wait for a later round | The report's rules, run on round 3's per-trial noise, decide almost nothing at K = 3: H1 is supported in 29 % of rounds when true, and a chance "worse" turns up in 36 %. At K = 15 those are 73 % and 12 %. On round 4's noise, B and C would contradict block A by chance at any affordable K | — |
+| 2026-11-04 | Rounds 1 to 4 are retired with their K = 3 design and its escalation; the benchmark proper starts with round 6 | No remaining round reads at K = 3, and an earlier round is re-run from the benchmark at its own commit | #91 |

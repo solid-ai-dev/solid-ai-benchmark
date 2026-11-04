@@ -7,7 +7,7 @@ Each risk names what holds it today.
 
 | # | Risk | Held by | Open |
 | - | ---- | ------- | ---- |
-| 1 | Three trials cannot reach significance: 27 distinct resamples, a minimum two-sided p of 0.25 | Below K = 6 every interval is printed as descriptive. Round 5 registers K = 15, sized from rounds 3 and 4's noise | Round 4's escalations are owed and not run. Round 3's cannot run, its raw data lost |
+| 1 | Three trials cannot reach significance: 27 distinct resamples, a minimum two-sided p of 0.25 | Below K = 6 every interval is printed as descriptive. Round 5 registers K = 15, sized from rounds 3 and 4's noise | Rounds 1 to 4, registered at K = 3, are retired; the benchmark proper starts with round 6 |
 | 2 | One app: every effect may be `tariff`'s | `ledger` stays sealed for the final claim | No second app has run |
 | 3 | One builder agent | | Another agent reading `AGENTS.md` is untested |
 | 4 | A judge that shares a vendor with the builder may favour the templates' own style | From round 5 the judge is `gpt-6-astra`, another vendor's model than every builder | |
@@ -24,7 +24,6 @@ Each risk names what holds it today.
 | - | ---- | ---- | --------- |
 | 1 | Windows-specific handling: `.CMD` shims, `cmd.exe` expansion, process trees | A run on another platform is untested | State the platform in [ch. 2](02-constraints.md), or test one |
 | 2 | `harness.py` and `report.py` each run past 3,000 lines | A change is hard to review in isolation | Split by stage when next touched |
-| 3 | Round 1's trials keep their letter names on disk (`A1`, `B2`, `C3`) | Every reader maps them | None while round 1 is read |
 
 ## 11.3 Confounds and their controls
 

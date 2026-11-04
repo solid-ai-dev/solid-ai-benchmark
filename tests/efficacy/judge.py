@@ -135,7 +135,7 @@ USER_CACHE_DIRS = (("pip", "cache"), ("Microsoft", "Windows"))
 # would have changed what is being judged.
 MARKERS = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "solid-ai-templates",
            "Claude Code", "claude.ai", "CLAUDE", "context file",
-           "arm A", "arm B", "arm C", "arm none", "arm full", "arm short",
+           "arm none", "arm short",
            "arm hybrid", "arm hand", "arm reference", "arm inline",
            "arm skills", "SKILL.md")
 
@@ -681,11 +681,7 @@ def refusal(stripped):
 
 
 def trees(root):
-    """Every scored trial's extracted tree, by canonical trial name.
-
-    A tree round 1 scored sits under its letter name, `B1`, and is judged
-    under its word, `full-1`.
-    """
+    """Every scored trial's extracted tree, by canonical trial name."""
     found = {}
     scoring = os.path.join(score.scoring_area(root), "scoring")
     for path in sorted(glob.glob(os.path.join(scoring, "*", "tree", "*"))):
@@ -739,7 +735,7 @@ def highest_label(judging):
         match = re.match(r"T(\d+)\.json$", os.path.basename(file))
         if match:
             numbers.append(int(match.group(1)))
-    path = os.path.join(judging, "map.json")
+    path = unblinding_map(judging)
     if os.path.isfile(path):
         with io.open(path, encoding="utf-8") as handle:
             for label in json.load(handle).get("blind", {}).values():
@@ -747,6 +743,24 @@ def highest_label(judging):
                 if match:
                     numbers.append(int(match.group(1)))
     return max(numbers)
+
+
+# Where the bundles go, under the judging area; the judge is pointed here and
+# nowhere else.
+BUNDLES = "bundles"
+
+
+def judging_order(wanted, owed, seed):
+    """Every judging owed, in an order the seed alone decides."""
+    shuffler = random.Random(seed)
+    order = [name for name in wanted for _ in range(owed[name])]
+    shuffler.shuffle(order)
+    return order
+
+
+def unblinding_map(judging):
+    """Where the map from blind labels back to trials is kept."""
+    return os.path.join(judging, "map.json")
 
 
 def blind_labels(order, after):
@@ -841,7 +855,7 @@ def judge_trials(options, available, wanted):
         lib.print_verdict(False, "no trial judged")
         return 2
 
-    bundles = os.path.join(judging, "bundles")
+    bundles = os.path.join(judging, BUNDLES)
     os.makedirs(bundles, exist_ok=True)
 
     # Shuffled with a recorded seed, so the order is reproducible and is not
@@ -852,9 +866,7 @@ def judge_trials(options, available, wanted):
     # list is shuffled together, so its repeats are spread through the run
     # rather than made back to back. Each repeat is a separate blind label: it
     # is a separate reading of the same tree, and the report means them.
-    shuffler = random.Random(options.seed)
-    order = [name for name in wanted for _ in range(owed[name])]
-    shuffler.shuffle(order)
+    order = judging_order(wanted, owed, options.seed)
     labels = blind_labels(range(len(order)), highest_label(judging))
     repeats = {}
 
@@ -911,7 +923,7 @@ def judge_trials(options, available, wanted):
 
     # The unblinding map, written last and kept out of the bundles directory
     # the judge was pointed at. An earlier round's entries stay in it.
-    path = os.path.join(judging, "map.json")
+    path = unblinding_map(judging)
     mapping = {"seed": options.seed, "blind": {}, "repeats": {}}
     if os.path.isfile(path):
         with io.open(path, encoding="utf-8") as handle:
@@ -950,14 +962,14 @@ def bundle_checks(scratch):
     The planted tree is shaped like one scoring leaves behind: the trial's code
     beside tool caches that hold absolute paths through the scoring area.
     """
-    tree = os.path.join(scratch, "scoring", "full-2", "tree", "full-2")
-    scored = "/".join((scratch.replace(os.sep, "/"), "scoring", "full-2", "tree",
-                       "full-2", "src"))
+    tree = os.path.join(scratch, "scoring", "inline-2", "tree", "inline-2")
+    scored = "/".join((scratch.replace(os.sep, "/"), "scoring", "inline-2", "tree",
+                       "inline-2", "src"))
     code = os.path.join("src", "app.py")
 
     # The trial's name outside a path, where an implementation may use it,
     # is not a leak.
-    plant(tree, {code: 'CELL = "full-2"\n', "CLAUDE.md": "# rules\n"})
+    plant(tree, {code: 'CELL = "inline-2"\n', "CLAUDE.md": "# rules\n"})
 
     # The skills arm's skills, in both folders they can sit in, name the arm.
     skills = [os.path.join(".claude", "skills", "review", "SKILL.md"),
@@ -1014,15 +1026,15 @@ def bundle_checks(scratch):
 
         # The plant landed: the bundle lacked the file and now holds it.
         checks.append((label, not before and os.path.exists(landed)
-                       and [relative, "full-2", "as a path segment"] in found))
+                       and [relative, "inline-2", "as a path segment"] in found))
 
     # The scan reads the directories the copy leaves out, because the judge
     # reads whatever the bundle holds.
     hidden = os.path.join(".git", "config")
     plant(bundle, {hidden: "worktree = %s\n" % scored})
     checks.append(("a leak in a directory the copy skips is found",
-                   [hidden, "full-2", "as a path segment"]
-                   in surviving_markers(bundle, "full-2")))
+                   [hidden, "inline-2", "as a path segment"]
+                   in surviving_markers(bundle, "inline-2")))
     return checks
 
 
@@ -1208,21 +1220,42 @@ def launch_checks(scratch):
     return checks
 
 
+def order_checks(scratch):
+    """The judging order is the seed's alone, and the key stays out of the
+    judge's reach."""
+    wanted = ["hybrid-1", "inline-1", "none-1", "reference-1", "skills-1"]
+    owed = {name: 3 for name in wanted}
+    first = judging_order(wanted, owed, 20260912)
+    judging = os.path.join(scratch, "order", "judge")
+    bundles = os.path.abspath(os.path.join(judging, BUNDLES))
+    return [
+        ("one seed gives one judging order",
+         first == judging_order(wanted, owed, 20260912)
+         and first != judging_order(wanted, owed, 1)),
+        ("the order is not the arms' order, and holds every repeat",
+         first != sorted(first) and sorted(first) == sorted(
+             name for name in wanted for _ in range(3))),
+        ("the unblinding map is written outside the bundles the judge reads",
+         not os.path.abspath(unblinding_map(judging)).startswith(
+             bundles + os.sep)),
+    ]
+
+
 def label_checks(scratch):
     """Blind labels continue past an earlier round's, and a judged trial is
     known by its canonical name."""
     judging = os.path.join(scratch, "labels", "judge")
     os.makedirs(judging)
     plant(judging, {
-        "T3.json": json.dumps({"trial": "B1", "blind_id": "T3",
+        "T3.json": json.dumps({"trial": "inline-1", "blind_id": "T3",
                                "outcome": "judged"}),
-        "T10.json": json.dumps({"trial": "C2", "blind_id": "T10",
+        "T10.json": json.dumps({"trial": "hand-2", "blind_id": "T10",
                                 "outcome": "failed"}),
-        "map.json": json.dumps({"seed": 1, "blind": {"A1": "T12"}}),
+        "map.json": json.dumps({"seed": 1, "blind": {"none-1": "T12"}}),
     })
     return [
         ("a judged trial is known under its word, a failed one is not",
-         judged(judging) == {"full-1": ["T3"]}),
+         judged(judging) == {"inline-1": ["T3"]}),
         ("the highest label counts every file and the map",
          highest_label(judging) == 12),
         ("new labels continue past it",
@@ -1333,6 +1366,7 @@ def self_test():
     checks = bundle_checks(scratch)
     checks.extend(spec_checks(scratch))
     checks.extend(label_checks(scratch))
+    checks.extend(order_checks(scratch))
     checks.extend(launch_checks(scratch))
     checks.extend(backend_checks(scratch))
     checks.extend(claim_checks(scratch))

@@ -30,7 +30,7 @@ COVERAGE = os.path.join(ROOT, "docs", "coverage.md")
 # Every module with a self-test, by its path under tests/efficacy/. A label
 # is looked up only in the output of the module its row names.
 MODULES = ("harness.py", "generate_arm.py", "score.py", "judge.py",
-           "report.py", "archive.py", "reuse.py", "progress.py",
+           "report.py", "archive.py", "reuse.py", "progress.py", "probes.py",
            "security.py", "control/control.py")
 
 ROW = re.compile(r"^\| (FR-(\d{2})-(\d{2})) \| (.+?) \| (.+?) \|$")

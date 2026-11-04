@@ -57,7 +57,7 @@ report shows first.
 
 | Record | Decision | Status |
 | ------ | -------- | ------ |
-| [ADR-003](../decisions/003-k-blocks-and-escalation.md) | A round fixes K before its first trial, 15 from round 5 with no escalation; a round at K = 3 escalates at most to 5 | Accepted |
+| [ADR-003](../decisions/003-k-blocks-and-escalation.md) | A round fixes K before its first trial, 15 from round 5, and no run goes past it; the escalation of rounds registered at K = 3 retired with them | Accepted |
 | [ADR-013](../decisions/013-what-the-report-opens-with.md) | The report opens with the finding table, and keeps the score table only for contrasts between two files | Accepted |
 | [ADR-015](../decisions/015-contrasts-and-verdicts.md) | A contrast gets a verdict only when both its arms run in the same round | Accepted |
 
@@ -73,6 +73,7 @@ kept.
 | [ADR-019](../decisions/019-archive-before-the-report.md) | A round is archived to `braboj/tariff-runs` and verified by restoring it before its report is written | Accepted |
 | [ADR-020](../decisions/020-trial-isolation.md) | A trial is fenced by deny rules and excluded by its transcript, in a pen of its own; a reach voids it | Accepted |
 | [ADR-021](../decisions/021-rescore-after-an-instrument-fault.md) | An instrument fault is fixed, validated and every reading round re-scored in full, its report replaced with a dated note keeping the old verdicts | Accepted |
+| [ADR-022](../decisions/022-round-names.md) | From round 6 a round is named by the knob it turns, `C`, `S`, `M` or `T`, and the count of rounds of that knob, as `C1`; trials keep their names | Accepted |
 
 ## 9.6 Decisions about the templates
 

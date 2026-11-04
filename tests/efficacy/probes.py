@@ -8,12 +8,23 @@ and the web-quality probes beside them.
 Both run as one script inside the trial's environment, because `grimp`, the
 application factory and the browser all live there. A probe that cannot run
 returns a missing metric naming what was absent; it never returns zero.
+
+    py tests/efficacy/probes.py --self-test
 """
 
+import argparse
 import io
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import lib  # noqa: E402
 
 # The package and the factory the specification fixes. Everything in here
 # reaches the trial only through those two names and the routes, never through
@@ -108,16 +119,141 @@ for path, tree in TREES.items():
         roles[path] = "domain"
 report["roles"] = {os.path.basename(p): r for p, r in roles.items()}
 
+
+
 # The contract the specification states in its own words: `import tariff`
-# works without Flask and without touching the database, so no domain module
-# may reach either.
-violations = []
-for path, tree in TREES.items():
-    if roles[path] != "domain":
-        continue
-    for name in sorted(imported_names(tree) & (WEB | STORE)):
-        violations.append([os.path.basename(path), name])
-report["layering_violations"] = violations
+# works without Flask and without touching the database. So the modules that
+# import loads, the package's `__init__` and every module it reaches through
+# the package's own imports, may import neither. A role says nothing here: a
+# module that imports Flask is web by that fact, so asking whether a domain
+# module imports Flask asks nothing.
+def never_on_import(node):
+    """An `if` whose body never runs on import: `if TYPE_CHECKING:`, which
+    only a type checker reads, and `if __name__ == "__main__":`, which runs
+    only for a script. Both are read by name, as a build writes them."""
+    test = node.test
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and isinstance(
+            test.ops[0], ast.Eq):
+        sides = [test.left] + list(test.comparators)
+        names = [side.id for side in sides if isinstance(side, ast.Name)]
+        values = [side.value for side in sides
+                  if isinstance(side, ast.Constant)]
+        return "__name__" in names and "__main__" in values
+    return False
+
+
+def import_time(tree):
+    """The nodes that run when the module is imported. A function body does
+    not, so an import inside one, the factory's lazy `from . import web` the
+    specification allows, is not what `import tariff` loads; nor is an import
+    under a guard that never holds on import."""
+    pending = list(ast.iter_child_nodes(tree))
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.Lambda)):
+            continue
+        if isinstance(node, ast.If) and never_on_import(node):
+            pending.extend(node.orelse)
+            continue
+        yield node
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def import_time_names(tree):
+    """The top-level names a module imports at import time. A relative
+    import names the package's own module, whatever it is called, and is
+    followed by `package_imports` instead."""
+    names = set()
+    for node in import_time(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module.split(".")[0])
+    return names
+
+
+def resolve(base, parts):
+    """The files Python runs to import `parts` under `base`: each package
+    initializer on the way, then the module or its own initializer."""
+    found = []
+    for depth in range(1, len(parts)):
+        initializer = os.path.join(base, *(parts[:depth] + ["__init__.py"]))
+        if initializer in TREES:
+            found.append(initializer)
+    # A package wins over a module of the same name, as Python's finder has
+    # it.
+    stem = os.path.join(base, *parts) if parts else base
+    for candidate in (os.path.join(stem, "__init__.py"), stem + ".py"):
+        if candidate in TREES:
+            found.append(candidate)
+            break
+    return found
+
+
+def package_imports(path, tree):
+    found = []
+    here = os.path.dirname(path)
+    top = os.path.dirname(ENTRY)
+    for node in import_time(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = here
+                for _ in range(node.level - 1):
+                    base = os.path.dirname(base)
+                parts = node.module.split(".") if node.module else []
+            elif node.module and node.module.split(".")[0] == PACKAGE:
+                base, parts = top, node.module.split(".")[1:]
+            else:
+                continue
+            found.extend(resolve(base, parts))
+            for alias in node.names:
+                found.extend(resolve(base, parts + [alias.name]))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] == PACKAGE:
+                    found.extend(resolve(top, parts[1:]))
+    return found
+
+
+def under_package(path):
+    """A file's path from the package's parent, with forward slashes, so two
+    initializers are told apart."""
+    relative = os.path.relpath(path, os.path.dirname(os.path.dirname(ENTRY)))
+    return relative.replace(os.sep, "/")
+
+
+ENTRY = None
+for path in TREES:
+    if os.path.basename(path) == "__init__.py" and os.path.basename(
+            os.path.dirname(path)) == PACKAGE:
+        ENTRY = path
+if ENTRY is None:
+    for path in TREES:
+        if os.path.basename(path) == PACKAGE + ".py":
+            ENTRY = path
+if ENTRY is None:
+    report["layering_violations"] = None
+    report["import_closure"] = None
+else:
+    closure, queue = [], [ENTRY]
+    while queue:
+        path = queue.pop(0)
+        if path in closure:
+            continue
+        closure.append(path)
+        queue.extend(package_imports(path, TREES[path]))
+    violations = []
+    for path in closure:
+        for name in sorted(import_time_names(TREES[path]) & (WEB | STORE)):
+            violations.append([under_package(path), name])
+    report["layering_violations"] = violations
+    report["import_closure"] = [under_package(path) for path in closure]
 
 
 def is_route(node):
@@ -621,3 +757,295 @@ def web_quality(ctx, workspace):
     return ctx.measured(payload, invocation=outcome["argv"],
                         html_validity=html_validity(ctx, pages),
                         accessibility=accessibility(ctx, workspace, pages))
+
+
+# A build planted with one finding per design probe, so each probe's answer
+# can be checked against what was planted. `web.py` names Flask but is never
+# imported at import time, so the plant needs nothing installed, and it lies
+# outside what `import tariff` loads though the factory imports it lazily;
+# `db.py` is persistence by its imports and lies outside too; `data/store.py`
+# names Flask and the web module under `if TYPE_CHECKING:`, which loads
+# neither, and sqlite3 under an inverted main guard, which does run on
+# import, and imports the package's own `data/sqlalchemy.py` relatively;
+# `__init__.py` names Werkzeug under a main guard; `data.py`
+# loses to the `data` package of the same name, as in Python;
+# `data/__init__.py` lies inside, as the initializer on the way to a module an
+# absolute import names; `broken.py` does not parse.
+PLANTED_BUILD = {
+    "tariff/__init__.py": '''\
+"""A planted build."""
+import logging
+from decimal import Decimal
+
+from .rules import BulkRule, CouponRule, PercentageRule, Rule, TieredRule
+from .rules import load
+
+__all__ = ["Product", "Catalog", "InvoiceLine", "Invoice", "Jurisdiction",
+           "PercentageRule", "BulkRule", "TieredRule", "CouponRule", "price",
+           "TariffError", "Extra"]
+
+log = logging.getLogger(__name__)
+
+
+class TariffError(Exception):
+    pass
+
+
+class Product:
+    pass
+
+
+class Catalog:
+    pass
+
+
+class InvoiceLine:
+    pass
+
+
+class Invoice:
+    pass
+
+
+class Extra:
+    pass
+
+
+def price(invoice, connection: "sqlite3.Connection" = None):
+    # see #123 for the rounding rule
+    return Decimal("0")
+
+
+def apply(rule, verbose: bool = False):
+    if verbose:
+        print("applying", rule)
+    return load(rule)
+
+
+def create_app(database):
+    from . import web
+    return web.app
+
+
+if __name__ == "__main__":
+    import werkzeug  # noqa: F401
+''',
+    "tariff/rules.py": '''\
+from abc import ABC
+
+from tariff.data.store import load  # noqa: F401
+
+
+class Rule(ABC):
+    kind = "rule"
+
+
+class PercentageRule(Rule):
+    kind = "percent"
+
+
+class BulkRule(Rule):
+    kind = "bulk"
+
+
+class TieredRule(Rule):
+    kind = "tiered"
+
+
+class CouponRule(Rule):
+    kind = "coupon"
+
+
+def rate_for(rule):
+    if rule.kind == "percent":
+        return 1
+    elif rule.kind == "bulk":
+        return 2
+    elif rule.kind == "tiered":
+        return 3
+    return 0
+''',
+    "tariff/db.py": "import sqlite3\n\n\ndef connect():\n"
+                    "    return sqlite3.connect(':memory:')\n",
+    "tariff/data.py": "import jinja2  # noqa: F401\n",
+    "tariff/data/__init__.py": "import sqlite3  # noqa: F401\n",
+    "tariff/data/store.py": '''\
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flask import Flask  # noqa: F401
+    from tariff import web  # noqa: F401
+
+if __name__ != "__main__":
+    import sqlite3  # noqa: F401
+
+from .sqlalchemy import nothing  # noqa: E402, F401
+
+
+def load(rule):
+    return rule
+''',
+    "tariff/data/sqlalchemy.py": "nothing = None\n",
+    "tariff/web.py": '''\
+from decimal import Decimal
+
+import flask
+
+app = flask.Flask(__name__)
+
+
+@app.route("/total")
+def total():
+    return str(Decimal("2") * Decimal("3"))
+''',
+    "tariff/broken.py": "def broken(:\n",
+}
+
+
+def planted_context(python=None, failing=None):
+    """A scorer's context for the self-test: a real subprocess runner, or one
+    that reports every command failed with `failing`."""
+
+    def run(argv, cwd=None):
+        if failing:
+            return {"failed": failing, "argv": argv, "stdout": "",
+                    "stderr": "", "status": 1}
+        finished = subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, encoding="utf-8",
+                                  errors="replace")
+        return {"failed": None, "argv": argv, "stdout": finished.stdout,
+                "stderr": finished.stderr, "status": finished.returncode}
+
+    def measured(value, **extra):
+        return dict({"value": value, "missing": None}, **extra)
+
+    def absent(reason, **extra):
+        return dict({"value": None, "missing": reason}, **extra)
+
+    return Context(run=run, measured=measured, absent=absent,
+                   python=python or sys.executable, script=lambda name: None)
+
+
+def self_test():
+    """Prove each design probe reads what the planted build holds, and that a
+    probe which cannot run leaves its metric missing, never zero."""
+    workspace = tempfile.mkdtemp(prefix="efficacy-probes-")
+    try:
+        for name, text in PLANTED_BUILD.items():
+            path = os.path.join(workspace, *name.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with io.open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        roots = [os.path.join(workspace, "tariff")]
+        seen = {"files": 9}
+        metric = structure(planted_context(), workspace, roots, seen)
+        headless = structure(planted_context(), workspace,
+                             [os.path.join(workspace, "tariff", "rules.py")],
+                             seen)
+        rootless = structure(planted_context(), workspace, [], seen)
+        broken = structure(planted_context(failing="exited 1"), workspace,
+                           roots, seen)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+    facts = metric.get("value") or {}
+    surface = facts.get("surface") or {}
+    isolation = facts.get("io_isolation") or {}
+    graph = facts.get("graph") or {}
+    probes = ("roles", "layering_violations", "money_in_routes",
+              "bool_parameters", "extension_points", "kind_ladders",
+              "surface", "io_isolation", "graph", "print_calls",
+              "exception_bases", "citations", "logging")
+    checks = [
+        ("every design probe answers in the one structure report",
+         metric["missing"] is None and all(key in facts for key in probes)),
+        ("a module's role follows what it imports",
+         facts.get("roles", {}).get("web.py") == "web"
+         and facts.get("roles", {}).get("db.py") == "persistence"
+         and facts.get("roles", {}).get("rules.py") == "domain"),
+        ("a module import tariff loads that reaches the store is a violation",
+         ["tariff/data/__init__.py", "sqlite3"]
+         in (facts.get("layering_violations") or [])),
+        ("an inverted main guard runs on import, so its import counts",
+         ["tariff/data/store.py", "sqlite3"]
+         in (facts.get("layering_violations") or [])),
+        ("a relative import names the package's module, not a driver",
+         "tariff/data/sqlalchemy.py" in (facts.get("import_closure") or [])
+         and not any(name == "sqlalchemy" for _, name in
+                     facts.get("layering_violations") or [])),
+        ("an initializer on the way to an imported module is loaded too",
+         "tariff/data/__init__.py" in facts.get("import_closure", [])
+         and "tariff/data/store.py" in facts.get("import_closure", [])),
+        ("an import inside a function is outside what import tariff loads",
+         facts.get("import_closure")
+         == ["tariff/__init__.py", "tariff/rules.py", "tariff/data/__init__.py",
+             "tariff/data/store.py", "tariff/data/sqlalchemy.py"]),
+        ("an import under if TYPE_CHECKING loads nothing",
+         not any(name == "flask" for _, name in
+                 facts.get("layering_violations") or [])
+         and "tariff/web.py" not in (facts.get("import_closure") or [])),
+        ("an import under a main guard loads nothing",
+         not any(name == "werkzeug" for _, name in
+                 facts.get("layering_violations") or [])),
+        ("a package wins over a module of its name, as in Python",
+         "tariff/data.py" not in (facts.get("import_closure") or [])
+         and not any(name == "jinja2" for _, name in
+                     facts.get("layering_violations") or [])),
+        ("without a package entry the layering reading is missing, not zero",
+         (headless.get("value") or {}).get("layering_violations") is None
+         and (headless.get("value") or {}).get("files_parsed") == 1),
+        ("Decimal arithmetic inside a route is money in a route",
+         facts.get("money_in_routes") == [["web.py", "total"]]),
+        ("a bool parameter is named by file, function and argument",
+         ["__init__.py", "apply", "verbose"] in facts.get("bool_parameters", [])),
+        ("an abstract base over rule kinds is an extension point",
+         facts.get("extension_points", {}).get("rule_kinds") is True
+         and facts.get("extension_points", {}).get("export_formats") is False),
+        ("a three-deep conditional on a rule's kind is a kind ladder",
+         facts.get("kind_ladders") == [["rules.py", 3]]),
+        ("the public surface is read against the names the spec requires",
+         surface.get("missing") == ["Jurisdiction"]
+         and surface.get("extra") == ["Extra"]),
+        ("a price parameter annotated as a connection leaks IO",
+         isolation.get("leaked") == ["connection"]
+         and isolation.get("clean") is False),
+        ("the import graph is a measurement or a named absence",
+         ("modules" in graph) != ("error" in graph)),
+        ("a print call, a ticket citation and an exception base are findings",
+         facts.get("print_calls") == [["__init__.py", 46]]
+         and facts.get("citations") == [["__init__.py", 40]]
+         and facts.get("exception_bases")
+         == [["__init__.py", "TariffError", "Exception"]]),
+        ("logging without a NullHandler is reported as used and unhandled",
+         facts.get("logging") == {"used": True, "null_handler": False}),
+        ("a file that does not parse is named, and the rest are read",
+         [entry[0] for entry in facts.get("unparsed", [])]
+         == [os.path.join(workspace, "tariff", "broken.py")]
+         and facts.get("files_parsed") == 8),
+        ("without source roots the structure metric is missing, not zero",
+         rootless["value"] is None and "no source roots" in rootless["missing"]),
+        ("a probe that fails leaves its metric missing, with the command",
+         broken["value"] is None and "exited 1" in broken["missing"]
+         and broken.get("invocation")),
+    ]
+    for label, ok in checks:
+        print("  %-62s %s" % (label, "ok" if ok else "FAILED"))
+    passed = sum(1 for _, ok in checks if ok)
+    lib.print_verdict(passed == len(checks),
+                      "%d/%d self-test checks passed" % (passed, len(checks)))
+    return 0 if passed == len(checks) else 1
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--self-test", action="store_true",
+                        help="probe a planted build and check each answer; "
+                             "read no trial")
+    options = parser.parse_args(argv)
+    if options.self_test:
+        return self_test()
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

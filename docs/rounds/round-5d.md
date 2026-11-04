@@ -286,3 +286,23 @@ Per row:
 - The full scale is where an axis saturates. It is not the margin, which
   still decides better, held or worse.
 - The radar describes the verdicts and decides nothing.
+
+### 13d.9 Choosing round 6's arms
+
+Added 2026-11-02, before any round-5d trial. Round 5d also screens which arms
+round 6 runs again, fresh and paired. The rule is fixed here, before any trial
+is read for it.
+
+1. **Candidates:** `inline`, `hybrid`, `reference` and `skills` from round 5c,
+   re-scored with the corrected hidden suite in round 5d's root, and `hand`
+   and `short` from round 5d. Each is read against round 5c's `none` by the
+   rules of 13d.7.
+2. **Out:** an arm whose reliability, or any row 13d.7 decides on, reads worse
+   than `none`: the hidden tests, the security probes, the data-protection
+   probes, or the judge's security and data-protection rows.
+3. **Ranked:** the rest by how many of those rows read better than `none`. On
+   a tie, the arm with the lower mean cost per trial ranks higher.
+4. **Round 6:** `none` and the top four; all of them if fewer than four remain.
+5. **Not a verdict:** the screen decides which arms run again, not which arm is
+   better. Round 6 runs them fresh and paired, so an arm that ranked high by
+   luck still has to hold up.

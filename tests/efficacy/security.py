@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lib  # noqa: E402
 from harness import (LiveRunError, canonical, claim_area,  # noqa: E402
                      claim_refusal_check, release_area, remove_tree,
-                     scoring_area, spellings)
+                     scoring_area)
 from score import (absent, create_venv, lock_lines, measured, pip,  # noqa: E402
                    python_in, run, script_in)
 
@@ -1577,13 +1577,9 @@ def self_test():
 
 
 def existing_file(directory, name):
-    """The JSON file a trial's reading is filed under, in either spelling,
-    or None."""
-    for spelled in spellings(name):
-        path = os.path.join(directory, "%s.json" % spelled)
-        if os.path.isfile(path):
-            return path
-    return None
+    """The JSON file a trial's reading is filed under, or None."""
+    path = os.path.join(directory, "%s.json" % canonical(name))
+    return path if os.path.isfile(path) else None
 
 
 def parse_args(argv):
@@ -1609,8 +1605,7 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    # A score round 1 wrote sits under its letter name, `A1.json`, and is read
-    # under its word, `none-1`.
+    # A score is filed under its trial's name, read as the arms spell it.
     area = scoring_area(options.root)
     scores = os.path.join(area, "scores")
     scored = {canonical(os.path.splitext(entry)[0]):

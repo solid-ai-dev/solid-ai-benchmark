@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 from harness import (ROUND5_K, SCORABLE, VOIDING, LiveRunError,  # noqa: E402
-                     TrialError, arm_name, claim_path, now, read_claim,
+                     TrialError, claim_path, now, read_claim,
                      result_of, running_as, scoring_area, split_name)
 from report import ROUND5_RUN  # noqa: E402
 
@@ -49,6 +49,21 @@ def records(root):
         found.extend(record for record in run.get("trials", [])
                      if record.get("task", task) == "build")
     return found
+
+
+def arms_in(trials):
+    """Round 5's arms, then every other arm the run records name, each once
+    in the order it first appears."""
+
+    # A root may hold a reused round beside the one in flight, and a round
+    # may run arms of its own, as `hand` and `short`. The records say which,
+    # so each gets a bar from its first trial on; none is dropped as unknown.
+    found = list(ROUND5_RUN)
+    for record in trials:
+        arm = record.get("arm")
+        if arm and arm not in found:
+            found.append(arm)
+    return tuple(found)
 
 
 def cost_of(record):
@@ -78,7 +93,7 @@ def tally(trials, arms):
     arms = {arm: {"done": set(), "voided": 0, "cost": 0.0, "running": None}
             for arm in arms}
     for record in trials:
-        arm = arms.get(arm_name(record.get("arm")))
+        arm = arms.get(record.get("arm"))
         if arm is None:
             continue
         outcome = record.get("outcome")
@@ -97,10 +112,12 @@ def bar(done, total):
     return "[%s%s]" % ("#" * filled, "." * (WIDTH - filled))
 
 
-def render(root, arms=ROUND5_RUN, k=ROUND5_K, moment=None):
-    """The progress screen for the run root, as lines."""
+def render(root, arms=None, k=ROUND5_K, moment=None):
+    """The progress screen for the run root, as lines: one bar per round-5
+    arm and per other arm the run records name."""
     moment = moment or now()
     trials = records(root)
+    arms = arms or arms_in(trials)
     counts = tally(trials, arms)
     total = len(arms) * k
     done = sum(len(arm["done"]) for arm in counts.values())
@@ -156,7 +173,7 @@ def arm_of(name):
 
 def blocks_of(names, arm):
     """The blocks of `arm` that `names` hold, each once however it is
-    spelled: round 1's `A1` and its word `none-1` are one trial."""
+    spelled: `none-01` and `none-1` are one trial."""
     found = set()
     for name in names:
         try:
@@ -291,7 +308,8 @@ def watch(root, every):
 
 def self_test():
     """A planted run renders each arm's count, voids, cost and running trial,
-    and a record caught mid-write is skipped rather than fatal."""
+    in the order the records name the arms, and a record caught mid-write is
+    skipped rather than fatal."""
     scratch = tempfile.mkdtemp(prefix="efficacy-progress-")
     moment = datetime.datetime(2026, 10, 29, 12, 0).astimezone()
 
@@ -308,7 +326,8 @@ def self_test():
     planted = [trial("none", 1, "completed", 120, 4.0),
                trial("inline", 1, "reached", 90, 10.0),
                trial("inline", 1, "completed", 60, 6.0),
-               trial("hybrid", 1, "running", 15)]
+               trial("hybrid", 1, "running", 15),
+               trial("hand", 1, "running", 3)]
     with io.open(os.path.join(scratch, "run-1.json"), "w",
                  encoding="utf-8") as handle:
         json.dump({"task": "build", "trials": planted}, handle)
@@ -339,7 +358,9 @@ def self_test():
         except Exception as error:
             return ["raised %r" % error]
 
-    lines, old = drawn(scratch), drawn(legacy)
+    empty = os.path.join(scratch, "empty")
+    os.makedirs(empty)
+    lines, old, bare = drawn(scratch), drawn(legacy), drawn(empty)
 
     # A scoring under way: two arms scored, one read for security, the
     # scorer's tools, a scored trial's directory, the trial in hand, and the
@@ -359,8 +380,6 @@ def self_test():
         dated(os.path.join(area, "scores", "%s.json" % name), minutes)
     dated(os.path.join(area, "security-scores", "none-1.json"), 6)
 
-    # Round 1's spelling of none-1, left beside the word a rescore wrote.
-    dated(os.path.join(area, "scores", "A1.json"), 4)
     dated(os.path.join(area, "scoring", "inline-2"), 20, folder=True)
     dated(os.path.join(area, "scoring", "hybrid-1"), 40, folder=True)
     dated(os.path.join(area, "scoring", "tools"), 50, folder=True)
@@ -404,9 +423,14 @@ def self_test():
     scored = {line.split()[0]: line for line in live[2:] if line.strip()}
     by_arm = {line.split()[0]: line for line in lines[2:] if line.strip()}
     old_by_arm = {line.split()[0]: line for line in old[2:] if line.strip()}
+    bare_arms = [line.split()[0] for line in bare[2:] if line.strip()]
     checks = [
-        ("every arm and the whole run get a line",
-         sorted(by_arm) == sorted(list(ROUND5_RUN) + ["all"])),
+        ("round 5's arms, the arms the records add, and the run get a line",
+         list(by_arm) == list(ROUND5_RUN) + ["hand", "all"]),
+        ("an arm outside round 5's shows its running trial",
+         "running hand-1, 3 min" in by_arm.get("hand", "")),
+        ("a root with no records yet draws round 5's arms alone",
+         bare_arms == list(ROUND5_RUN) + ["all"]),
         ("a completed trial counts toward its arm",
          " 1/15 " in by_arm.get("none", "")),
         ("a voided try counts as voided, its re-run as done",
@@ -421,10 +445,10 @@ def self_test():
         ("a change task in flight is not shown as a running build",
          "running" not in by_arm.get("skills", "")),
         ("the run's line counts every arm and estimates what is left",
-         " 2/75 " in by_arm.get("all", "")
+         " 2/90 " in by_arm.get("all", "")
          and "h left" in by_arm.get("all", "")),
         ("a root without offsets draws its counts and reads no time",
-         " 2/75 " in old_by_arm.get("all", "")
+         " 2/90 " in old_by_arm.get("all", "")
          and not any("min" in line or "h left" in line for line in old)),
         ("before scoring starts, no scoring lines are drawn",
          "Scored" not in lines and "Scored" not in old),
@@ -445,8 +469,6 @@ def self_test():
          and not any("  scoring " in line for line in securing)),
         ("the security pass shows no scoring estimate, bar short or not",
          not any("left" in line for line in securing)),
-        ("a trial scored under two spellings counts once",
-         " 1/15" in scored.get("none", "")),
         ("a rescore shows its time in and no time left",
          any(" h in" in line for line in rescore_pace)
          and not any("h left" in line for line in rescore_pace)),

@@ -67,18 +67,16 @@ PROMPT = (
 BUDGET_USD = 100.0
 TIMEOUT_S = 7200
 
-# K as registered, and the ceiling of the one escalation allowed. No run
-# goes past the ceiling, because sampling until an interval clears zero is the
-# failure the bound exists to prevent.
-K_PRIMARY = 3
-K_CEILING = 5
-
-# Round 5 registers its own K instead, with no escalation. Fifteen blocks
-# were sized before its first trial from the rounds before it, whose per-trial
-# noise left three blocks unable to decide its hypotheses. A run holding one
-# of its arms may go that far and no further.
+# A round registers its K before its first trial and no run goes past it,
+# because sampling until an interval clears zero is the failure the bound
+# exists to prevent. Round 5 registers fifteen blocks, sized from the
+# per-trial noise of the rounds before it, which left three blocks unable to
+# decide its hypotheses.
 ROUND5_ARMS = ("inline", "reference", "skills")
 ROUND5_K = 15
+
+# A run is short unless the registered K is asked for by name.
+K_DEFAULT = 3
 
 # Round 5d runs `hand` and `short` under round 5's design: its K, its spec
 # at its registered content, against round 5c's arms.
@@ -128,15 +126,13 @@ ROUND5_DECLINED = [
 SKILLS_INTO = ".claude/skills"
 
 # The arms, each a word, and the context file each starts with, relative to
-# `arms/`. Arm `none` carries no file: it is the bare agent. The two files
-# round 1 ran keep the directories its generation record names. `inline`,
-# `reference` and `skills` are round 5's; `hybrid` was regenerated for it,
-# and an arm's vendored ref comes from its generation record. `short` was
-# made again from round 5's chain, under round 3's budget.
+# `arms/`. Arm `none` carries no file: it is the bare agent. `hand` is a
+# person's file, kept verbatim. `inline`, `reference` and `skills` are round
+# 5's; `hybrid` was regenerated for it, and an arm's vendored ref comes from
+# its generation record. `short` was made again from round 5's chain, under a
+# 40-line budget.
 ARMS = {
     "none": {"label": "no context file", "context": None},
-    "full": {"label": "the templates' file, inline",
-             "context": "full/CLAUDE.md"},
     "short": {"label": "the templates' file, inline, 40 lines",
               "context": "short/CLAUDE.md"},
     "hybrid": {"label": "the templates' file, hybrid",
@@ -151,63 +147,32 @@ ARMS = {
                "context": "skills/CLAUDE.md", "skills": "skills/skills"},
 }
 
-# Round 1 named its arms by letter and its trials `A1`, `B2`, `C3`. Its run
-# records, tarballs, scores and judgings keep those spellings, and every
-# reader turns them into the words, so the round is never rewritten on disk.
-ROUND_ONE = {"A": "none", "B": "full", "C": "hand"}
-ROUND_ONE_NAME = re.compile(r"^([A-Z])(\d+)$")
-
-
-def arm_name(raw):
-    """An arm as its word, whether a record names it by word or by round 1's
-    letter."""
-    return ROUND_ONE.get(raw, raw)
-
-
 def trial_name(arm, block):
     """A trial's name: the arm's word, a hyphen, the block it runs in."""
     return "%s-%d" % (arm, int(block))
 
 
 def split_name(name):
-    """A trial name as (arm, block), round 1's letters read as their words.
+    """A trial name as (arm, block).
 
     The block is the last hyphenated part, so an arm's word never carries a
     hyphen of its own.
     """
-    match = ROUND_ONE_NAME.match(name)
-    if match and match.group(1) in ROUND_ONE:
-        return ROUND_ONE[match.group(1)], int(match.group(2))
     arm, _, block = name.rpartition("-")
     if not arm or not block.isdigit():
-        raise TrialError("%r is not a trial name; one reads as `full-1`, the "
+        raise TrialError("%r is not a trial name; one reads as `hand-1`, the "
                          "arm's word and its block" % name)
     return arm, int(block)
 
 
 def canonical(name):
-    """A trial name in the form the arms are named today, `none-1` for `A1`."""
+    """A trial name as the arms spell it, `none-1` for `none-01`."""
     return trial_name(*split_name(name))
-
-
-def round_one_name(name):
-    """Round 1's spelling of a trial name, `B1` for `full-1`, or None where
-    the arm was not in round 1."""
-    arm, block = split_name(name)
-    letters = {word: letter for letter, word in ROUND_ONE.items()}
-    return "%s%d" % (letters[arm], block) if arm in letters else None
-
-
-def spellings(name):
-    """Every name a trial's files may be filed under: its canonical name
-    and, for a round 1 arm, its letter."""
-    return [spelled for spelled in (canonical(name), round_one_name(name))
-            if spelled]
 
 
 def name_of(record):
     """The trial a run record or a score describes, by canonical name."""
-    return trial_name(arm_name(record.get("arm")), record.get("trial"))
+    return trial_name(record.get("arm"), record.get("trial"))
 
 # Web access is a confound: an arm that reads the
 # templates online is not the arm being measured. The two web tools are
@@ -277,7 +242,7 @@ def reach_denials(root, workspace):
     # Every block any run may hold, so no trial of a long round is left
     # readable by the trials of its other blocks.
     names = {trial_name(arm, trial) for arm in ARMS
-             for trial in range(1, max(K_CEILING, ROUND5_K) + 1)}
+             for trial in range(1, ROUND5_K + 1)}
     names |= {"change-" + name for name in names}
     targets = [repository_root(), scoring_area(root),
                os.path.join(root, "home"), os.path.join(root, "void")]
@@ -1036,9 +1001,9 @@ def freeze(workspace, record_dir, name):
 def frozen_top(tarball, unpacked):
     """The one top-level directory a frozen tarball unpacked to.
 
-    A workspace is frozen under the trial's name as spelled on the day, so a
-    tarball round 1 froze as `B1` unpacks to `B1` whatever the trial is
-    called now, and the reader takes the directory it finds.
+    A workspace is frozen under the name it had on the day, which a reused
+    trial need not keep, so the reader takes the one directory it finds
+    rather than looking for the trial's name.
     """
     entries = os.listdir(unpacked)
     if len(entries) != 1 or not os.path.isdir(os.path.join(unpacked,
@@ -1257,7 +1222,8 @@ def path_forms(paths):
 def path_pattern(paths):
     """A pattern matching any of `paths` the way a command line spells it.
 
-    It ends where the path does, so `A1` matches neither `A10` nor `A1.tar`.
+    It ends where the path does, so `none-1` matches neither `none-10` nor
+    `none-1.tar`.
     """
     return re.compile("(?:%s)%s" % (
         "|".join(re.escape(form) for form in path_forms(paths)), PATH_END))
@@ -1275,9 +1241,9 @@ def outside_pattern(workspace, temp):
         own.append("tmp/" + re.escape(name))
 
     # A sentence can end on the trial's own path, as in "the repo at
-    # ...\A1. I need", so punctuation before the path ends still leaves it
-    # the trial's own, and so does a pip extra, as in `pip install
-    # "...\hybrid-2[dev]"`. A suffix is not punctuation: `A1.tar` stays
+    # ...\none-1. I need", so punctuation before the path ends still leaves
+    # it the trial's own, and so does a pip extra, as in `pip install
+    # "...\hybrid-2[dev]"`. A suffix is not punctuation: `none-1.tar` stays
     # another entry of the root.
     not_own = "(?!(?:%s)(?:\\[[^\\]/\\s\"';,]*\\])?[.:!?)\\]]*%s)" % (
         "|".join(own), PATH_END)
@@ -1868,22 +1834,11 @@ def order(arms, k):
             for trial in range(1, k + 1) for place in range(count)]
 
 
-def k_ceiling(arms):
-    """The most blocks a run of these arms may hold."""
-    return (ROUND5_K if set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS)
-            else K_CEILING)
-
-
 def pending_trials(arms, k, start=None):
     """The interleaved order, from `start` onwards where one is given."""
-    ceiling = k_ceiling(arms)
-    if ceiling == ROUND5_K:
-        why = "round 5 registers K = %d and no escalation" % ROUND5_K
-    else:
-        why = ("a round escalates once to K = %d and never further"
-               % K_CEILING)
-    if not 1 <= k <= ceiling:
-        raise TrialError("--k %d is outside 1 to %d: %s" % (k, ceiling, why))
+    if not 1 <= k <= ROUND5_K:
+        raise TrialError("--k %d is outside 1 to %d: a round registers its K "
+                         "and runs no block past it" % (k, ROUND5_K))
     trials = order(arms, k)
     if start is None:
         return trials
@@ -2206,14 +2161,13 @@ def resume_checks():
     except TrialError:
         checks.append(("--from an unknown trial refuses", True))
     try:
-        pending_trials(["none", "hybrid"], K_CEILING + 1)
-        checks.append(("a K past the escalation's ceiling refuses", False))
+        pending_trials(["none", "hybrid"], ROUND5_K + 1)
+        checks.append(("a K past the registered ceiling refuses", False))
     except TrialError:
-        checks.append(("a K past the escalation's ceiling refuses", True))
-    first_escalated = trial_name("none", K_PRIMARY + 1)
+        checks.append(("a K past the registered ceiling refuses", True))
     names = [trial_name(*pair)
-             for pair in pending_trials(arms, K_CEILING, first_escalated)]
-    checks.append(("the escalation runs its blocks from none-4",
+             for pair in pending_trials(arms, 5, trial_name("none", 4))]
+    checks.append(("--from a later block keeps the rotated order",
                    names == ["none-4", "short-4", "hybrid-4", "short-5",
                              "hybrid-5", "none-5"]))
 
@@ -2359,7 +2313,7 @@ def change_checks():
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-change-self-test")
     remove_tree(scratch)
-    build = os.path.join(scratch, "A1")
+    build = os.path.join(scratch, "frozen-elsewhere")
     os.makedirs(build)
     git(build, "init", "-q")
     with io.open(os.path.join(build, "app.py"), "w",
@@ -2373,9 +2327,9 @@ def change_checks():
                  encoding="utf-8") as handle:
         handle.write("left_uncommitted = True\n")
 
-    # Frozen under round 1's spelling of the trial, so the change task of
-    # `none-1` has to find a top directory named `A1`.
-    frozen = freeze(build, scratch, "A1")
+    # Frozen under another name, as a reused trial's tarball may be, so the
+    # change task of `none-1` has to take the top directory it finds.
+    frozen = freeze(build, scratch, "frozen-elsewhere")
 
     # The plant landed: the build trial ended with work it never committed,
     # which is the state a change task has to take into its starting commit.
@@ -2387,7 +2341,7 @@ def change_checks():
     except TrialError:
         workspace, base = None, None
     checks.append(("the change workspace unpacks under its own name, in its "
-                   "pen, from a tarball frozen under round 1's",
+                   "pen, from a tarball frozen under another name",
                    workspace == trial_workspace(scratch, "change-none-1")
                    and os.path.isfile(os.path.join(workspace, "draft.py"))))
     checks.append(("its starting state is committed", workspace is not None
@@ -2494,7 +2448,7 @@ def dry_run_checks():
 
     # The thin specification reaches its workspace under the one name the
     # prompt gives, so the prompt stays a single text across specifications.
-    thin_workspace, _ = prepare_workspace("full", 1, root, SPECS["thin"])
+    thin_workspace, _ = prepare_workspace("inline", 1, root, SPECS["thin"])
     with io.open(os.path.join(thin_workspace, "SPEC.md"), "rb") as handle:
         given = handle.read()
     with io.open(SPECS["thin"], "rb") as handle:
@@ -2757,9 +2711,10 @@ def leftover_checks():
 
 # On Windows, the folder name the CLI itself wrote for a real trial, so the
 # check holds the harness to the CLI rather than to the harness's own rule.
-PLANTED_TRANSCRIPT = ((r"C:\efficacy\run-v290\A1", "C--efficacy-run-v290-A1")
+PLANTED_TRANSCRIPT = ((r"C:\efficacy\run-v290\none-1",
+                       "C--efficacy-run-v290-none-1")
                       if os.name == "nt" else
-                      ("/efficacy/run-v290/A1", "-efficacy-run-v290-A1"))
+                      ("/efficacy/run-v290/none-1", "-efficacy-run-v290-none-1"))
 
 
 def reach_checks():
@@ -2936,23 +2891,19 @@ def pen_checks():
 
 
 def naming_checks():
-    """A trial is named by its arm's word and its block, and round 1's
-    letters read as the words they became."""
+    """A trial is named by its arm's word and its block, and nothing else
+    reads as one."""
     checks = [
         ("a trial is the arm's word, a hyphen and its block",
          trial_name("short", 2) == "short-2"
          and split_name("short-2") == ("short", 2)),
-        ("round 1's letters read as their words",
-         [split_name(name) for name in ("A1", "B2", "C3")]
-         == [("none", 1), ("full", 2), ("hand", 3)]
-         and canonical("B2") == "full-2"),
-        ("a record names its trial whichever way it spells the arm",
-         name_of({"arm": "B", "trial": 1}) == "full-1"
+        ("a record names its trial by its arm and block",
+         name_of({"arm": "hand", "trial": 1}) == "hand-1"
          and name_of({"arm": "hybrid", "trial": 3}) == "hybrid-3"),
         ("a word name canonicalises to itself",
          canonical("hybrid-3") == "hybrid-3"),
     ]
-    for name in ("none", "D1", "short-x", "-1"):
+    for name in ("none", "A1", "short-x", "-1"):
         try:
             split_name(name)
             checks.append(("%r is refused as a trial name" % name, False))
@@ -3281,7 +3232,7 @@ def denial_checks():
          or denied(templates_root(required=False))),
         ("other trials, their change tasks, home and void are denied",
          all(denied(os.path.join(root, entry))
-             for entry in ("full-1", "none-2", "change-none-1",
+             for entry in ("inline-1", "none-2", "change-none-1",
                            "change-hand-5", "home", "void"))),
         ("a round-5 run's last block is denied too",
          all(denied(os.path.join(root, trial_name(arm, ROUND5_K)))
@@ -3302,7 +3253,7 @@ def denial_checks():
 # The command that ended round 4's thin run, and its kin. Each MUST meet a
 # deny rule; a stop by PID or by port MUST meet none.
 KILLS = {
-    "Bash": ['cd "C:/runs/full-1" && powershell -NoProfile -Command '
+    "Bash": ['cd "C:/runs/inline-1" && powershell -NoProfile -Command '
              '"Get-Process -Name python -ErrorAction SilentlyContinue | '
              'Where-Object { $_.MainWindowTitle -eq \'\' } | '
              'Stop-Process -Force"',
@@ -3472,7 +3423,14 @@ def round5_checks():
     checks.append(("a trial reads the workspace's project settings and no "
                    "other source",
                    argv[argv.index("--setting-sources") + 1] == "project"))
-    listed = "review\n- write-tests\n`add-check`\ndataviz"
+
+    # The web tools go after the flag that names them; anything else there
+    # would be read as one more tool to refuse, or as the prompt.
+    refused = (argv[argv.index("--disallowed-tools") + 1:][:2]
+               if "--disallowed-tools" in argv else [])
+    checks.append(("a trial may not fetch or search the web",
+                   sorted(refused) == ["WebFetch", "WebSearch"]))
+    listed ="review\n- write-tests\n`add-check`\ndataviz"
     checks.append(("the skills probe finds a listed kind and names a missing "
                    "one",
                    missing_skills(listed, ["add-check", "review",
@@ -3605,11 +3563,9 @@ def parse_args(argv):
                              "commas, from %s; their order is block 1's. "
                              "Required for a run, so a run names the arms "
                              "it holds" % ",".join(ARMS))
-    parser.add_argument("--k", type=int, default=K_PRIMARY,
-                        help="trials per arm (default %d; at most %d, the "
-                             "escalation's ceiling, or %d for a run holding "
-                             "a round-5 arm)"
-                             % (K_PRIMARY, K_CEILING, ROUND5_K))
+    parser.add_argument("--k", type=int, default=K_DEFAULT,
+                        help="trials per arm (default %d; at most %d, the K a "
+                             "round registers)" % (K_DEFAULT, ROUND5_K))
     parser.add_argument("--cli",
                         help="the Claude CLI file every trial runs, in place "
                              "of `claude` on PATH; its version is recorded "
