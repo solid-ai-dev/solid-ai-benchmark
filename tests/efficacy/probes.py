@@ -127,19 +127,51 @@ report["roles"] = {os.path.basename(p): r for p, r in roles.items()}
 # the package's own imports, may import neither. A role says nothing here: a
 # module that imports Flask is web by that fact, so asking whether a domain
 # module imports Flask asks nothing.
+def import_time(tree):
+    """The nodes that run when the module is imported: a function body does
+    not, so an import inside one, the factory's lazy `from . import web` the
+    specification allows, is not what `import tariff` loads."""
+    pending = list(ast.iter_child_nodes(tree))
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.Lambda)):
+            continue
+        yield node
+        pending.extend(ast.iter_child_nodes(node))
+
+
+def import_time_names(tree):
+    names = set()
+    for node in import_time(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+
 def resolve(base, parts):
+    """The files Python runs to import `parts` under `base`: each package
+    initializer on the way, then the module or its own initializer."""
+    found = []
+    for depth in range(1, len(parts)):
+        initializer = os.path.join(base, *(parts[:depth] + ["__init__.py"]))
+        if initializer in TREES:
+            found.append(initializer)
     stem = os.path.join(base, *parts) if parts else base
     for candidate in (stem + ".py", os.path.join(stem, "__init__.py")):
         if candidate in TREES:
-            return candidate
-    return None
+            found.append(candidate)
+            break
+    return found
 
 
 def package_imports(path, tree):
     found = []
     here = os.path.dirname(path)
     top = os.path.dirname(ENTRY)
-    for node in ast.walk(tree):
+    for node in import_time(tree):
         if isinstance(node, ast.ImportFrom):
             if node.level:
                 base = here
@@ -150,21 +182,22 @@ def package_imports(path, tree):
                 base, parts = top, node.module.split(".")[1:]
             else:
                 continue
-            target = resolve(base, parts)
-            if target:
-                found.append(target)
+            found.extend(resolve(base, parts))
             for alias in node.names:
-                target = resolve(base, parts + [alias.name])
-                if target:
-                    found.append(target)
+                found.extend(resolve(base, parts + [alias.name]))
         elif isinstance(node, ast.Import):
             for alias in node.names:
                 parts = alias.name.split(".")
                 if parts[0] == PACKAGE:
-                    target = resolve(top, parts[1:])
-                    if target:
-                        found.append(target)
+                    found.extend(resolve(top, parts[1:]))
     return found
+
+
+def under_package(path):
+    """A file's path from the package's parent, with forward slashes, so two
+    initializers are told apart."""
+    relative = os.path.relpath(path, os.path.dirname(os.path.dirname(ENTRY)))
+    return relative.replace(os.sep, "/")
 
 
 ENTRY = None
@@ -189,10 +222,10 @@ else:
         queue.extend(package_imports(path, TREES[path]))
     violations = []
     for path in closure:
-        for name in sorted(imported_names(TREES[path]) & (WEB | STORE)):
-            violations.append([os.path.basename(path), name])
+        for name in sorted(import_time_names(TREES[path]) & (WEB | STORE)):
+            violations.append([under_package(path), name])
     report["layering_violations"] = violations
-    report["import_closure"] = [os.path.basename(path) for path in closure]
+    report["import_closure"] = [under_package(path) for path in closure]
 
 
 def is_route(node):
@@ -700,9 +733,11 @@ def web_quality(ctx, workspace):
 
 # A build planted with one finding per design probe, so each probe's answer
 # can be checked against what was planted. `web.py` names Flask but is never
-# imported, so the plant needs nothing installed, and it lies outside what
-# `import tariff` loads; `store.py` lies inside it, through an absolute
-# import; `broken.py` does not parse.
+# imported at import time, so the plant needs nothing installed, and it lies
+# outside what `import tariff` loads though the factory imports it lazily;
+# `db.py` is persistence by its imports and lies outside too;
+# `data/__init__.py` lies inside, as the initializer on the way to a module an
+# absolute import names; `broken.py` does not parse.
 PLANTED_BUILD = {
     "tariff/__init__.py": '''\
 """A planted build."""
@@ -752,11 +787,16 @@ def apply(rule, verbose: bool = False):
     if verbose:
         print("applying", rule)
     return load(rule)
+
+
+def create_app(database):
+    from . import web
+    return web.app
 ''',
     "tariff/rules.py": '''\
 from abc import ABC
 
-from tariff.store import load  # noqa: F401
+from tariff.data.store import load  # noqa: F401
 
 
 class Rule(ABC):
@@ -788,12 +828,12 @@ def rate_for(rule):
         return 3
     return 0
 ''',
-    "tariff/store.py": '''\
-import sqlite3
-
-
+    "tariff/db.py": "import sqlite3\n\n\ndef connect():\n"
+                    "    return sqlite3.connect(':memory:')\n",
+    "tariff/data/__init__.py": "import sqlite3  # noqa: F401\n",
+    "tariff/data/store.py": '''\
 def load(rule):
-    return sqlite3.connect(":memory:")
+    return rule
 ''',
     "tariff/web.py": '''\
 from decimal import Decimal
@@ -846,7 +886,7 @@ def self_test():
             with io.open(path, "w", encoding="utf-8") as handle:
                 handle.write(text)
         roots = [os.path.join(workspace, "tariff")]
-        seen = {"files": 5}
+        seen = {"files": 7}
         metric = structure(planted_context(), workspace, roots, seen)
         headless = structure(planted_context(), workspace,
                              [os.path.join(workspace, "tariff", "rules.py")],
@@ -869,12 +909,18 @@ def self_test():
          metric["missing"] is None and all(key in facts for key in probes)),
         ("a module's role follows what it imports",
          facts.get("roles", {}).get("web.py") == "web"
-         and facts.get("roles", {}).get("store.py") == "persistence"
+         and facts.get("roles", {}).get("db.py") == "persistence"
          and facts.get("roles", {}).get("rules.py") == "domain"),
         ("a module import tariff loads that reaches the store is a violation",
-         facts.get("layering_violations") == [["store.py", "sqlite3"]]),
-        ("a module the package never imports is outside the layering reading",
-         facts.get("import_closure") == ["__init__.py", "rules.py", "store.py"]),
+         facts.get("layering_violations")
+         == [["tariff/data/__init__.py", "sqlite3"]]),
+        ("an initializer on the way to an imported module is loaded too",
+         "tariff/data/__init__.py" in facts.get("import_closure", [])
+         and "tariff/data/store.py" in facts.get("import_closure", [])),
+        ("an import inside a function is outside what import tariff loads",
+         facts.get("import_closure")
+         == ["tariff/__init__.py", "tariff/rules.py", "tariff/data/__init__.py",
+             "tariff/data/store.py"]),
         ("without a package entry the layering reading is missing, not zero",
          (headless.get("value") or {}).get("layering_violations") is None
          and (headless.get("value") or {}).get("files_parsed") == 1),
@@ -905,7 +951,7 @@ def self_test():
         ("a file that does not parse is named, and the rest are read",
          [entry[0] for entry in facts.get("unparsed", [])]
          == [os.path.join(workspace, "tariff", "broken.py")]
-         and facts.get("files_parsed") == 4),
+         and facts.get("files_parsed") == 6),
         ("without source roots the structure metric is missing, not zero",
          rootless["value"] is None and "no source roots" in rootless["missing"]),
         ("a probe that fails leaves its metric missing, with the command",
