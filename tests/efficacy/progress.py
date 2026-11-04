@@ -51,6 +51,21 @@ def records(root):
     return found
 
 
+def arms_in(trials):
+    """Round 5's arms, then every other arm the run records name, each once
+    in the order it first appears."""
+
+    # A root may hold a reused round beside the one in flight, and a round
+    # may run arms of its own, as `hand` and `short`. The records say which,
+    # so each gets a bar from its first trial on; none is dropped as unknown.
+    found = list(ROUND5_RUN)
+    for record in trials:
+        arm = arm_name(record.get("arm"))
+        if arm and arm not in found:
+            found.append(arm)
+    return tuple(found)
+
+
 def cost_of(record):
     """What the CLI said a finished trial cost, or 0 where it said nothing."""
     result = record.get("result")
@@ -97,10 +112,12 @@ def bar(done, total):
     return "[%s%s]" % ("#" * filled, "." * (WIDTH - filled))
 
 
-def render(root, arms=ROUND5_RUN, k=ROUND5_K, moment=None):
-    """The progress screen for the run root, as lines."""
+def render(root, arms=None, k=ROUND5_K, moment=None):
+    """The progress screen for the run root, as lines: one bar per round-5
+    arm and per other arm the run records name."""
     moment = moment or now()
     trials = records(root)
+    arms = arms or arms_in(trials)
     counts = tally(trials, arms)
     total = len(arms) * k
     done = sum(len(arm["done"]) for arm in counts.values())
@@ -291,7 +308,8 @@ def watch(root, every):
 
 def self_test():
     """A planted run renders each arm's count, voids, cost and running trial,
-    and a record caught mid-write is skipped rather than fatal."""
+    in the order the records name the arms, and a record caught mid-write is
+    skipped rather than fatal."""
     scratch = tempfile.mkdtemp(prefix="efficacy-progress-")
     moment = datetime.datetime(2026, 10, 29, 12, 0).astimezone()
 
@@ -308,7 +326,8 @@ def self_test():
     planted = [trial("none", 1, "completed", 120, 4.0),
                trial("inline", 1, "reached", 90, 10.0),
                trial("inline", 1, "completed", 60, 6.0),
-               trial("hybrid", 1, "running", 15)]
+               trial("hybrid", 1, "running", 15),
+               trial("hand", 1, "running", 3)]
     with io.open(os.path.join(scratch, "run-1.json"), "w",
                  encoding="utf-8") as handle:
         json.dump({"task": "build", "trials": planted}, handle)
@@ -339,7 +358,9 @@ def self_test():
         except Exception as error:
             return ["raised %r" % error]
 
-    lines, old = drawn(scratch), drawn(legacy)
+    empty = os.path.join(scratch, "empty")
+    os.makedirs(empty)
+    lines, old, bare = drawn(scratch), drawn(legacy), drawn(empty)
 
     # A scoring under way: two arms scored, one read for security, the
     # scorer's tools, a scored trial's directory, the trial in hand, and the
@@ -404,9 +425,14 @@ def self_test():
     scored = {line.split()[0]: line for line in live[2:] if line.strip()}
     by_arm = {line.split()[0]: line for line in lines[2:] if line.strip()}
     old_by_arm = {line.split()[0]: line for line in old[2:] if line.strip()}
+    bare_arms = [line.split()[0] for line in bare[2:] if line.strip()]
     checks = [
-        ("every arm and the whole run get a line",
-         sorted(by_arm) == sorted(list(ROUND5_RUN) + ["all"])),
+        ("round 5's arms, the arms the records add, and the run get a line",
+         list(by_arm) == list(ROUND5_RUN) + ["hand", "all"]),
+        ("an arm outside round 5's shows its running trial",
+         "running hand-1, 3 min" in by_arm.get("hand", "")),
+        ("a root with no records yet draws round 5's arms alone",
+         bare_arms == list(ROUND5_RUN) + ["all"]),
         ("a completed trial counts toward its arm",
          " 1/15 " in by_arm.get("none", "")),
         ("a voided try counts as voided, its re-run as done",
@@ -421,10 +447,10 @@ def self_test():
         ("a change task in flight is not shown as a running build",
          "running" not in by_arm.get("skills", "")),
         ("the run's line counts every arm and estimates what is left",
-         " 2/75 " in by_arm.get("all", "")
+         " 2/90 " in by_arm.get("all", "")
          and "h left" in by_arm.get("all", "")),
         ("a root without offsets draws its counts and reads no time",
-         " 2/75 " in old_by_arm.get("all", "")
+         " 2/90 " in old_by_arm.get("all", "")
          and not any("min" in line or "h left" in line for line in old)),
         ("before scoring starts, no scoring lines are drawn",
          "Scored" not in lines and "Scored" not in old),
