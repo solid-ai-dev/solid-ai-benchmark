@@ -67,6 +67,7 @@ The margins:
 | Security probe pass rate | pp | 2 | 9 | round 3 |
 | Data-protection probe pass rate | pp | 10 | 30 | round 3 |
 | App code, lines and files | relative % | 20 | 40 | round 5 |
+| The ISO radar's axes, share of targets met | points | 5, Reliability 7 | 10 | round 6 |
 
 **Rules**
 
@@ -590,6 +591,18 @@ protection, design, maintainability, tests, economy. An axis is the share of
 its rows better than `none` minus the share worse, from −1 to +1. It comes
 as two SVGs, light and dark. Round 5d registers a radar sized by how far
 each row moved instead.
+
+**The ISO radar** (FR-12-12). From round 6 the axes are the eight
+characteristics of ISO/IEC 25010:2023, in the standard's order, and each is
+the share of its targets met: the `QT` rows of the requirements, each a pass
+or a fail per build. A sub-characteristic's share is averaged over the axis,
+then over the arm's trials; one with no target reads not measured, never 0 %.
+A build that does not install or boot fails Reliability's first target and
+is left out of every other axis. A marker turns only where the whole
+interval of the difference against `none` lies past the axis's margin
+(8.1.2): a filled ▲ up, a hollow ▽ down, a dot within. The cost sits above
+each radar, shown and not scored, and the appendix holds one table of
+sub-scores per axis. The decision is ADR-023.
 
 **Each approach in plain words** (FR-12-07):
 

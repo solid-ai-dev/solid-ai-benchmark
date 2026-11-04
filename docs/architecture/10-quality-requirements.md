@@ -9,3 +9,7 @@ measurable.
 The measurements behind them, the hidden suite's validation, the trial
 bounds and every run of the judge's control fixture, are in
 [validation.md](../validation.md).
+
+The targets the app under test is scored on, the `QT` rows of the same file,
+are the report's radar from round 6 (ADR-023): one row per target, under the
+standard's characteristic it refines.

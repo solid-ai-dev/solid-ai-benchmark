@@ -31,6 +31,27 @@ A trial is bounded by a budget of $100 and a timeout of two hours.
 
 At that pace, a two-hour trial stays under the cap.
 
+## The ISO radar's margins
+
+Sized on 2026-11-04, before round 6, from round 5c's 75 trials re-scored in
+round 5d's root: each axis's per-trial score, in points, and the pooled
+within-arm standard deviation over the five arms. The margin is half of it,
+rounded up to a whole point, and never under 5 points, so an axis the pilot's
+trials could not shake, or did not measure, still needs a visible move.
+
+| Axis | Pooled within-arm SD, points | Margin, points |
+| ---- | ---------------------------- | -------------- |
+| Functionality | 5.5 | 5 |
+| Performance | 0.0 | 5 |
+| Compatibility | not measured | 5 |
+| Usability | 0.0 | 5 |
+| Reliability | 13.8 | 7 |
+| Security | 5.4 | 5 |
+| Maintainability | 7.8 | 5 |
+| Flexibility | 0.0 | 5 |
+
+Reliability's 7 points is one build of 15, the margin round 5d gave it.
+
 ## Why three trials cannot prove
 
 | Test | With three paired differences |
