@@ -8,12 +8,23 @@ and the web-quality probes beside them.
 Both run as one script inside the trial's environment, because `grimp`, the
 application factory and the browser all live there. A probe that cannot run
 returns a missing metric naming what was absent; it never returns zero.
+
+    py tests/efficacy/probes.py --self-test
 """
 
+import argparse
 import io
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import lib  # noqa: E402
 
 # The package and the factory the specification fixes. Everything in here
 # reaches the trial only through those two names and the routes, never through
@@ -621,3 +632,227 @@ def web_quality(ctx, workspace):
     return ctx.measured(payload, invocation=outcome["argv"],
                         html_validity=html_validity(ctx, pages),
                         accessibility=accessibility(ctx, workspace, pages))
+
+
+# A build planted with one finding per design probe, so each probe's answer
+# can be checked against what was planted. `web.py` names Flask but is never
+# imported, so the plant needs nothing installed; `broken.py` does not parse.
+PLANTED_BUILD = {
+    "tariff/__init__.py": '''\
+"""A planted build."""
+import logging
+from decimal import Decimal
+
+from .rules import BulkRule, CouponRule, PercentageRule, Rule, TieredRule
+from .store import load
+
+__all__ = ["Product", "Catalog", "InvoiceLine", "Invoice", "Jurisdiction",
+           "PercentageRule", "BulkRule", "TieredRule", "CouponRule", "price",
+           "TariffError", "Extra"]
+
+log = logging.getLogger(__name__)
+
+
+class TariffError(Exception):
+    pass
+
+
+class Product:
+    pass
+
+
+class Catalog:
+    pass
+
+
+class InvoiceLine:
+    pass
+
+
+class Invoice:
+    pass
+
+
+class Extra:
+    pass
+
+
+def price(invoice, connection: "sqlite3.Connection" = None):
+    # see #123 for the rounding rule
+    return Decimal("0")
+
+
+def apply(rule, verbose: bool = False):
+    if verbose:
+        print("applying", rule)
+    return load(rule)
+''',
+    "tariff/rules.py": '''\
+from abc import ABC
+
+
+class Rule(ABC):
+    kind = "rule"
+
+
+class PercentageRule(Rule):
+    kind = "percent"
+
+
+class BulkRule(Rule):
+    kind = "bulk"
+
+
+class TieredRule(Rule):
+    kind = "tiered"
+
+
+class CouponRule(Rule):
+    kind = "coupon"
+
+
+def rate_for(rule):
+    if rule.kind == "percent":
+        return 1
+    elif rule.kind == "bulk":
+        return 2
+    elif rule.kind == "tiered":
+        return 3
+    return 0
+''',
+    "tariff/store.py": '''\
+import sqlite3
+
+
+def load(rule):
+    return sqlite3.connect(":memory:")
+''',
+    "tariff/web.py": '''\
+from decimal import Decimal
+
+import flask
+
+app = flask.Flask(__name__)
+
+
+@app.route("/total")
+def total():
+    return str(Decimal("2") * Decimal("3"))
+''',
+    "tariff/broken.py": "def broken(:\n",
+}
+
+
+def planted_context(python=None, failing=None):
+    """A scorer's context for the self-test: a real subprocess runner, or one
+    that reports every command failed with `failing`."""
+
+    def run(argv, cwd=None):
+        if failing:
+            return {"failed": failing, "argv": argv, "stdout": "",
+                    "stderr": "", "status": 1}
+        finished = subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, encoding="utf-8",
+                                  errors="replace")
+        return {"failed": None, "argv": argv, "stdout": finished.stdout,
+                "stderr": finished.stderr, "status": finished.returncode}
+
+    def measured(value, **extra):
+        return dict({"value": value, "missing": None}, **extra)
+
+    def absent(reason, **extra):
+        return dict({"value": None, "missing": reason}, **extra)
+
+    return Context(run=run, measured=measured, absent=absent,
+                   python=python or sys.executable, script=lambda name: None)
+
+
+def self_test():
+    """Prove each design probe reads what the planted build holds, and that a
+    probe which cannot run leaves its metric missing, never zero."""
+    workspace = tempfile.mkdtemp(prefix="efficacy-probes-")
+    try:
+        for name, text in PLANTED_BUILD.items():
+            path = os.path.join(workspace, *name.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with io.open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        roots = [os.path.join(workspace, "tariff")]
+        seen = {"files": 5}
+        metric = structure(planted_context(), workspace, roots, seen)
+        rootless = structure(planted_context(), workspace, [], seen)
+        broken = structure(planted_context(failing="exited 1"), workspace,
+                           roots, seen)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+    facts = metric.get("value") or {}
+    surface = facts.get("surface") or {}
+    isolation = facts.get("io_isolation") or {}
+    graph = facts.get("graph") or {}
+    probes = ("roles", "layering_violations", "money_in_routes",
+              "bool_parameters", "extension_points", "kind_ladders",
+              "surface", "io_isolation", "graph", "print_calls",
+              "exception_bases", "citations", "logging")
+    checks = [
+        ("every design probe answers in the one structure report",
+         metric["missing"] is None and all(key in facts for key in probes)),
+        ("a module's role follows what it imports",
+         facts.get("roles", {}).get("web.py") == "web"
+         and facts.get("roles", {}).get("store.py") == "persistence"
+         and facts.get("roles", {}).get("rules.py") == "domain"),
+        ("Decimal arithmetic inside a route is money in a route",
+         facts.get("money_in_routes") == [["web.py", "total"]]),
+        ("a bool parameter is named by file, function and argument",
+         ["__init__.py", "apply", "verbose"] in facts.get("bool_parameters", [])),
+        ("an abstract base over rule kinds is an extension point",
+         facts.get("extension_points", {}).get("rule_kinds") is True
+         and facts.get("extension_points", {}).get("export_formats") is False),
+        ("a three-deep conditional on a rule's kind is a kind ladder",
+         facts.get("kind_ladders") == [["rules.py", 3]]),
+        ("the public surface is read against the names the spec requires",
+         surface.get("missing") == ["Jurisdiction"]
+         and surface.get("extra") == ["Extra"]),
+        ("a price parameter annotated as a connection leaks IO",
+         isolation.get("leaked") == ["connection"]
+         and isolation.get("clean") is False),
+        ("the import graph is a measurement or a named absence",
+         ("modules" in graph) != ("error" in graph)),
+        ("a print call, a ticket citation and an exception base are findings",
+         facts.get("print_calls") == [["__init__.py", 46]]
+         and facts.get("citations") == [["__init__.py", 40]]
+         and facts.get("exception_bases")
+         == [["__init__.py", "TariffError", "Exception"]]),
+        ("logging without a NullHandler is reported as used and unhandled",
+         facts.get("logging") == {"used": True, "null_handler": False}),
+        ("a file that does not parse is named, and the rest are read",
+         [entry[0] for entry in facts.get("unparsed", [])]
+         == [os.path.join(workspace, "tariff", "broken.py")]
+         and facts.get("files_parsed") == 4),
+        ("without source roots the structure metric is missing, not zero",
+         rootless["value"] is None and "no source roots" in rootless["missing"]),
+        ("a probe that fails leaves its metric missing, with the command",
+         broken["value"] is None and "exited 1" in broken["missing"]
+         and broken.get("invocation")),
+    ]
+    for label, ok in checks:
+        print("  %-62s %s" % (label, "ok" if ok else "FAILED"))
+    passed = sum(1 for _, ok in checks if ok)
+    lib.print_verdict(passed == len(checks),
+                      "%d/%d self-test checks passed" % (passed, len(checks)))
+    return 0 if passed == len(checks) else 1
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--self-test", action="store_true",
+                        help="probe a planted build and check each answer; "
+                             "read no trial")
+    options = parser.parse_args(argv)
+    if options.self_test:
+        return self_test()
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
