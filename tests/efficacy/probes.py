@@ -127,25 +127,36 @@ report["roles"] = {os.path.basename(p): r for p, r in roles.items()}
 # the package's own imports, may import neither. A role says nothing here: a
 # module that imports Flask is web by that fact, so asking whether a domain
 # module imports Flask asks nothing.
-def type_checking_only(node):
+def never_on_import(node):
+    """An `if` whose body never runs on import: `if TYPE_CHECKING:`, which
+    only a type checker reads, and `if __name__ == "__main__":`, which runs
+    only for a script. Both are read by name, as a build writes them."""
     test = node.test
-    return ((isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
-            or (isinstance(test, ast.Attribute)
-                and test.attr == "TYPE_CHECKING"))
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Compare):
+        sides = [test.left] + list(test.comparators)
+        names = [side.id for side in sides if isinstance(side, ast.Name)]
+        values = [side.value for side in sides
+                  if isinstance(side, ast.Constant)]
+        return "__name__" in names and "__main__" in values
+    return False
 
 
 def import_time(tree):
     """The nodes that run when the module is imported. A function body does
     not, so an import inside one, the factory's lazy `from . import web` the
     specification allows, is not what `import tariff` loads; nor is an import
-    under `if TYPE_CHECKING:`, which only a type checker reads."""
+    under a guard that never holds on import."""
     pending = list(ast.iter_child_nodes(tree))
     while pending:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                              ast.Lambda)):
             continue
-        if isinstance(node, ast.If) and type_checking_only(node):
+        if isinstance(node, ast.If) and never_on_import(node):
             pending.extend(node.orelse)
             continue
         yield node
@@ -170,8 +181,10 @@ def resolve(base, parts):
         initializer = os.path.join(base, *(parts[:depth] + ["__init__.py"]))
         if initializer in TREES:
             found.append(initializer)
+    # A package wins over a module of the same name, as Python's finder has
+    # it.
     stem = os.path.join(base, *parts) if parts else base
-    for candidate in (stem + ".py", os.path.join(stem, "__init__.py")):
+    for candidate in (os.path.join(stem, "__init__.py"), stem + ".py"):
         if candidate in TREES:
             found.append(candidate)
             break
@@ -748,7 +761,8 @@ def web_quality(ctx, workspace):
 # outside what `import tariff` loads though the factory imports it lazily;
 # `db.py` is persistence by its imports and lies outside too; `data/store.py`
 # names Flask and the web module under `if TYPE_CHECKING:`, which loads
-# neither;
+# neither, and `__init__.py` names Werkzeug under a main guard; `data.py`
+# loses to the `data` package of the same name, as in Python;
 # `data/__init__.py` lies inside, as the initializer on the way to a module an
 # absolute import names; `broken.py` does not parse.
 PLANTED_BUILD = {
@@ -805,6 +819,10 @@ def apply(rule, verbose: bool = False):
 def create_app(database):
     from . import web
     return web.app
+
+
+if __name__ == "__main__":
+    import werkzeug  # noqa: F401
 ''',
     "tariff/rules.py": '''\
 from abc import ABC
@@ -843,6 +861,7 @@ def rate_for(rule):
 ''',
     "tariff/db.py": "import sqlite3\n\n\ndef connect():\n"
                     "    return sqlite3.connect(':memory:')\n",
+    "tariff/data.py": "import jinja2  # noqa: F401\n",
     "tariff/data/__init__.py": "import sqlite3  # noqa: F401\n",
     "tariff/data/store.py": '''\
 from typing import TYPE_CHECKING
@@ -906,7 +925,7 @@ def self_test():
             with io.open(path, "w", encoding="utf-8") as handle:
                 handle.write(text)
         roots = [os.path.join(workspace, "tariff")]
-        seen = {"files": 7}
+        seen = {"files": 8}
         metric = structure(planted_context(), workspace, roots, seen)
         headless = structure(planted_context(), workspace,
                              [os.path.join(workspace, "tariff", "rules.py")],
@@ -945,6 +964,13 @@ def self_test():
          not any(name == "flask" for _, name in
                  facts.get("layering_violations") or [])
          and "tariff/web.py" not in (facts.get("import_closure") or [])),
+        ("an import under a main guard loads nothing",
+         not any(name == "werkzeug" for _, name in
+                 facts.get("layering_violations") or [])),
+        ("a package wins over a module of its name, as in Python",
+         "tariff/data.py" not in (facts.get("import_closure") or [])
+         and not any(name == "jinja2" for _, name in
+                     facts.get("layering_violations") or [])),
         ("without a package entry the layering reading is missing, not zero",
          (headless.get("value") or {}).get("layering_violations") is None
          and (headless.get("value") or {}).get("files_parsed") == 1),
@@ -975,7 +1001,7 @@ def self_test():
         ("a file that does not parse is named, and the rest are read",
          [entry[0] for entry in facts.get("unparsed", [])]
          == [os.path.join(workspace, "tariff", "broken.py")]
-         and facts.get("files_parsed") == 6),
+         and facts.get("files_parsed") == 7),
         ("without source roots the structure metric is missing, not zero",
          rootless["value"] is None and "no source roots" in rootless["missing"]),
         ("a probe that fails leaves its metric missing, with the command",
