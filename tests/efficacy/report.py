@@ -1574,7 +1574,7 @@ def unrecorded_voids(root, sequence, recorded):
 
 
 def write_report(root, trials, table, results, seed, out_dir,
-                 withdrawn=None, cross=None):
+                 withdrawn=None, cross=None, iso=None):
     """The dated round report, written to `out_dir`.
 
     The directory has no default so a shakedown of the writer renders into
@@ -1584,6 +1584,8 @@ def write_report(root, trials, table, results, seed, out_dir,
     from `table` and `results`.
     `cross` is the other vendor's judge's reading, already applied to
     `results`.
+    `iso` is the ISO reading, computed here when not given and the round
+    draws that radar.
     """
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
@@ -1621,8 +1623,8 @@ def write_report(root, trials, table, results, seed, out_dir,
     scans = reaches(root)
     active = active_contrasts(trials)
     os.makedirs(out_dir, exist_ok=True)
-    iso = (iso_reading(trials, seed, withdrawn or {}) if iso_rules(trials)
-           else None)
+    if iso is None and iso_rules(trials):
+        iso = iso_reading(trials, seed, withdrawn or {})
     if iso:
         panels = iso_panels(table, iso[0], iso[1], active)
         draw = iso_radar_svg
@@ -2260,7 +2262,7 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
         lines.extend(iso_axis_lines(trials, iso[0],
                                     [BARE] + by_cost(table, [
                                         pair[0] for pair in against]),
-                                    iso[1], iso[2]))
+                                    iso[1], iso[2], k))
     else:
         lines.extend(["", "## The radar's axes, row by row", "",
                       "Each table is one axis of the radar: every "
@@ -4244,10 +4246,12 @@ ISO_READING = (
     % (BARE, BARE))
 
 
-def iso_axis_lines(trials, iso, arms, results=None, withdrawn=()):
+def iso_axis_lines(trials, iso, arms, results=None, withdrawn=(),
+                   blocks=None):
     """One table per axis: its sub-characteristics, each arm's mean share
     of their targets met, and the targets each asks; a target reading a
-    metric in `withdrawn` is not measured."""
+    metric in `withdrawn` is not measured, and a contrast over fewer pairs
+    than `blocks` names its count."""
     lines = []
     per_trial = {name: iso_trial_scores(trial, withdrawn)
                  for name, trial in trials.items()}
@@ -4282,7 +4286,7 @@ def iso_axis_lines(trials, iso, arms, results=None, withdrawn=()):
             for arm in arms:
                 contrast = results.get("iso:" + axis, {}).get(
                     "%s-%s" % (arm, BARE))
-                cells.append(contrast_cell(contrast, True)
+                cells.append(contrast_cell(contrast, True, blocks)
                              if contrast else "—")
             lines.append("| against `%s` | %s | a marker past %d points |"
                          % (BARE, " | ".join(cells), ISO_MARGINS[axis]))
@@ -4294,6 +4298,19 @@ def iso_rules(trials):
     """Whether the run is read with the ISO radar: every round after the
     pilot, whose rounds registered radars of their own."""
     return not is_round5(trials)
+
+
+def aggregate(seed, trials, table, results, withdrawn, check, iso):
+    """What `aggregate.json` keeps beside the report: every row, contrast
+    and method the documents cite, and the ISO reading where the round
+    draws that radar, so each of its cells can be checked too."""
+    payload = {"seed": seed, "table": table, "results": results,
+               "blocks": blocks_state(trials), "withdrawn": withdrawn,
+               "cross_check": check}
+    if iso:
+        payload["iso"] = {"table": iso[0], "results": iso[1],
+                          "withdrawn": list(iso[2])}
+    return payload
 
 
 def iso_reading(trials, seed, withdrawn=()):
@@ -5635,6 +5652,33 @@ def iso_checks(seed):
                    and installability[0].count(NOT_MEASURED) == 2,
                    (kept, dropped, installability)))
 
+    # A contrast over fewer pairs than the round's blocks names its count
+    # in the axis's table, as the metric tables do.
+    sparse = {"iso:Security": {"label": "Security", "direction": UP,
+                               "values": {"none": {1: 40.0, 2: 40.0},
+                                          "hybrid": {1: 50.0, 2: 60.0}}}}
+    for axis, _ in ISO_AXES:
+        sparse.setdefault("iso:" + axis, {"label": axis, "direction": UP,
+                                          "values": {}})
+    results = iso_contrasts(sparse, seed)
+    lines = iso_axis_lines(run, sparse, ["none", "hybrid"], results, (), 15)
+    against = [line for line in lines if line.startswith("| against `none`")]
+    checks.append(("an axis contrast over fewer pairs than blocks names its "
+                   "count", any("(2 pairs)" in line for line in against),
+                   against[:1]))
+
+    # The aggregate keeps the ISO reading, so a cell marked as not computed
+    # by BCa leads to a method the file holds.
+    payload = aggregate(seed, run, {}, {}, {}, None,
+                        iso_reading(run, seed, ("install",)))
+    got = (sorted(payload.get("iso", {})),
+           payload.get("iso", {}).get("withdrawn"),
+           "iso:Security" in payload.get("iso", {}).get("results", {}),
+           "iso" in aggregate(seed, run, {}, {}, {}, None, None))
+    checks.append(("the aggregate keeps the ISO reading where the round "
+                   "draws it", got == (["results", "table", "withdrawn"],
+                                       ["install"], True, False), got))
+
     # Every target reads a metric row, a probe security.py runs, or a
     # reading of the radar's own; a target pointed elsewhere would read not
     # measured for every trial without failing.
@@ -6180,16 +6224,15 @@ def main(argv):
             return 2
         check = cross_check(trials, other, options.seed)
         disagree(results, check)
+    iso = (iso_reading(trials, options.seed, withdrawn) if iso_rules(trials)
+           else None)
     target = write_report(options.root, trials, table, results, options.seed,
-                          out_dir, withdrawn, check)
+                          out_dir, withdrawn, check, iso)
 
     with io.open(os.path.join(scoring_area(options.root), "aggregate.json"),
                  "w", encoding="utf-8") as handle:
-        json.dump({"seed": options.seed, "table": table, "results": results,
-                   "blocks": blocks_state(trials),
-                   "withdrawn": withdrawn,
-                   "cross_check": check},
-                  handle, indent=2, sort_keys=True)
+        json.dump(aggregate(options.seed, trials, table, results, withdrawn,
+                            check, iso), handle, indent=2, sort_keys=True)
     print("Report: %s" % target)
 
     # An earlier round read by round 5d's rules is post-hoc: its own page,
