@@ -119,16 +119,80 @@ for path, tree in TREES.items():
         roles[path] = "domain"
 report["roles"] = {os.path.basename(p): r for p, r in roles.items()}
 
+
+
 # The contract the specification states in its own words: `import tariff`
-# works without Flask and without touching the database, so no domain module
-# may reach either.
-violations = []
-for path, tree in TREES.items():
-    if roles[path] != "domain":
-        continue
-    for name in sorted(imported_names(tree) & (WEB | STORE)):
-        violations.append([os.path.basename(path), name])
-report["layering_violations"] = violations
+# works without Flask and without touching the database. So the modules that
+# import loads, the package's `__init__` and every module it reaches through
+# the package's own imports, may import neither. A role says nothing here: a
+# module that imports Flask is web by that fact, so asking whether a domain
+# module imports Flask asks nothing.
+def resolve(base, parts):
+    stem = os.path.join(base, *parts) if parts else base
+    for candidate in (stem + ".py", os.path.join(stem, "__init__.py")):
+        if candidate in TREES:
+            return candidate
+    return None
+
+
+def package_imports(path, tree):
+    found = []
+    here = os.path.dirname(path)
+    top = os.path.dirname(ENTRY)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = here
+                for _ in range(node.level - 1):
+                    base = os.path.dirname(base)
+                parts = node.module.split(".") if node.module else []
+            elif node.module and node.module.split(".")[0] == PACKAGE:
+                base, parts = top, node.module.split(".")[1:]
+            else:
+                continue
+            target = resolve(base, parts)
+            if target:
+                found.append(target)
+            for alias in node.names:
+                target = resolve(base, parts + [alias.name])
+                if target:
+                    found.append(target)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = alias.name.split(".")
+                if parts[0] == PACKAGE:
+                    target = resolve(top, parts[1:])
+                    if target:
+                        found.append(target)
+    return found
+
+
+ENTRY = None
+for path in TREES:
+    if os.path.basename(path) == "__init__.py" and os.path.basename(
+            os.path.dirname(path)) == PACKAGE:
+        ENTRY = path
+if ENTRY is None:
+    for path in TREES:
+        if os.path.basename(path) == PACKAGE + ".py":
+            ENTRY = path
+if ENTRY is None:
+    report["layering_violations"] = None
+    report["import_closure"] = None
+else:
+    closure, queue = [], [ENTRY]
+    while queue:
+        path = queue.pop(0)
+        if path in closure:
+            continue
+        closure.append(path)
+        queue.extend(package_imports(path, TREES[path]))
+    violations = []
+    for path in closure:
+        for name in sorted(imported_names(TREES[path]) & (WEB | STORE)):
+            violations.append([os.path.basename(path), name])
+    report["layering_violations"] = violations
+    report["import_closure"] = [os.path.basename(path) for path in closure]
 
 
 def is_route(node):
@@ -636,7 +700,9 @@ def web_quality(ctx, workspace):
 
 # A build planted with one finding per design probe, so each probe's answer
 # can be checked against what was planted. `web.py` names Flask but is never
-# imported, so the plant needs nothing installed; `broken.py` does not parse.
+# imported, so the plant needs nothing installed, and it lies outside what
+# `import tariff` loads; `store.py` lies inside it, through an absolute
+# import; `broken.py` does not parse.
 PLANTED_BUILD = {
     "tariff/__init__.py": '''\
 """A planted build."""
@@ -644,7 +710,7 @@ import logging
 from decimal import Decimal
 
 from .rules import BulkRule, CouponRule, PercentageRule, Rule, TieredRule
-from .store import load
+from .rules import load
 
 __all__ = ["Product", "Catalog", "InvoiceLine", "Invoice", "Jurisdiction",
            "PercentageRule", "BulkRule", "TieredRule", "CouponRule", "price",
@@ -689,6 +755,8 @@ def apply(rule, verbose: bool = False):
 ''',
     "tariff/rules.py": '''\
 from abc import ABC
+
+from tariff.store import load  # noqa: F401
 
 
 class Rule(ABC):
@@ -780,6 +848,9 @@ def self_test():
         roots = [os.path.join(workspace, "tariff")]
         seen = {"files": 5}
         metric = structure(planted_context(), workspace, roots, seen)
+        headless = structure(planted_context(), workspace,
+                             [os.path.join(workspace, "tariff", "rules.py")],
+                             seen)
         rootless = structure(planted_context(), workspace, [], seen)
         broken = structure(planted_context(failing="exited 1"), workspace,
                            roots, seen)
@@ -800,6 +871,13 @@ def self_test():
          facts.get("roles", {}).get("web.py") == "web"
          and facts.get("roles", {}).get("store.py") == "persistence"
          and facts.get("roles", {}).get("rules.py") == "domain"),
+        ("a module import tariff loads that reaches the store is a violation",
+         facts.get("layering_violations") == [["store.py", "sqlite3"]]),
+        ("a module the package never imports is outside the layering reading",
+         facts.get("import_closure") == ["__init__.py", "rules.py", "store.py"]),
+        ("without a package entry the layering reading is missing, not zero",
+         (headless.get("value") or {}).get("layering_violations") is None
+         and (headless.get("value") or {}).get("files_parsed") == 1),
         ("Decimal arithmetic inside a route is money in a route",
          facts.get("money_in_routes") == [["web.py", "total"]]),
         ("a bool parameter is named by file, function and argument",

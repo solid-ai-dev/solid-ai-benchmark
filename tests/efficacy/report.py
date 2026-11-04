@@ -388,8 +388,8 @@ METRICS = (
 
     ("extension_points", "Extension axes present, of three", UP,
      extension_points),
-    ("layering_violations", "Domain modules reaching Flask or the database",
-     DOWN, lambda t: structure_count(t, "layering_violations")),
+    ("layering_violations", "Modules import tariff loads that reach Flask or "
+     "the database", DOWN, lambda t: structure_count(t, "layering_violations")),
     ("money_in_routes", "Routes doing pricing arithmetic", DOWN,
      lambda t: structure_count(t, "money_in_routes")),
     ("bool_parameters", "Boolean parameters", DOWN,

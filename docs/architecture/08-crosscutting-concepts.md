@@ -310,7 +310,7 @@ The scorer probes each build's structure directly (FR-09-06).
 
 | Probe | Asks |
 | ----- | ---- |
-| Layering | Does the domain import neither Flask nor persistence? Do routes do no `Decimal` arithmetic? |
+| Layering | Do the modules `import tariff` loads, its `__init__` and what that reaches through the package's own imports, import neither Flask nor persistence? Do routes do no `Decimal` arithmetic? |
 | Import graph | Mutual imports, and the domain modules' mean instability (Martin), through `grimp` |
 | Extension points | Can a discount kind, a jurisdiction or an export format be added without editing existing code? Per axis |
 | Kind ladders | Conditionals that dispatch on a rule's kind |
