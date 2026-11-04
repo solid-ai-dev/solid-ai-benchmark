@@ -127,15 +127,26 @@ report["roles"] = {os.path.basename(p): r for p, r in roles.items()}
 # the package's own imports, may import neither. A role says nothing here: a
 # module that imports Flask is web by that fact, so asking whether a domain
 # module imports Flask asks nothing.
+def type_checking_only(node):
+    test = node.test
+    return ((isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
+            or (isinstance(test, ast.Attribute)
+                and test.attr == "TYPE_CHECKING"))
+
+
 def import_time(tree):
-    """The nodes that run when the module is imported: a function body does
+    """The nodes that run when the module is imported. A function body does
     not, so an import inside one, the factory's lazy `from . import web` the
-    specification allows, is not what `import tariff` loads."""
+    specification allows, is not what `import tariff` loads; nor is an import
+    under `if TYPE_CHECKING:`, which only a type checker reads."""
     pending = list(ast.iter_child_nodes(tree))
     while pending:
         node = pending.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                              ast.Lambda)):
+            continue
+        if isinstance(node, ast.If) and type_checking_only(node):
+            pending.extend(node.orelse)
             continue
         yield node
         pending.extend(ast.iter_child_nodes(node))
@@ -735,7 +746,9 @@ def web_quality(ctx, workspace):
 # can be checked against what was planted. `web.py` names Flask but is never
 # imported at import time, so the plant needs nothing installed, and it lies
 # outside what `import tariff` loads though the factory imports it lazily;
-# `db.py` is persistence by its imports and lies outside too;
+# `db.py` is persistence by its imports and lies outside too; `data/store.py`
+# names Flask and the web module under `if TYPE_CHECKING:`, which loads
+# neither;
 # `data/__init__.py` lies inside, as the initializer on the way to a module an
 # absolute import names; `broken.py` does not parse.
 PLANTED_BUILD = {
@@ -832,6 +845,13 @@ def rate_for(rule):
                     "    return sqlite3.connect(':memory:')\n",
     "tariff/data/__init__.py": "import sqlite3  # noqa: F401\n",
     "tariff/data/store.py": '''\
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from flask import Flask  # noqa: F401
+    from tariff import web  # noqa: F401
+
+
 def load(rule):
     return rule
 ''',
@@ -921,6 +941,10 @@ def self_test():
          facts.get("import_closure")
          == ["tariff/__init__.py", "tariff/rules.py", "tariff/data/__init__.py",
              "tariff/data/store.py"]),
+        ("an import under if TYPE_CHECKING loads nothing",
+         not any(name == "flask" for _, name in
+                 facts.get("layering_violations") or [])
+         and "tariff/web.py" not in (facts.get("import_closure") or [])),
         ("without a package entry the layering reading is missing, not zero",
          (headless.get("value") or {}).get("layering_violations") is None
          and (headless.get("value") or {}).get("files_parsed") == 1),
