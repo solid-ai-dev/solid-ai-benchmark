@@ -165,11 +165,14 @@ def import_time(tree):
 
 
 def import_time_names(tree):
+    """The top-level names a module imports at import time. A relative
+    import names the package's own module, whatever it is called, and is
+    followed by `package_imports` instead."""
     names = set()
     for node in import_time(tree):
         if isinstance(node, ast.Import):
             names.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             names.add(node.module.split(".")[0])
     return names
 
@@ -763,7 +766,8 @@ def web_quality(ctx, workspace):
 # `db.py` is persistence by its imports and lies outside too; `data/store.py`
 # names Flask and the web module under `if TYPE_CHECKING:`, which loads
 # neither, and sqlite3 under an inverted main guard, which does run on
-# import; `__init__.py` names Werkzeug under a main guard; `data.py`
+# import, and imports the package's own `data/sqlalchemy.py` relatively;
+# `__init__.py` names Werkzeug under a main guard; `data.py`
 # loses to the `data` package of the same name, as in Python;
 # `data/__init__.py` lies inside, as the initializer on the way to a module an
 # absolute import names; `broken.py` does not parse.
@@ -875,10 +879,13 @@ if TYPE_CHECKING:
 if __name__ != "__main__":
     import sqlite3  # noqa: F401
 
+from .sqlalchemy import nothing  # noqa: E402, F401
+
 
 def load(rule):
     return rule
 ''',
+    "tariff/data/sqlalchemy.py": "nothing = None\n",
     "tariff/web.py": '''\
 from decimal import Decimal
 
@@ -930,7 +937,7 @@ def self_test():
             with io.open(path, "w", encoding="utf-8") as handle:
                 handle.write(text)
         roots = [os.path.join(workspace, "tariff")]
-        seen = {"files": 8}
+        seen = {"files": 9}
         metric = structure(planted_context(), workspace, roots, seen)
         headless = structure(planted_context(), workspace,
                              [os.path.join(workspace, "tariff", "rules.py")],
@@ -961,13 +968,17 @@ def self_test():
         ("an inverted main guard runs on import, so its import counts",
          ["tariff/data/store.py", "sqlite3"]
          in (facts.get("layering_violations") or [])),
+        ("a relative import names the package's module, not a driver",
+         "tariff/data/sqlalchemy.py" in (facts.get("import_closure") or [])
+         and not any(name == "sqlalchemy" for _, name in
+                     facts.get("layering_violations") or [])),
         ("an initializer on the way to an imported module is loaded too",
          "tariff/data/__init__.py" in facts.get("import_closure", [])
          and "tariff/data/store.py" in facts.get("import_closure", [])),
         ("an import inside a function is outside what import tariff loads",
          facts.get("import_closure")
          == ["tariff/__init__.py", "tariff/rules.py", "tariff/data/__init__.py",
-             "tariff/data/store.py"]),
+             "tariff/data/store.py", "tariff/data/sqlalchemy.py"]),
         ("an import under if TYPE_CHECKING loads nothing",
          not any(name == "flask" for _, name in
                  facts.get("layering_violations") or [])
@@ -1009,7 +1020,7 @@ def self_test():
         ("a file that does not parse is named, and the rest are read",
          [entry[0] for entry in facts.get("unparsed", [])]
          == [os.path.join(workspace, "tariff", "broken.py")]
-         and facts.get("files_parsed") == 7),
+         and facts.get("files_parsed") == 8),
         ("without source roots the structure metric is missing, not zero",
          rootless["value"] is None and "no source roots" in rootless["missing"]),
         ("a probe that fails leaves its metric missing, with the command",
