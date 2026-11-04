@@ -1621,7 +1621,8 @@ def write_report(root, trials, table, results, seed, out_dir,
     scans = reaches(root)
     active = active_contrasts(trials)
     os.makedirs(out_dir, exist_ok=True)
-    iso = iso_reading(trials, seed) if iso_rules(trials) else None
+    iso = (iso_reading(trials, seed, withdrawn or {}) if iso_rules(trials)
+           else None)
     if iso:
         panels = iso_panels(table, iso[0], iso[1], active)
         draw = iso_radar_svg
@@ -2259,7 +2260,7 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
         lines.extend(iso_axis_lines(trials, iso[0],
                                     [BARE] + by_cost(table, [
                                         pair[0] for pair in against]),
-                                    iso[1]))
+                                    iso[1], iso[2]))
     else:
         lines.extend(["", "## The radar's axes, row by row", "",
                       "Each table is one axis of the radar: every "
@@ -3965,12 +3966,13 @@ def target_met(trial, source, condition, threshold):
     return value >= threshold if condition == AT_LEAST else value <= threshold
 
 
-def iso_trial_scores(trial):
+def iso_trial_scores(trial, withdrawn=()):
     """One trial on every axis, as {axis: {sub-characteristic: score}}.
 
     A sub-score is the share of its targets met, over the targets measured,
     and None where none was. A broken build is scored on Reliability alone,
-    where the install target fails, and reads None on every other axis.
+    where the install target fails, and reads None on every other axis. A
+    target reading a metric in `withdrawn` is not measured.
     """
     broken = works(trial) != 1.0
     scores = {}
@@ -3980,8 +3982,12 @@ def iso_trial_scores(trial):
             if broken and axis != BROKEN_AXIS:
                 per_sub[sub] = None
                 continue
+
+            # A withdrawn metric's number is no result, on the radar as in
+            # the tables, so its target drops out rather than reads as met.
             met = [target_met(trial, source, condition, threshold)
-                   for _, source, condition, threshold in targets]
+                   for _, source, condition, threshold in targets
+                   if source not in withdrawn]
             measured = [outcome for outcome in met if outcome is not None]
             per_sub[sub] = (sum(measured) / len(measured) if measured
                             else None)
@@ -3997,15 +4003,16 @@ def iso_axis_score(per_sub):
     return 100.0 * statistics.fmean(measured) if measured else None
 
 
-def iso_table(trials):
+def iso_table(trials, withdrawn=()):
     """The ISO axes as rows of a table, one row per axis under the key
     `iso:<axis>`, each trial's score in points, better up, so the contrast
-    machinery reads them like any other row."""
+    machinery reads them like any other row; `withdrawn` names the metrics
+    no target may read."""
     table = {}
     for axis, _ in ISO_AXES:
         table["iso:" + axis] = {"label": axis, "direction": UP, "values": {}}
     for name, trial in sorted(trials.items()):
-        scores = iso_trial_scores(trial)
+        scores = iso_trial_scores(trial, withdrawn)
         for axis, _ in ISO_AXES:
             row = table["iso:" + axis]["values"]
             row.setdefault(arm_of(name), {})[index_of(name)] = iso_axis_score(
@@ -4061,9 +4068,12 @@ def iso_panels(table, iso, results, active):
             contrast = results.get(key, {}).get(name, {})
             marker = (iso_marker(contrast) if score is not None
                       and bare is not None else None)
+
+            # The move shown is the contrast's own mean, over the blocks it
+            # paired, so its sign agrees with the marker where a broken
+            # build left the two arms' means over different blocks.
             axes.append((axis, score, bare, marker,
-                         None if score is None or bare is None
-                         else score - bare))
+                         None if marker is None else contrast.get("mean")))
         panels.append((arm, cost_line(cost, bare_cost), axes))
     return panels
 
@@ -4234,11 +4244,12 @@ ISO_READING = (
     % (BARE, BARE))
 
 
-def iso_axis_lines(trials, iso, arms, results=None):
+def iso_axis_lines(trials, iso, arms, results=None, withdrawn=()):
     """One table per axis: its sub-characteristics, each arm's mean share
-    of their targets met, and the targets each asks."""
+    of their targets met, and the targets each asks; a target reading a
+    metric in `withdrawn` is not measured."""
     lines = []
-    per_trial = {name: iso_trial_scores(trial)
+    per_trial = {name: iso_trial_scores(trial, withdrawn)
                  for name, trial in trials.items()}
     for axis, subs in ISO_AXES:
         lines.extend(["### %s" % axis, ""])
@@ -4285,11 +4296,12 @@ def iso_rules(trials):
     return not is_round5(trials)
 
 
-def iso_reading(trials, seed):
-    """The ISO radar's table and its contrasts against the bare arm, as one
-    pair, for a run read with it."""
-    iso = iso_table(trials)
-    return iso, iso_contrasts(iso, seed, crossed_labels(trials))
+def iso_reading(trials, seed, withdrawn=()):
+    """The ISO radar's table, its contrasts against the bare arm and the
+    metrics withdrawn from it, as one triple, for a run read with it."""
+    withdrawn = tuple(withdrawn)
+    iso = iso_table(trials, withdrawn)
+    return iso, iso_contrasts(iso, seed, crossed_labels(trials)), withdrawn
 
 
 # How the plain report reads the ISO radar, under it.
@@ -5586,6 +5598,42 @@ def iso_checks(seed):
     unread = iso_marker({"verdict": "not computed"})
     checks.append(("an axis that could not be read carries no marker",
                    unread is None, unread))
+
+    # The move shown beside a marker is the contrast's mean over the blocks
+    # it paired, not the difference of the arms' means over every trial: a
+    # broken bare build leaves those over different blocks, with a sign of
+    # their own.
+    bare = {1: 40.0, 2: 40.0, 3: None}
+    ours = {1: 50.0, 2: 50.0, 3: 0.0}
+    iso = {"iso:Security": {"label": "Security", "direction": UP,
+                            "values": {"none": bare, "hybrid": ours}}}
+    for axis, _ in ISO_AXES:
+        iso.setdefault("iso:" + axis, {"label": axis, "direction": UP,
+                                       "values": {}})
+    results = iso_contrasts(iso, seed)
+    table = {"cost_usd": {"values": {"none": {1: 4.0}, "hybrid": {1: 8.0}}}}
+    axes = iso_panels(table, iso, results, [("hybrid", "none")])[0][2]
+    got = next((score, bare, moved) for axis, score, bare, _, moved in axes
+               if axis == "Security")
+    checks.append(("the move shown is the contrast's mean over the blocks "
+                   "it paired", got == (100 / 3, 40.0, 10.0), got))
+
+    # A withdrawn metric's target drops out of the radar and its tables, as
+    # its row does from the contrasts.
+    trial = planted(probes={"password_at_rest": True,
+                            "account_enumeration": False})
+    kept = iso_trial_scores(trial)["Security"]["Confidentiality"]
+    dropped = iso_trial_scores(
+        trial, ("probe:account_enumeration",))["Security"]["Confidentiality"]
+    run = {"hybrid-1": planted(), "none-1": planted()}
+    lines = iso_axis_lines(run, iso_table(run, ("install",)),
+                           ["none", "hybrid"], None, ("install",))
+    installability = [line for line in lines
+                      if line.startswith("| Installability |")]
+    checks.append(("a withdrawn metric's target is not measured",
+                   kept == 0.5 and dropped == 1.0
+                   and installability[0].count(NOT_MEASURED) == 2,
+                   (kept, dropped, installability)))
 
     # Every target reads a metric row, a probe security.py runs, or a
     # reading of the radar's own; a target pointed elsewhere would read not
