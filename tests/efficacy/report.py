@@ -2026,14 +2026,28 @@ def consistency_reading(trials):
     return "inconclusive"
 
 
-def plain_arm_lines(trials, table, results, arm, length):
+def iso_axis_moves(iso, name):
+    """Each ISO axis's move for one contrast, in the radar's order, as
+    the markers read it: +1 better, -1 worse, 0 within the margin, None
+    where it could not be read; the shape the plain words follow."""
+    moves = []
+    for axis, _ in ISO_AXES:
+        marker = iso_marker(iso[1].get("iso:" + axis, {}).get(name, {}))
+        moves.append((axis, {"better": 1.0, "worse": -1.0,
+                             "dot": 0.0}.get(marker)))
+    return moves
+
+
+def plain_arm_lines(trials, table, results, arm, length, iso=None):
     """One approach against the bare arm, in plain words: what it did
     better, what it did worse with the numbers a reader would ask for, and
-    its verdict."""
+    its verdict. With `iso`, the axes are the ISO radar's, as its markers
+    read them, and the cost gets a line of its own."""
     name = "%s-%s" % (arm, BARE)
-    scores = cluster_scores(results, name)
+    scores = (iso_axis_moves(iso, name) if iso
+              else cluster_scores(results, name))
     verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
-    better = [PLAIN_AXES[axis] for axis, value in scores
+    better = [PLAIN_AXES.get(axis, axis.lower()) for axis, value in scores
               if value is not None and value > 0]
     # The runs that fell short are counted whatever the reliability axis
     # reads, because one broken build among many can leave it neutral.
@@ -2064,7 +2078,7 @@ def plain_arm_lines(trials, table, results, arm, length):
                          if mean is not None and bare is not None
                          else "cost and time")
         else:
-            worse.append(PLAIN_AXES[axis])
+            worse.append(PLAIN_AXES.get(axis, axis.lower()))
     size = ("%s lines" % format(length, ",")) if length else "no file"
     lines = ["### `%s`" % arm, "",
              "%s (%s)." % (sentence_case(PLAIN_ARMS.get(
@@ -2073,6 +2087,16 @@ def plain_arm_lines(trials, table, results, arm, length):
                  % (spoken(better) if better else "nothing clearly"))
     lines.append("- Worse at: %s." % ("; ".join(worse) if worse
                                       else "nothing clearly"))
+
+    # Cost is shown beside the ISO radar and not scored on it, so it gets a
+    # line of its own rather than an axis.
+    if iso:
+        mean = arm_mean(table, "cost_usd", arm)
+        bare = arm_mean(table, "cost_usd", BARE)
+        lines.append("- Cost: %s." % (
+            "about $%.2f a run, against $%.2f with no rules file"
+            % (mean, bare) if mean is not None and bare is not None
+            else NOT_MEASURED))
     if shortfall and not noted:
         lines.append("- Noted, though reliability was not clearly worse "
                      "overall: %s." % ", ".join(shortfall))
@@ -2177,7 +2201,7 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
                   "## Each approach", "", PLAIN_VERDICT_RULE, ""])
     for arm in arms:
         lines.extend(plain_arm_lines(trials, table, results, arm,
-                                     context_lines(arm)))
+                                     context_lines(arm), iso))
         lines.append("")
     present = {arm_of(name) for name in trials}
     if is_round5d(trials):
@@ -5678,6 +5702,32 @@ def iso_checks(seed):
     checks.append(("the aggregate keeps the ISO reading where the round "
                    "draws it", got == (["results", "table", "withdrawn"],
                                        ["install"], True, False), got))
+
+    # The plain words follow the ISO markers, not the pilot's axes: a
+    # Functionality better and a Reliability dot read as functionality,
+    # with the cost on a line of its own.
+    iso_results = {"iso:" + axis: {"hybrid-none": {"verdict": "held"}}
+                   for axis, _ in ISO_AXES}
+    iso_results["iso:Functionality"]["hybrid-none"] = {"verdict": "better"}
+    iso_results["iso:Usability"]["hybrid-none"] = {"verdict": "worse"}
+    planted_results = {key: {"hybrid-none": {"verdict": "better" if key
+                                             == "task_success" else "held"}}
+                       for key in ANSWERED + ("reliability",)}
+    for _, keys in RADAR_AXES:
+        for key in keys:
+            planted_results.setdefault(key, {"hybrid-none": {
+                "verdict": "worse"}})
+    table = {"cost_usd": {"values": {"none": {1: 4.0}, "hybrid": {1: 8.8}}},
+             "task_success": {"values": {"hybrid": {1: 1.0}}},
+             "install": {"values": {"hybrid": {1: 1.0}}}}
+    words = plain_arm_lines({}, table, planted_results, "hybrid", 516,
+                            ({}, iso_results, ()))
+    checks.append(("the plain words follow the ISO markers, with the cost "
+                   "on its own line",
+                   "- Better than no rules file at: functionality." in words
+                   and "- Worse at: usability." in words
+                   and "- Cost: about $8.80 a run, against $4.00 with no "
+                   "rules file." in words, words[:8]))
 
     # Every target reads a metric row, a probe security.py runs, or a
     # reading of the radar's own; a target pointed elsewhere would read not
