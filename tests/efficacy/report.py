@@ -4120,7 +4120,7 @@ def iso_radar_svg(panels, theme):
     `iso_panels` gives them: the target ring, the bare arm's outline, the
     arm's shape, a marker per axis and the cost line above."""
     colors = dict(RADAR_THEMES[theme], **ISO_COLOURS[theme])
-    width, size, radius = 1000, 460, 120
+    width, size, radius = 1200, 460, 120
     rows = (len(panels) + 1) // 2
     top = 60
     height = top + rows * size
@@ -4189,23 +4189,26 @@ def iso_radar_svg(panels, theme):
                    'stroke-width="1.5" stroke-dasharray="5 3"/>'
                    % (ring(cx, cy, 1.0), colors["target"]))
 
-        # The bare arm's outline, thin and unfilled. An axis it did not
-        # measure sits at the centre.
-        bare = [point(cx, cy, (bare or 0.0) / 100.0, index)
-                for index, (_, _, bare, _, _) in enumerate(axes)]
+        # The bare arm's outline, thin and unfilled, then the arm's shape.
+        # An axis not measured gets no vertex: the shape passes it by, where
+        # a measured 0 % would pull it to the centre.
+        bare = [point(cx, cy, bare / 100.0, index)
+                for index, (_, _, bare, _, _) in enumerate(axes)
+                if bare is not None]
         out.append('<polygon points="%s" fill="none" stroke="%s" '
                    'stroke-width="1.5"/>'
                    % (" ".join("%.1f,%.1f" % xy for xy in bare),
                       colors["bare"]))
-        shape = [point(cx, cy, (score or 0.0) / 100.0, index)
-                 for index, (_, score, _, _, _) in enumerate(axes)]
+        shape = [point(cx, cy, score / 100.0, index)
+                 for index, (_, score, _, _, _) in enumerate(axes)
+                 if score is not None]
         out.append('<polygon points="%s" fill="%s" fill-opacity="0.6" '
                    'stroke="%s" stroke-width="2" stroke-linejoin="round"/>'
                    % (" ".join("%.1f,%.1f" % xy for xy in shape),
                       colors["fill"], colors["series"]))
-        for index, ((axis, score, _, marker, moved), (x, y)) in enumerate(
-                zip(axes, shape)):
-            if marker:
+        for index, (axis, score, _, marker, moved) in enumerate(axes):
+            if marker and score is not None:
+                x, y = point(cx, cy, score / 100.0, index)
                 out.append(marker_svg(x, y, {"better": "up", "worse": "down",
                                              "dot": "dot"}[marker], colors))
             lx, ly = point(cx, cy, 1.3, index)
@@ -5804,6 +5807,45 @@ def iso_checks(seed):
                    "error" not in trees and drawn["light"] != drawn["dark"]
                    and all(shape == expected for shape in got.values()),
                    got))
+
+    # An axis not measured gets no vertex, so the shapes have one point per
+    # measured axis, seven of eight here, and a measured 0 % still has its
+    # point at the centre.
+    light = trees.get("light", ElementTree.Element("svg"))
+    filled = [polygon for polygon in light.iter(space + "polygon")
+              if polygon.get("fill-opacity")]
+    outlines = [polygon for polygon in light.iter(space + "polygon")
+                if polygon.get("stroke") == ISO_COLOURS["light"]["bare"]]
+    zeroed = [(axis, 0.0 if axis == "Compatibility" else score, bare,
+               marker, moved) for axis, score, bare, marker, moved in axes]
+    zero_tree = ElementTree.fromstring(iso_radar_svg(
+        [("hybrid", "$1.00/run", zeroed)], "light"))
+    zero_filled = [polygon for polygon in zero_tree.iter(space + "polygon")
+                   if polygon.get("fill-opacity")]
+    got = ([len(polygon.get("points").split()) for polygon in filled],
+           [len(polygon.get("points").split()) for polygon in outlines],
+           [len(polygon.get("points").split()) for polygon in zero_filled])
+    checks.append(("an axis not measured leaves no vertex, unlike a "
+                   "measured 0 %", got == ([7, 7], [7, 7], [8]), got))
+
+    # Every axis label fits inside the image and clear of the other panel,
+    # at about 8 pixels a character for the bold label.
+    labels = [(float(text.get("x")), text.get("text-anchor"), text.text)
+              for text in light.iter(space + "text")
+              if text.text in dict(ISO_AXES)]
+    width = float(light.get("width"))
+    extents = [(x - 8 * len(text), x) if anchor == "end"
+               else (x, x + 8 * len(text)) if anchor == "start"
+               else (x - 4 * len(text), x + 4 * len(text))
+               for x, anchor, text in labels]
+    left = [right for left_, right in extents if left_ < width / 2]
+    right = [left_ for left_, right_ in extents if left_ >= width / 2]
+    checks.append(("every axis label fits inside the image and clear of "
+                   "the other panel",
+                   len(labels) == 2 * len(ISO_AXES)
+                   and all(0 <= left_ and right_ <= width
+                           for left_, right_ in extents)
+                   and max(left) < min(right), (min(extents), max(extents))))
     readings = [axis_reading(score, marker, moved)
                 for score, marker, moved in ((90.0, "better", 30.0),
                                              (70.0, "worse", -10.0),
