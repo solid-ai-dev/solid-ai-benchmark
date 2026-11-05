@@ -3207,6 +3207,9 @@ def map_use_rows(trials, uses):
                      "read": mean_of(counts), "before": mean_of(before),
                      "wrote": len(before), "first": median_of(firsts),
                      "unused": sum(1 for count in counts if not count),
+                     "read_and_wrote": sum(
+                         1 for name in names if uses[name]["uses"]
+                         and uses[name]["first_write"] is not None),
                      "up_front": sum(1 for count in before
                                      if total and count >= total)})
     return rows
@@ -3275,18 +3278,23 @@ def h7_note(rows):
         return ("no `lazyref` trial's first write could be placed, so the "
                 "map's use says nothing about whether the templates were "
                 "read up front or on demand.")
-    if row["unused"] == row["trials"]:
-        return ("no `lazyref` trial read a template of its map, so H7 "
-                "compares a map ignored against templates read up front, "
-                "not on-demand reading.")
+
+    # Only a trial that both read and wrote shows where its reads fell;
+    # one that read and never wrote, or wrote and never read, shows nothing
+    # about reading on demand.
+    if not row["read_and_wrote"]:
+        return ("no `lazyref` trial that wrote read a template of its map, "
+                "so H7 compares a map ignored against templates read up "
+                "front, not on-demand reading.")
     if row["up_front"]:
         return ("`lazyref` read every template of its map before its first "
                 "write in %d of the %d trials that wrote. Those trials "
                 "measured reading up front, not on demand."
                 % (row["up_front"], row["wrote"]))
     return ("no `lazyref` trial read every template of its map before its "
-            "first write, so H7 reads on-demand reading%s."
-            % (", and %d of %d trials read none"
+            "first write, so H7 reads on-demand reading in the %d trials "
+            "that read and wrote%s."
+            % (row["read_and_wrote"], ", while %d of %d trials read none"
                % (row["unused"], row["trials"]) if row["unused"] else ""))
 
 
@@ -3301,9 +3309,10 @@ SCREEN_ROWS = ROUND5D_ROWS + ("reliability",)
 def round6_screen(trials, table, results):
     """Each candidate against the bare arm: out where a deciding row reads
     worse, the rest ranked by rows better and then by mean cost, the top
-    four going on to round 6 once every candidate is read. A candidate the
-    run holds no trial of is named as missing, and nothing goes on until
-    it is read too."""
+    four going on to round 6 once every candidate is read and the run is
+    whole. A candidate the run holds no trial of is named as missing, and
+    nothing goes on until it is read too, nor while the run is short of
+    its K: a short run decides nothing."""
     rows = []
     missing = []
 
@@ -3327,9 +3336,10 @@ def round6_screen(trials, table, results):
     kept = [row for row in rows if not row["worse"]]
     kept.sort(key=lambda row: (-row["better"], row["cost"]
                                if row["cost"] is not None else float("inf")))
+    short = bool(owed_blocks(trials))
     for rank, row in enumerate(kept, 1):
         row["rank"] = rank
-        row["round6"] = rank <= SCREEN_KEEPS and not missing
+        row["round6"] = rank <= SCREEN_KEEPS and not missing and not short
     return rows, missing
 
 
@@ -3356,11 +3366,16 @@ def screen_lines(trials, table, results):
             "—" if row["cost"] is None else "$%.2f" % row["cost"], screen))
     chosen = [row["arm"] for row in sorted(
         (row for row in rows if row["round6"]), key=lambda row: row["rank"])]
+    owed = owed_blocks(trials)
     if missing:
         lines.extend(["", "The screen is partial: %s %s not in this root, so "
                       "it names no arms for round 6 yet." % (
                           spoken(["`%s`" % arm for arm in missing]),
                           "is" if len(missing) == 1 else "are")])
+    elif owed:
+        lines.extend(["", "The screen is provisional: the run still owes %s, "
+                      "and a short run decides nothing, so it names no arms "
+                      "for round 6 yet." % blocks_named(owed)])
     else:
         lines.extend(["", "Round 6 runs `%s`%s." % (
             BARE, " and " + spoken(["`%s`" % arm for arm in chosen])
@@ -3785,6 +3800,14 @@ def round5e_checks():
                    "compares a map ignored" in "\n".join(ignored)
                    and "so H7 reads on-demand" not in "\n".join(ignored),
                    ignored[-6:]))
+    apart = h7_note(map_use_rows(
+        {"lazyref-1": {}, "lazyref-2": {}},
+        {"lazyref-1": never_wrote,
+         "lazyref-2": {"uses": [], "first_write": 2, "by_subagent": 0}}))
+    checks.append(("a trial that read and never wrote beside one that wrote "
+                   "and never read shows no on-demand reading",
+                   "compares a map ignored" in apart
+                   and "so H7 reads on-demand" not in apart, apart))
     planted_uses = {"lazyref-1": reading}
     kept = aggregate(1, {}, {}, {}, {}, None, None, planted_uses)["map_use"]
     checks.append(("the aggregate keeps each trial's map use",
@@ -3844,6 +3867,17 @@ def round5e_checks():
         table["cost_usd"]["values"][arm] = {1: 30.0, 2: 30.0}
         for key in SCREEN_ROWS:
             results[key]["%s-none" % arm] = {"verdict": "held"}
+    short_rows, _ = round6_screen(held, table, results)
+    short_text = "\n".join(screen_lines(held, table, results))
+    checks.append(("the screen names no arm for round 6 while the run is "
+                   "short of its K",
+                   not any(row["round6"] for row in short_rows)
+                   and "still owes blocks 2 to 15" in short_text
+                   and "names no arms for round 6 yet" in short_text,
+                   short_text.splitlines()[-1]))
+    for arm in ROUND5E_ARMS:
+        for block in range(2, ROUND5_K + 1):
+            held[trial_name(arm, block)] = {}
     full_rows, missing = round6_screen(held, table, results)
     screen = {row["arm"]: (row["rank"], row["round6"], row["worse"])
               for row in full_rows}
