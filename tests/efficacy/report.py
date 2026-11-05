@@ -1849,7 +1849,7 @@ def write_report(root, trials, table, results, seed, out_dir,
         appendix: appendix_lines(trials, table, results, k, seed, generation,
                                  report, record, iso),
         report: plain_report_lines(root, trials, table, results, radar,
-                                   appendix, k, iso)}
+                                   appendix, k, iso, uses)}
     for document, text in documents.items():
         with io.open(os.path.join(out_dir, document), "w", encoding="utf-8",
                      newline="\n") as handle:
@@ -2239,7 +2239,7 @@ def sureness_lines(trials, k):
 
 
 def plain_report_lines(root, trials, table, results, radar, appendix, k,
-                       iso=None):
+                       iso=None, uses=None):
     """The report a reader opens: the radars, each approach in plain words,
     the round's questions answered, and how sure the answers are. `iso` is
     the ISO reading where the round draws that radar."""
@@ -2285,6 +2285,13 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
             state, _ = round5d_hypothesis(results, label, wanted)
             lines.append("- %s **%s.**" % (PLAIN_QUESTIONS[label],
                                            sentence_case(PLAIN_ANSWERS[state])))
+
+            # H7's answer is about on-demand reading only where the trials
+            # read on demand, so what the map's use says goes beside it.
+            if label == "lazyref-reference" and uses is not None:
+                note = h7_note(map_use_rows(trials, uses))
+                if note:
+                    lines.append("  - %s" % sentence_case(note))
         lines.append("")
     elif is_round5(trials):
         lines.extend(["## The questions this round asked", ""])
@@ -3203,34 +3210,39 @@ def map_use_lines(trials, uses):
             row["arm"], row["trials"], row["total"], shown(row["read"]),
             shown(row["before"]), shown(row["first"], 0), row["up_front"],
             row["wrote"]))
-    for row in rows:
-        if row["arm"] != "lazyref":
-            continue
-        lines.append("")
-        if not row["wrote"]:
-            lines.append("Beside H7: no `lazyref` trial's first write could "
-                         "be placed, so the map's use says nothing about "
-                         "whether the templates were read up front or on "
-                         "demand.")
-        elif row["unused"] == row["trials"]:
-            lines.append("Beside H7: no `lazyref` trial read a template of "
-                         "its map, so H7 compares a map ignored against "
-                         "templates read up front, not on-demand reading.")
-        elif row["up_front"]:
-            lines.append("Beside H7: `lazyref` read every template of its map "
-                         "before its first write in %d of the %d trials that "
-                         "wrote. Those trials measured reading up front, not "
-                         "on demand." % (row["up_front"], row["wrote"]))
-        else:
-            lines.append("Beside H7: no `lazyref` trial read every template "
-                         "of its map before its first write, so H7 reads "
-                         "on-demand reading%s." % (
-                             ", and %d of %d trials read none"
-                             % (row["unused"], row["trials"])
-                             if row["unused"] else ""))
+    note = h7_note(rows)
+    if note:
+        lines.extend(["", "Beside H7: %s" % note])
     lines.append("")
     lines.extend(map_use_detail(trials, uses))
     return lines
+
+
+def h7_note(rows):
+    """What `lazyref`'s use of its map says about H7, in one sentence: the
+    hypothesis reads on-demand reading only where the trials wrote, read
+    their map, and did not read all of it before writing. None where the
+    run holds no `lazyref` trial with a transcript."""
+    row = next((row for row in rows if row["arm"] == "lazyref"), None)
+    if row is None:
+        return None
+    if not row["wrote"]:
+        return ("no `lazyref` trial's first write could be placed, so the "
+                "map's use says nothing about whether the templates were "
+                "read up front or on demand.")
+    if row["unused"] == row["trials"]:
+        return ("no `lazyref` trial read a template of its map, so H7 "
+                "compares a map ignored against templates read up front, "
+                "not on-demand reading.")
+    if row["up_front"]:
+        return ("`lazyref` read every template of its map before its first "
+                "write in %d of the %d trials that wrote. Those trials "
+                "measured reading up front, not on demand."
+                % (row["up_front"], row["wrote"]))
+    return ("no `lazyref` trial read every template of its map before its "
+            "first write, so H7 reads on-demand reading%s."
+            % (", and %d of %d trials read none"
+               % (row["unused"], row["trials"]) if row["unused"] else ""))
 
 
 # Round 5d's screen for round 6: the candidates, read against the bare arm,
@@ -3785,6 +3797,16 @@ def round5e_checks():
                    and PLAIN_QUESTIONS["lazyskills-lazyref"] in plain
                    and PLAIN_QUESTIONS["hand-none"] not in plain,
                    plain[plain.find("## The questions"):][:400]))
+    ignored_uses = {"lazyref-%d" % index: {"uses": [], "first_write": 2,
+                                           "by_subagent": 0}
+                    for index in range(1, 4)}
+    qualified = " ".join(rendered_plain(run, 20260912, ignored_uses).split())
+    checks.append(("the plain report qualifies H7's answer with what the "
+                   "map's use says",
+                   "compares a map ignored" in qualified
+                   and qualified.find("compares a map ignored")
+                   > qualified.find(PLAIN_QUESTIONS["lazyref-reference"]),
+                   qualified[qualified.find("## The questions"):][:500]))
     return checks
 
 
@@ -6220,7 +6242,7 @@ def rendered(trials, seed, withdrawn):
     return before, table, text
 
 
-def rendered_plain(trials, seed):
+def rendered_plain(trials, seed, uses=None):
     """The plain report a planted run renders, as text."""
     table = collect(trials)
     results = round_contrasts(trials, table, seed)
@@ -6229,7 +6251,7 @@ def rendered_plain(trials, seed):
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
     target = write_report(scratch, trials, table, results, seed,
-                          out_dir=scratch)
+                          out_dir=scratch, uses=uses)
     with io.open(target, encoding="utf-8") as handle:
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
