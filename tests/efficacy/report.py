@@ -2866,6 +2866,10 @@ HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*)\n.*?\n\s*\3\s*(?=\n|$)",
 # a file to read.
 PATTERN_FIRST = ("grep", "rg", "awk", "sed", "select-string")
 
+# A word that opens a loop's or a branch's body, or a subshell, is no
+# command: the command is the word after it.
+BODY_OPENERS = ("do", "then", "else", "{", "(")
+
 # The commands that change the directory the simple commands after them in
 # the same shell call run in, so a relative path they name is resolved
 # against it.
@@ -2916,9 +2920,12 @@ def simple_commands(command, keep_quotes=False):
             quoted[int(match.group(1))] if keep_quotes else " "), segment)
         words = [word for word in segment.split()
                  if not ASSIGNMENT.match(word)]
+        while words and words[0].lower() in BODY_OPENERS:
+            words.pop(0)
         if not words:
             continue
-        word = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+        word = words[0].lstrip("(").replace("\\", "/").rsplit("/", 1)[-1]
+        word = word.lower()
         if word.endswith(".exe"):
             word = word[:-len(".exe")]
         found.append((word, segment))
@@ -2949,8 +2956,9 @@ def shell_reads(command, known=()):
     directory = ""
     for index, (word, text) in enumerate(
             simple_commands(command, keep_quotes=True)):
-        words = [token for token in words_of(text)[1:]
-                 if not ASSIGNMENT.match(token)]
+        words = [token for token in words_of(text)
+                 if not ASSIGNMENT.match(token)
+                 and token.lower() not in BODY_OPENERS][1:]
         operands = [token for token in words if not token.startswith("-")]
         if word in CHANGE_DIR:
             target = operands[0].strip("'\"") if operands else ""
@@ -2958,7 +2966,12 @@ def shell_reads(command, known=()):
                 target if ABSOLUTE.match(target)
                 else posixpath.join(directory, target))
             continue
-        if word not in READ_COMMANDS:
+
+        # A loop over files reads them in its body, so the files it runs
+        # over count as read where the body's own words name none.
+        if word == "for":
+            words = words[words.index("in") + 1:] if "in" in words else []
+        elif word not in READ_COMMANDS:
             continue
 
         # A search's or a script's first operand is what to look for, not
@@ -3335,7 +3348,13 @@ def round6_screen(trials, table, results):
             continue
         readings = {key: row_reading(results.get(key, {}).get(label))
                     for key in SCREEN_ROWS}
+
+        # A row not computed yet, or one crossing roots, is no reading: it
+        # is neither better nor worse, and the screen waits for it.
         rows.append({"arm": arm,
+                     "unread": [key for key in SCREEN_ROWS
+                                if not row_read(results.get(key, {})
+                                                .get(label))],
                      "worse": [key for key in SCREEN_ROWS
                                if readings[key] == "worse"],
                      "better": sum(1 for reading in readings.values()
@@ -3345,11 +3364,18 @@ def round6_screen(trials, table, results):
     kept = [row for row in rows if not row["worse"]]
     kept.sort(key=lambda row: (-row["better"], row["cost"]
                                if row["cost"] is not None else float("inf")))
-    short = bool(screen_owed(trials))
+    waiting = bool(screen_owed(trials)) or any(row["unread"] for row in rows)
     for rank, row in enumerate(kept, 1):
         row["rank"] = rank
-        row["round6"] = rank <= SCREEN_KEEPS and not missing and not short
+        row["round6"] = rank <= SCREEN_KEEPS and not missing and not waiting
     return rows, missing
+
+
+def row_read(contrast):
+    """Whether a contrast's row has been read at all: computed, from both
+    arms of one root."""
+    return contrast is not None and contrast.get("verdict") not in (
+        None, "not computed", CROSSING_VERDICT)
 
 
 def screen_owed(trials):
@@ -3404,6 +3430,12 @@ def screen_lines(trials, table, results):
                       "for round 6 yet." % spoken([
                           "`%s` %s" % (arm, blocks_named(blocks))
                           for arm, blocks in owed])])
+    elif any(row["unread"] for row in rows):
+        lines.extend(["", "The screen is provisional: %s not computed yet, "
+                      "so it names no arms for round 6 yet." % spoken([
+                          "`%s`'s %s" % (row["arm"], spoken(
+                              [SHORT.get(key, key) for key in row["unread"]]))
+                          for row in rows if row["unread"]])])
     else:
         lines.extend(["", "Round 6 runs `%s`%s." % (
             BARE, " and " + spoken(["`%s`" % arm for arm in chosen])
@@ -3808,8 +3840,9 @@ def round5e_checks():
     shutil.rmtree(scratch, ignore_errors=True)
     checks.append(("a subagent pointing at the previous delegation's result "
                    "is charged to its own delegation, a quoted pattern is one "
-                   "operand, a path follows the call's directory change, and "
-                   "a wildcard stands for no slash",
+                   "operand, a path follows the call's directory change, a "
+                   "wildcard stands for no slash, and a loop's files count "
+                   "as read",
                    in_a_row["uses"] == [(1, chain[0]), (2, chain[2])]
                    and read_names('grep "mention %s" README.md' % quality)
                    == []
@@ -3823,6 +3856,12 @@ def round5e_checks():
                    and read_names("cd src && cat core/quality.md") == []
                    and read_names("cat %s/templates/*.md" % into, chain) == []
                    and read_names("cat %s/templates/*/q*.md" % into, chain)
+                   == ["templates/core/quality.md"]
+                   and read_names('for f in %s/templates/*/*.md; do cat "$f"; '
+                                  'done' % into, chain) == chain
+                   and read_names("(cd %s && cat templates/core/git.md)"
+                                  % into) == ["templates/core/git.md"]
+                   and read_names("if test -f x; then cat %s; fi" % quality)
                    == ["templates/core/quality.md"],
                    in_a_row))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
@@ -3923,6 +3962,15 @@ def round5e_checks():
                        screen_lines(held, table, results)),
                    screen_owed(held)))
     held[trial_name("hand", 7)] = {}
+    results["judge_security"]["hand-none"] = {"verdict": "not computed"}
+    unread_rows, _ = round6_screen(held, table, results)
+    unread_text = "\n".join(screen_lines(held, table, results))
+    checks.append(("a deciding row not computed yet holds the screen",
+                   not any(row["round6"] for row in unread_rows)
+                   and "`hand`'s %s not computed yet" % SHORT["judge_security"]
+                   in unread_text,
+                   unread_text.splitlines()[-1]))
+    results["judge_security"]["hand-none"] = {"verdict": "held"}
     full_rows, missing = round6_screen(held, table, results)
     screen = {row["arm"]: (row["rank"], row["round6"], row["worse"])
               for row in full_rows}
