@@ -2827,11 +2827,29 @@ SHELL_WRITE = re.compile(
 NULL_REDIRECT = re.compile(
     r"\d?>{1,2}\s*(&\d|/dev/null|\$null|NUL\b)", re.IGNORECASE)
 
+# Quoted text is an argument, not an operator or a command, so it is taken
+# out before a command is read for a write.
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+# The commands that put a file's contents in front of the agent. A path a
+# shell command merely lists or tests is not read.
+SHELL_READ = re.compile(
+    r"\b(?:cat|type|head|tail|sed|less|more|bat|grep|rg|awk|Get-Content|gc|"
+    r"Select-String)\b[^|;&\n]*?" + re.escape(VENDORED["into"] + "/")
+    + r"(templates/[\w./-]+\.md)", re.IGNORECASE)
+
 
 def shell_writes(command):
     """Whether a shell command writes a file of the trial's own: it
     redirects into a file, or copies, moves or creates one."""
-    return SHELL_WRITE.search(NULL_REDIRECT.sub(" ", command)) is not None
+    bare = QUOTED.sub(" ", NULL_REDIRECT.sub(" ", command))
+    return SHELL_WRITE.search(bare) is not None
+
+
+def shell_reads(command):
+    """The templates a shell command reads, in order: those a reading
+    command names under the vendored copy."""
+    return SHELL_READ.findall(command)
 
 
 def mapped_templates(arm):
@@ -2858,9 +2876,9 @@ def map_use(files, arm, templates=None):
     marker = VENDORED["into"] + "/"
     named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
 
-    def read_templates(text):
-        """The templates of the map a path or a command names, in order."""
-        return [template for template in named.findall(text)
+    def mapped(templates):
+        """Those of the templates that are on the arm's map."""
+        return [template for template in templates
                 if not known or template in known]
     uses = []
     first_write = None
@@ -2897,8 +2915,8 @@ def map_use(files, arm, templates=None):
                     # A shell command may read a template and write a file
                     # in one go, so it is read for both.
                     if name in SHELLS and entry.get("vendor"):
-                        uses.extend((turn, template)
-                                    for template in read_templates(command))
+                        uses.extend((turn, template) for template
+                                    in mapped(shell_reads(command)))
                     if name in WRITES or (name in SHELLS
                                           and shell_writes(command)):
                         if first_write is None:
@@ -2906,7 +2924,8 @@ def map_use(files, arm, templates=None):
                     elif name == "Read" and entry.get("vendor"):
                         path = str(given.get("file_path") or "")
                         uses.extend((turn, template) for template in
-                                    read_templates(path.replace("\\", "/")))
+                                    mapped(named.findall(
+                                        path.replace("\\", "/"))))
                     elif name == "Skill" and entry.get("skills"):
                         skill = str(given.get("skill") or "").strip()
                         if skill in known:
@@ -3290,6 +3309,21 @@ def round5e_checks():
                    and shell_writes("cat a >> b.txt")
                    and shell_writes("mkdir src"),
                    reading["uses"]))
+    quality = "%s/templates/core/quality.md" % into
+    checks.append(("quoted text is no shell operator, and a path a shell "
+                   "command lists or tests is not read",
+                   not shell_writes("git log --format='%h -> %s'")
+                   and not shell_writes("echo 'mkdir src'")
+                   and shell_writes("echo 'x' > 'my file.py'")
+                   and shell_reads("ls %s" % quality) == []
+                   and shell_reads("test -f %s && echo yes" % quality) == []
+                   and shell_reads("cat %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and shell_reads("sed -n 1,40p %s | head" % quality)
+                   == ["templates/core/quality.md"]
+                   and shell_reads("Get-Content %s" % quality)
+                   == ["templates/core/quality.md"],
+                   None))
     silent_note = "\n".join(map_use_lines({"lazyref-2": {}},
                                           {"lazyref-2": never_wrote}))
     checks.append(("with no trial that wrote, the note beside H7 withholds "
