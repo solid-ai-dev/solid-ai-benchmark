@@ -2849,9 +2849,14 @@ NULL_REDIRECT = re.compile(
 QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 
 
-# A here-document's body is data, not commands, and is taken out whole.
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)",
+# A here-document's body is data, not commands, and is taken out whole;
+# the rest of its opening line, a redirection perhaps, stays.
+HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*)\n.*?\n\s*\3\s*(?=\n|$)",
                      re.DOTALL)
+
+# The reading commands whose first operand is a pattern or a program, not
+# a file to read.
+PATTERN_FIRST = ("grep", "rg", "awk", "sed", "select-string")
 
 
 def simple_commands(command, keep_quotes=False):
@@ -2865,7 +2870,7 @@ def simple_commands(command, keep_quotes=False):
         quoted.append(match.group(0))
         return "\x00%d\x00" % (len(quoted) - 1)
     masked = QUOTED.sub(stash, NULL_REDIRECT.sub(" ", HEREDOC.sub(
-        " ", command)))
+        r"\1", command)))
     found = []
     for segment in SEGMENT.split(masked):
         segment = re.sub(r"\x00(\d+)\x00", lambda match: (
@@ -2906,6 +2911,13 @@ def shell_reads(command, known=()):
             simple_commands(command, keep_quotes=True)):
         if word not in READ_COMMANDS:
             continue
+
+        # A search's or a script's first operand is what to look for, not
+        # a file it reads, so it is left out of the files.
+        if word in PATTERN_FIRST:
+            operands = [token for token in text.split()[1:]
+                        if not token.startswith("-")]
+            text = " ".join(operands[1:])
         for operand in TEMPLATE_OPERAND.findall(text):
             if any(mark in operand for mark in "*?["):
                 found.extend((index, template) for template in known
@@ -3020,6 +3032,12 @@ def map_use(files, arm, templates=None, delegated=()):
     calls = list(own)
     for file in delegated:
         at = delegation_turn(file, written_at, first_delegation)
+
+        # The line a subagent points back to is the one before the message
+        # that delegated, so the delegation is the first one from there on.
+        if at is not None:
+            at = next((turn for turn, name, _, _ in own
+                       if name in DELEGATIONS and turn >= at), at)
         calls.extend((at if at is not None else turn, name, given, True)
                      for turn, name, given in tool_calls_by_turn([file]))
     calls.sort(key=lambda call: call[0])
@@ -3035,8 +3053,9 @@ def map_use(files, arm, templates=None, delegated=()):
         # A shell command may read a template and write a file in one go,
         # so it is read for both, and a read in a simple command before the
         # writing one came before the write.
-        if name in SHELLS and entry.get("vendor"):
+        if name in SHELLS:
             writes_at = first_writing_command(command)
+        if name in SHELLS and entry.get("vendor"):
             for index, template in shell_reads(command, sorted(known)):
                 if template in known or not known:
                     found.append(template)
@@ -3613,6 +3632,50 @@ def round5e_checks():
                    and not shell_writes(heredoc)
                    and shell_writes("cat a <<'EOF'\nx\nEOF\necho y > z"),
                    in_one_go))
+    # A skills arm's shell write counts; a redirection after a here-document
+    # opener stays; a subagent pointing at the line before the delegating
+    # message is charged to that message; a search's pattern is no file.
+    os.makedirs(scratch)
+    skilled = os.path.join(scratch, "skilled.jsonl")
+    with io.open(skilled, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "k1", call("Bash",
+                                                  command="echo x > app.py")))
+        handle.write(line("assistant", "k2", call("Skill",
+                                                  skill="base-quality")))
+        handle.write(line("assistant", "k3", call("Edit", file_path="a.py")))
+    shell_first = map_use([skilled], "lazyskills", ["base-quality"])
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(stamped("user", "q0", "u0", {"type": "text",
+                                                  "text": "go"}))
+        handle.write(stamped("assistant", "q1", "u1", call(
+            "Bash", command="ls")))
+        handle.write(stamped("user", "q1r", "u1r", {"type": "text",
+                                                    "text": "ok"}))
+        handle.write(stamped("assistant", "q2", "u2", call(
+            "Agent", prompt="read quality")))
+    child = os.path.join(scratch, "agent.jsonl")
+    with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps({"type": "fork-context-ref",
+                                 "parentLastUuid": "u1r"}) + "\n")
+        handle.write(line("assistant", "c1", call(
+            "Read", file_path="/pen/%s/%s" % (into, chain[0]))))
+    anchored = map_use([parent], "lazyref", chain, [child])
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a skills arm's shell write counts, a redirection after a "
+                   "here-document opener stays, a subagent is charged to the "
+                   "delegating message, and a search's pattern is no file",
+                   shell_first["first_write"] == 1
+                   and shell_first["before_write"] == []
+                   and shell_writes("cat <<'EOF' > app.py\nx\nEOF")
+                   and not shell_writes("cat <<'EOF'\nx > y\nEOF")
+                   and anchored["uses"] == [(2, chain[0])]
+                   and read_names("rg '%s' README.md" % quality) == []
+                   and read_names("grep -n x %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("sed -n 1,40p %s" % quality)
+                   == ["templates/core/quality.md"],
+                   (shell_first, anchored)))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
     checks.append(("a map no trial read is said to be ignored, not read on "
