@@ -2819,8 +2819,19 @@ def round5d_section(trials, table, results, seed, margins,
 WRITES = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 SHELLS = ("Bash", "PowerShell")
 SHELL_WRITE = re.compile(
-    r"(>|\btee\b|\btouch\b|\bmkdir\b|\bcp\b|\bmv\b|\binstall\b"
+    r"(>|\btee\b|\btouch\b|\bmkdir\b|\bcp\b|\bmv\b"
     r"|New-Item|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item)")
+
+# A redirection that writes no file: to the null device, or of one stream
+# into another. Taken out of a command before it is read for a write.
+NULL_REDIRECT = re.compile(
+    r"\d?>{1,2}\s*(&\d|/dev/null|\$null|NUL\b)", re.IGNORECASE)
+
+
+def shell_writes(command):
+    """Whether a shell command writes a file of the trial's own: it
+    redirects into a file, or copies, moves or creates one."""
+    return SHELL_WRITE.search(NULL_REDIRECT.sub(" ", command)) is not None
 
 
 def mapped_templates(arm):
@@ -2845,6 +2856,12 @@ def map_use(files, arm, templates=None):
     entry = ARMS.get(arm) or {}
     known = set(mapped_templates(arm) if templates is None else templates)
     marker = VENDORED["into"] + "/"
+    named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
+
+    def read_templates(text):
+        """The templates of the map a path or a command names, in order."""
+        return [template for template in named.findall(text)
+                if not known or template in known]
     uses = []
     first_write = None
     turn = 0
@@ -2874,20 +2891,22 @@ def map_use(files, arm, templates=None):
                     given = block.get("input")
                     given = given if isinstance(given, dict) else {}
                     name = block.get("name")
-                    writes = name in WRITES or (
-                        name in SHELLS
-                        and SHELL_WRITE.search(str(given.get("command")
-                                                   or "")) is not None)
-                    if writes:
+                    command = str(given.get("command") or "")
+                    command = command.replace("\\", "/")
+
+                    # A shell command may read a template and write a file
+                    # in one go, so it is read for both.
+                    if name in SHELLS and entry.get("vendor"):
+                        uses.extend((turn, template)
+                                    for template in read_templates(command))
+                    if name in WRITES or (name in SHELLS
+                                          and shell_writes(command)):
                         if first_write is None:
                             first_write = turn
                     elif name == "Read" and entry.get("vendor"):
                         path = str(given.get("file_path") or "")
-                        path = path.replace("\\", "/")
-                        if marker in path:
-                            template = path.split(marker, 1)[1]
-                            if not known or template in known:
-                                uses.append((turn, template))
+                        uses.extend((turn, template) for template in
+                                    read_templates(path.replace("\\", "/")))
                     elif name == "Skill" and entry.get("skills"):
                         skill = str(given.get("skill") or "").strip()
                         if skill in known:
@@ -3002,7 +3021,12 @@ def map_use_lines(trials, uses):
         if row["arm"] != "lazyref":
             continue
         lines.append("")
-        if row["up_front"]:
+        if not row["wrote"]:
+            lines.append("Beside H7: no `lazyref` trial's first write could "
+                         "be placed, so the map's use says nothing about "
+                         "whether the templates were read up front or on "
+                         "demand.")
+        elif row["up_front"]:
             lines.append("Beside H7: `lazyref` read every template of its map "
                          "before its first write in %d of the %d trials that "
                          "wrote. Those trials measured reading up front, not "
@@ -3024,17 +3048,21 @@ SCREEN_KEEPS = 4
 SCREEN_ROWS = ROUND5D_ROWS + ("reliability",)
 
 
-def round6_screen(table, results):
+def round6_screen(trials, table, results):
     """Each candidate against the bare arm: out where a deciding row reads
     worse, the rest ranked by rows better and then by mean cost, the top
     four going on to round 6 once every candidate is read. A candidate the
-    run holds no contrast for is named as missing, and nothing goes on
-    until it is read too."""
+    run holds no trial of is named as missing, and nothing goes on until
+    it is read too."""
     rows = []
     missing = []
+
+    # Every declared contrast has a result, computed or not, so an arm's
+    # presence is read from the trials and not from the results.
+    present = {arm_of(name) for name in trials}
     for arm in SCREEN_CANDIDATES:
         label = "%s-%s" % (arm, BARE)
-        if not any(label in results.get(key, {}) for key in SCREEN_ROWS):
+        if arm not in present or BARE not in present:
             missing.append(arm)
             continue
         readings = {key: row_reading(results.get(key, {}).get(label))
@@ -3055,10 +3083,10 @@ def round6_screen(table, results):
     return rows, missing
 
 
-def screen_lines(table, results):
+def screen_lines(trials, table, results):
     """The screen as a table, and the arms round 6 runs, or the candidates
     still to be read before it names them."""
-    rows, missing = round6_screen(table, results)
+    rows, missing = round6_screen(trials, table, results)
     lines = ["### Round 6's arms, by the screen of 13d.9", "",
              "Each candidate is read against `%s` by the rules of 13d.7. An "
              "arm worse on a deciding row is out; the rest rank by how many "
@@ -3100,7 +3128,7 @@ def round5e_section(root, trials, table, results, seed, margins, uses=None):
     lines.extend(map_use_lines(
         trials, map_uses(root, trials) if uses is None else uses))
     lines.append("")
-    lines.extend(screen_lines(table, results))
+    lines.extend(screen_lines(trials, table, results))
     return lines
 
 
@@ -3194,12 +3222,13 @@ def round5e_checks():
         handle.write(line("assistant", "a1", {"type": "text", "text": "ok"}))
         handle.write(line("assistant", "a2", call(
             "Read", file_path="/pen/%s/templates/core/quality.md" % into)))
-        handle.write(line("assistant", "a3", call("Bash", command="ls src")))
+        handle.write(line("assistant", "a3", call(
+            "Bash", command="ls src 2>/dev/null; pytest -q 2>&1 | tail -3")))
         handle.write(line("assistant", "a4", call(
             "Bash", command="echo x > x.py")))
         handle.write(line("assistant", "a5", call("Write", file_path="y.py")))
         handle.write(line("assistant", "a6", call(
-            "Read", file_path="/pen/%s/templates/backend/http.md" % into)))
+            "Bash", command="cat %s/templates/backend/http.md | head" % into)))
         handle.write(line("assistant", "a7", call(
             "Read", file_path="/pen/%s/templates/core/oop.md" % into)))
         handle.write(line("assistant", "a8", call("Read",
@@ -3251,6 +3280,23 @@ def round5e_checks():
                            for _, template in reading["uses"])
                    and summary[0][3] == 1 and summary[0][5] == 0,
                    (reading, summary)))
+    checks.append(("a shell read of a template counts, and a redirection to "
+                   "the null device or into another stream is no write",
+                   (6, "templates/backend/http.md") in reading["uses"]
+                   and not shell_writes("ls src 2>/dev/null")
+                   and not shell_writes("pytest 2>&1 | tail")
+                   and not shell_writes("Get-Content x.py > $null")
+                   and shell_writes("echo x > x.py")
+                   and shell_writes("cat a >> b.txt")
+                   and shell_writes("mkdir src"),
+                   reading["uses"]))
+    silent_note = "\n".join(map_use_lines({"lazyref-2": {}},
+                                          {"lazyref-2": never_wrote}))
+    checks.append(("with no trial that wrote, the note beside H7 withholds "
+                   "the reading",
+                   "says nothing about whether" in silent_note
+                   and "on-demand reading" not in silent_note,
+                   silent_note[-300:]))
     checks.append(("every trial's reads are listed with their turns",
                    "| lazyref-1 | 4 | 1: core/quality.md, 2: core/quality.md, "
                    "6: backend/http.md |" in detail, detail))
@@ -3287,7 +3333,14 @@ def round5e_checks():
         results[key]["inline-none"]["verdict"] = "better"
         results[key]["hybrid-none"]["verdict"] = "better"
     results["task_success"]["reference-none"]["verdict"] = "worse"
-    partial_rows, missing = round6_screen(table, results)
+
+    # Every declared contrast has a result whether its arms ran or not, so
+    # the planted results carry the absent arms' labels too.
+    for arm in ROUND5E_ARMS:
+        for key in SCREEN_ROWS:
+            results[key]["%s-none" % arm] = {"verdict": "not computed"}
+    held = {"%s-1" % arm: {} for arm in list(costs) + [BARE]}
+    partial_rows, missing = round6_screen(held, table, results)
     partial = {row["arm"]: (row["rank"], row["round6"], row["worse"])
                for row in partial_rows}
     checks.append(("the screen ranks what it holds and names no arm for "
@@ -3295,16 +3348,17 @@ def round5e_checks():
                    missing == list(ROUND5E_ARMS)
                    and partial["hybrid"] == (1, False, [])
                    and "names no arms for round 6 yet" in
-                   "\n".join(screen_lines(table, results))
+                   "\n".join(screen_lines(held, table, results))
                    and "`lazyref` and `lazyskills` are not in this root"
-                   in "\n".join(screen_lines(table, results)),
+                   in "\n".join(screen_lines(held, table, results)),
                    (partial, missing)))
     for arm in ROUND5E_ARMS:
         costs[arm] = 30.0
+        held["%s-1" % arm] = {}
         table["cost_usd"]["values"][arm] = {1: 30.0, 2: 30.0}
         for key in SCREEN_ROWS:
             results[key]["%s-none" % arm] = {"verdict": "held"}
-    full_rows, missing = round6_screen(table, results)
+    full_rows, missing = round6_screen(held, table, results)
     screen = {row["arm"]: (row["rank"], row["round6"], row["worse"])
               for row in full_rows}
     checks.append(("the screen drops an arm worse than none on a deciding "
@@ -3321,7 +3375,7 @@ def round5e_checks():
                                   "reference": (None, False,
                                                 ["task_success"])},
                    screen))
-    text = "\n".join(screen_lines(table, results))
+    text = "\n".join(screen_lines(held, table, results))
     checks.append(("the screen names the arms round 6 runs",
                    "Round 6 runs `none` and `hybrid`, `inline`, `skills` and "
                    "`hand`." in text

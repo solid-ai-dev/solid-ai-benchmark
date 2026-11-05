@@ -148,13 +148,12 @@ round-6 screen of 13d.9, which round 5e's arms join as candidates.
   every turn;
 - **use of the map**, per trial, from the transcript: how many templates of the
   map the agent read (`lazyref`, a read of a file of the chain under the
-  vendored path) or loaded (`lazyskills`, a skill call naming one of the arm's
-  skills), which ones, the turn each happened at, and how many happened before
-  the trial's first write to a file of its own, a write tool's call or a shell
-  command that redirects, copies, moves or creates. A trial that never wrote
-  says nothing about reading up front. Round 5c's `reference` read 13 of 13 in
-  turns 1 and 2; a map arm that does the same has not measured on-demand
-  reading, and the report says so beside H7.
+  vendored path, by the read tool or a shell command) or loaded (`lazyskills`, a
+  skill call naming one of the arm's skills), which ones, the turn each happened
+  at, and how many happened before the trial's first write to a file of its own:
+  a write tool's call, or a shell command that redirects into a file, copies,
+  moves or creates. A trial that never wrote says nothing about reading up
+  front, and the note beside H7 says so where no trial wrote.
 
 ### 13e.5 Before the first trial
 
