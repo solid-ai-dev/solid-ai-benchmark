@@ -10,10 +10,14 @@ the arms differ only in how they deliver it. This module makes them:
   88 characters
 - `skills` is what `resolve_chain.py --emit` builds, the facts filled from
   the brief
+- `lazyref` and `lazyskills` are fixed text too: a map from the topics the
+  manifest gives each template of the chain to that template, read as a file
+  or loaded as a skill the first time the work touches one of them, and for
+  `lazyskills` one skill per template, holding it verbatim
 
-It writes `arms/<arm>/CLAUDE.md` (and, for `skills`, the skills beside it),
-and refuses to keep a result the specification leaked into, or one over its
-arm's budget.
+It writes `arms/<arm>/CLAUDE.md` (and, for an arm with skills, the skills
+beside it), and refuses to keep a result the specification leaked into, or
+one over its arm's budget.
 
 Run it once per arm. Re-running it produces a different file and therefore
 a different arm, so it refuses to overwrite an existing one without
@@ -30,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 
 from harness import (ROUND5_DECLINED, ROUND5_REF,  # noqa: E402
@@ -47,9 +52,10 @@ BRIEF = os.path.join(HERE, "brief.txt")
 
 # The arms this module makes, each with the directory under `arms/` its file
 # and record live in, and how it is made: fixed text, a model generation in
-# one of `agents.md`'s models, or the emitter, and a model arm's budget as
-# (lines, width) where it has one. `hand` is a person's file, kept verbatim
-# with no record, so it is not made here.
+# one of `agents.md`'s models, the emitter, or a map of the chain's topics
+# read as files or loaded as skills, and a model arm's budget as (lines,
+# width) where it has one. `hand` is a person's file, kept verbatim with no
+# record, so it is not made here.
 GENERATED = {
     "reference": {"dir": "reference", "kind": "fixed"},
     "inline": {"dir": "inline", "kind": "model", "model": "inline"},
@@ -57,6 +63,8 @@ GENERATED = {
     "skills": {"dir": "skills", "kind": "emit"},
     "short": {"dir": "short", "kind": "model", "model": "inline",
               "budget": (40, 88)},
+    "lazyref": {"dir": "lazyref", "kind": "map", "load": "read"},
+    "lazyskills": {"dir": "lazyskills", "kind": "map", "load": "skill"},
 }
 
 
@@ -337,6 +345,120 @@ def reference_text(files):
     return REFERENCE.format(into=VENDORED["into"], files=listed)
 
 
+# The templates' manifest: one entry per template, with the file it lives in
+# and its one-line description. The fields are frozen for the 3.x line, so
+# three line patterns read them without a YAML library.
+MANIFEST = os.path.join("templates", "manifest.yaml")
+MANIFEST_ID = re.compile(r"^\s*- id: (\S+)\s*$")
+MANIFEST_FIELD = re.compile(r"^\s*(file|description|deprecated): (.*?)\s*$")
+
+
+def read_manifest(tree):
+    """The manifest's live entries, {file: (id, description)}, a deprecated
+    entry never shadowing the one that replaces it."""
+    found_entries = []
+    with io.open(os.path.join(tree, MANIFEST), encoding="utf-8") as handle:
+        for line in handle:
+            found = MANIFEST_ID.match(line)
+            if found:
+                found_entries.append({"id": found.group(1)})
+                continue
+            found = MANIFEST_FIELD.match(line)
+            if found and found_entries:
+                found_entries[-1][found.group(1)] = found.group(2)
+    # An entry is read whole before it counts, since its fields come in any
+    # order and a deprecation may follow its description.
+    entries = {}
+    for entry in found_entries:
+        if "file" in entry and "description" in entry \
+                and "deprecated" not in entry:
+            entries.setdefault(entry["file"],
+                               (entry["id"], entry["description"]))
+    return entries
+
+
+def moments(tree, files):
+    """Each template of the chain with the moment that calls for it: (id,
+    description, file), in the chain's order.
+
+    The moment is the manifest's own description of the template, so the
+    map puts no person's judgement into the arm, and the two map arms name
+    the same moments from the same source.
+    """
+    entries = read_manifest(tree)
+    rows = []
+    for name in files:
+        if name not in entries:
+            raise TrialError("%s is in the chain and not in the manifest, so "
+                             "the map has no moment for it" % name)
+        kind, description = entries[name]
+        rows.append((kind, description, name))
+    return rows
+
+
+# The map arms' root file. The two differ in one column and one verb: what
+# the agent does when a moment arrives, read a vendored file or load a skill.
+# Everything before the table says the same thing in both, so the arms
+# measure the mechanism and not the wording.
+MAP = """\
+# tariff
+
+{paragraph}
+
+| When the work first touches | {column} |
+| --- | --- |
+{rows}
+"""
+
+MAP_PARAGRAPH = ("The project's rules are the templates below, one per topic. "
+                 "Do not read them before the work starts. {when}, {act}; "
+                 "then apply every rule it holds that fits this project.")
+
+MAP_LOAD = {
+    "read": {
+        "when": "The first time the work touches a template's topics",
+        "act": "read that template, vendored at `{into}/` at the revision "
+               "the project adopted",
+        "column": "Read first",
+        "cell": "`{into}/{file}`",
+    },
+    "skill": {
+        "when": "The first time the work touches a template's topics",
+        "act": "load that template's skill",
+        "column": "Load first",
+        "cell": "`{kind}`",
+    },
+}
+
+
+def map_text(rows, load):
+    """A map arm's root file: the same moments, in the same order, for
+    either way of loading."""
+    words = MAP_LOAD[load]
+    into = VENDORED["into"]
+    table = "\n".join(
+        "| %s | %s |" % (description,
+                         words["cell"].format(into=into, file=name, kind=kind))
+        for kind, description, name in rows)
+    paragraph = textwrap.fill(
+        MAP_PARAGRAPH.format(when=words["when"],
+                             act=words["act"].format(into=into)), width=79)
+    return MAP.format(paragraph=paragraph, column=words["column"], rows=table)
+
+
+def template_skills(tree, rows):
+    """One skill per template of the chain, {id: SKILL.md text}: the
+    manifest's description as what the skill is for, and the template
+    verbatim as its body."""
+    skills = {}
+    for kind, description, name in rows:
+        with io.open(os.path.join(tree, name), encoding="utf-8") as handle:
+            body = handle.read()
+        skills[kind] = ("---\nname: %s\ndescription: %s\n---\n\n%s"
+                        % (kind, description, body))
+    return skills
+
+
 def fill_facts(text):
     """The emitted root file with every fact slot filled from the brief."""
     for slot, value in FACTS.items():
@@ -469,6 +591,73 @@ def self_test():
     print("the reference text names every file under %s/, the same twice"
           % VENDORED["into"])
 
+    # A map is checked against a small tree of its own: a manifest with a
+    # deprecated entry sharing a live one's file, and two templates.
+    tree = tempfile.mkdtemp(prefix="efficacy-map-self-test-")
+    try:
+        chain = ["templates/core/quality.md", "templates/backend/api.md"]
+        bodies = {chain[0]: "# Quality\n\n- Keep it simple (MUST)\n",
+                  chain[1]: "# API\n\n- Version the contract\n"}
+        for name, body in bodies.items():
+            path = os.path.join(tree, *name.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as h:
+                h.write(body)
+        manifest = os.path.join(tree, MANIFEST)
+        with io.open(manifest, "w", encoding="utf-8", newline="\n") as h:
+            h.write("version: \"1.0\"\n\nbase:\n"
+                    "  - id: old-quality\n    file: templates/core/quality.md\n"
+                    "    description: An old name\n"
+                    "    deprecated: base-quality\n"
+                    "  - id: base-quality\n    file: templates/core/quality.md\n"
+                    "    description: Architecture, code style, testing\n"
+                    "backend:\n"
+                    "  - id: backend-api\n    file: templates/backend/api.md\n"
+                    "    description: API-first, contracts, versioning\n")
+        rows = moments(tree, chain)
+        reading = map_text(rows, "read")
+        loading = map_text(rows, "skill")
+        first = [line.split(" | ")[0] for line in reading.splitlines()
+                 if line.startswith("| ") and not line.startswith("| ---")]
+        second = [line.split(" | ")[0] for line in loading.splitlines()
+                  if line.startswith("| ") and not line.startswith("| ---")]
+        expected = ["| When the work first touches",
+                    "| Architecture, code style, testing",
+                    "| API-first, contracts, versioning"]
+        if first != expected or second != expected:
+            print("FAIL: the two map arms do not name the same moments in "
+                  "the chain's order: %r, %r" % (first, second))
+            return 1
+        print("the two map arms name the same moments in the chain's order")
+        if any(reading.count("`%s/%s`" % (VENDORED["into"], name)) != 1
+               for name in chain) or "`base-quality`" in reading:
+            print("FAIL: the reading map does not name every template once "
+                  "under the vendored path")
+            return 1
+        print("the reading map names every template of the chain once, under "
+              "%s/" % VENDORED["into"])
+        skills = template_skills(tree, rows)
+        head = "---\nname: backend-api\ndescription: API-first, contracts, " \
+               "versioning\n---\n\n"
+        if sorted(skills) != ["backend-api", "base-quality"] \
+                or skills["backend-api"] != head + bodies[chain[1]] \
+                or "`backend-api`" not in loading:
+            print("FAIL: a template skill is not its template verbatim under "
+                  "the manifest's name and description")
+            return 1
+        print("each template skill is its template verbatim, named by the "
+              "manifest")
+        try:
+            moments(tree, chain + ["templates/core/git.md"])
+            print("FAIL: a chain file the manifest does not describe was "
+                  "given a moment")
+            return 1
+        except TrialError:
+            pass
+        print("a chain file the manifest does not describe is refused")
+    finally:
+        shutil.rmtree(tree, ignore_errors=True)
+
     known = " ".join(FACTS)
     if SLOT.search(fill_facts(known)):
         print("FAIL: a known fact slot was left unfilled")
@@ -567,6 +756,15 @@ def main(argv):
         elif entry["kind"] == "emit":
             document, skills = emit_arm(tree, ROUND5_ROOTS)
             record["declined"] = ROUND5_DECLINED
+        elif entry["kind"] == "map":
+            rows = moments(tree, files)
+            document = map_text(rows, entry["load"])
+            if entry["load"] == "skill":
+                skills = template_skills(tree, rows)
+            record["load"] = entry["load"]
+            record["moments"] = [{"skill": kind, "moment": description,
+                                  "file": name}
+                                 for kind, description, name in rows]
         else:
             prompt = build_prompt(tree, arm, files)
     finally:
@@ -612,7 +810,7 @@ def main(argv):
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with io.open(output, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(document.rstrip() + "\n")
-    if entry["kind"] == "emit":
+    if skills:
         shutil.rmtree(skills_path(arm), ignore_errors=True)
         for kind, text in skills.items():
             path = os.path.join(skills_path(arm), kind, "SKILL.md")

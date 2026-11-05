@@ -82,6 +82,10 @@ K_DEFAULT = 3
 # at its registered content, against round 5c's arms.
 ROUND5D_ARMS = ("hand", "short")
 
+# Round 5e runs the two map arms under the same design: the templates read
+# as files, or loaded as skills, at the moment the work touches their topics.
+ROUND5E_ARMS = ("lazyref", "lazyskills")
+
 # The release every generated arm is produced from, and the one the hybrid
 # arm's vendored templates are taken at, fixed before the first round: the
 # last 2.x, before the v3.0 split moves any template.
@@ -145,6 +149,12 @@ ARMS = {
                "context": "inline/CLAUDE.md"},
     "skills": {"label": "the emitted root file and task skills",
                "context": "skills/CLAUDE.md", "skills": "skills/skills"},
+    "lazyref": {"label": "the templates, mapped to the work, read on demand",
+                "context": "lazyref/CLAUDE.md", "vendor": VENDORED},
+    "lazyskills": {"label": "the templates, mapped to the work, one skill "
+                            "each",
+                   "context": "lazyskills/CLAUDE.md",
+                   "skills": "lazyskills/skills"},
 }
 
 def trial_name(arm, block):
@@ -1547,11 +1557,11 @@ def spec_digest(path):
 def spec_problem(arms, spec_name, digest):
     """Why a run of these arms may not build from this spec, or None.
 
-    A run holding a round-5 or round-5d arm builds from the spec round 5
-    registers, at the content it registers; any other run is not checked
-    here.
+    A run holding a round-5, round-5d or round-5e arm builds from the spec
+    round 5 registers, at the content it registers; any other run is not
+    checked here.
     """
-    if not set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS):
+    if not set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS + ROUND5E_ARMS):
         return None
     name, registered = ROUND5_SPEC
     if spec_name != name:
@@ -3398,6 +3408,14 @@ def round5_checks():
          and ARMS["skills"].get("skills") is not None),
         ("an arm that vendors nothing has no vendored ref",
          arm_vendor("none") is None and arm_vendor("inline") is None),
+        ("round 5e's arms: lazyref vendors, lazyskills has skills, and both "
+         "build from round 5's spec",
+         ARMS["lazyref"].get("vendor") is not None
+         and ARMS["lazyref"].get("skills") is None
+         and ARMS["lazyskills"].get("skills") is not None
+         and ARMS["lazyskills"].get("vendor") is None
+         and spec_problem(["lazyref"], "thin", ROUND5_SPEC[1]) is not None
+         and spec_problem(["lazyskills"], *ROUND5_SPEC) is None),
     ]
     record = os.path.join(ARMS_DIR, "hybrid", "generation.json")
     with io.open(record, encoding="utf-8") as handle:
@@ -3692,17 +3710,20 @@ def main(argv):
         print("generator ready: %s" % ready)
 
         # Files in `.claude/skills/` are not skills an agent sees until the
-        # CLI discovers them, so a run with the skills arm proves it first.
-        if "skills" in arms:
+        # CLI discovers them, so a run with an arm carrying skills proves it
+        # first, for each such arm.
+        for arm in arms:
+            if not ARMS[arm].get("skills"):
+                continue
             try:
                 seen = assert_skills_discovered(
                     home, agent_environment, agent_executable(),
-                    os.path.join(ARMS_DIR, ARMS["skills"]["skills"]))
+                    os.path.join(ARMS_DIR, ARMS[arm]["skills"]))
             except (TrialError, subprocess.TimeoutExpired) as error:
                 print("refused: %s" % error)
                 lib.print_verdict(False, "0 trial(s), 0 done, 1 refused")
                 return 1
-            print("the agent sees the skills arm's %d skills" % len(seen))
+            print("the agent sees the %s arm's %d skills" % (arm, len(seen)))
 
     started_at = now()
     run_file = os.path.join(

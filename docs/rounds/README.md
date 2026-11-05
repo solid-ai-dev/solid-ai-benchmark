@@ -22,6 +22,7 @@ the specification, `M` the builder model and `T` the task
 | [Round 5b](round-5b.md) | 2026-10-29, after round 5 stopped; stopped after its first start | Round 5's question, with a prompt that tells every arm the spec is the approved plan |
 | [Round 5c](round-5c.md) | 2026-10-29, after round 5b stopped | Round 5b's question, with each trial's workspace in a pen of its own |
 | [Round 5d](round-5d.md) | 2026-10-31, while round 5c ran | Whether a person's short file does what the templates do, at their length and at its own |
+| [Round 5e](round-5e.md) | 2026-11-05, while round 5d ran | Whether a template read at the moment the work touches its topics does what one read up front does, as a file and as a skill |
 
 ## Reports
 

@@ -35,7 +35,7 @@ dependency with its keyword.
 | `SPEC-thin.md` | The same contract without the practices, for `--spec thin` | harness |
 | `brief.txt` | What an adopter would type: domain, stack, personal data, boundaries | `generate_arm.py` |
 | `change-prompt.txt` | The change task's prompt, naming everything its grader drives | harness |
-| `arms/<arm>/CLAUDE.md` | Each arm's context file. `arms/skills/skills/` holds the skills arm's skills | harness |
+| `arms/<arm>/CLAUDE.md` | Each arm's context file. `arms/<arm>/skills/` holds a skills arm's skills | harness |
 | `arms/<arm>/generation.json` | How each generated file was made | `report.py` |
 | `scoring-requirements.txt` | The scoring tools, resolved once into the tool lock | `score.py` |
 | `toolconfig/` | `ruff.toml` and `mypy.ini`, the one configuration every arm is measured under | `score.py` |
