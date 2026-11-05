@@ -180,6 +180,7 @@ when:
 | FR-13-03 | Self-test | `archive.py` "readings, judgings, map and lock come; bundles do not"<br>`archive.py` "the original tarball's hash is recorded"<br>`archive.py` "the revisions are recorded"<br>`archive.py` "a reading changed in the archive fails the verify" |
 | FR-13-04 | Self-test | `archive.py` "a reading changed after the stamp is a problem"<br>`archive.py` "the report refuses docs/audits/ without a current stamp"<br>`report.py` "a report into a templates source's docs/audits needs the stamp" |
 | FR-13-05 | Self-test | `archive.py` "the restored root reads as the original does"<br>`archive.py` "a restored record points at the restored tarball and void"<br>`archive.py` "a restored transcript keeps its time" |
+| FR-13-06 | Self-test | `generate_arm.py` "the two map arms name the same moments in the chain's order"<br>`generate_arm.py` "the reading map names every template of the chain once, under docs/solid-ai-templates/"<br>`generate_arm.py` "each template skill is its template verbatim, named by the manifest"<br>`generate_arm.py` "a chain file the manifest does not describe is refused" |
 
 ## 14 One run at a time
 

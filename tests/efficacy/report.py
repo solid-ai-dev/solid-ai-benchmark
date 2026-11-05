@@ -1959,6 +1959,10 @@ PLAIN_ARMS = {
     "skills": "a root file plus one skill per kind of task",
     "hand": "a short file a person wrote",
     "short": "the templates' rules cut down to 40 lines",
+    "lazyref": "a short file that maps each kind of work to the template to "
+               "read when that work starts",
+    "lazyskills": "the same map, each template loaded as a skill when that "
+                  "work starts",
 }
 
 # Each radar axis in plain words, as a sentence names it.
