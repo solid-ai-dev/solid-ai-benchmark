@@ -2818,9 +2818,20 @@ def round5d_section(trials, table, results, seed, margins,
 # before any work.
 WRITES = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 SHELLS = ("Bash", "PowerShell")
-SHELL_WRITE = re.compile(
-    r"(>|\btee\b|\btouch\b|\bmkdir\b|\bcp\b|\bmv\b"
-    r"|New-Item|Set-Content|Add-Content|Out-File|Copy-Item|Move-Item)")
+
+# A shell command is read one simple command at a time: the text between
+# pipes, semicolons, `&&`, `||` and line breaks. The command is its first
+# word, after any variable assignments and with any directory and `.exe`
+# taken off, so a word that is an argument never counts as a command.
+SEGMENT = re.compile(r"\|\||&&|[|;\n]")
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+WRITE_COMMANDS = ("tee", "touch", "mkdir", "cp", "mv", "new-item",
+                  "set-content", "add-content", "out-file", "copy-item",
+                  "move-item")
+READ_COMMANDS = ("cat", "type", "head", "tail", "sed", "less", "more", "bat",
+                 "grep", "rg", "awk", "get-content", "gc", "select-string")
+TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
+                           + r"(templates/[\w./-]+\.md)")
 
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
@@ -2831,25 +2842,41 @@ NULL_REDIRECT = re.compile(
 # out before a command is read for a write.
 QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 
-# The commands that put a file's contents in front of the agent. A path a
-# shell command merely lists or tests is not read.
-SHELL_READ = re.compile(
-    r"\b(?:cat|type|head|tail|sed|less|more|bat|grep|rg|awk|Get-Content|gc|"
-    r"Select-String)\b[^|;&\n]*?" + re.escape(VENDORED["into"] + "/")
-    + r"(templates/[\w./-]+\.md)", re.IGNORECASE)
+
+def simple_commands(command, keep_quotes=False):
+    """A shell command's simple commands, each as (command word, text), the
+    null redirections taken out and, unless asked to keep them, the quoted
+    arguments too."""
+    bare = NULL_REDIRECT.sub(" ", command)
+    if not keep_quotes:
+        bare = QUOTED.sub(" ", bare)
+    found = []
+    for segment in SEGMENT.split(bare):
+        words = [word for word in segment.split()
+                 if not ASSIGNMENT.match(word)]
+        if not words:
+            continue
+        word = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if word.endswith(".exe"):
+            word = word[:-len(".exe")]
+        found.append((word, segment))
+    return found
 
 
 def shell_writes(command):
-    """Whether a shell command writes a file of the trial's own: it
-    redirects into a file, or copies, moves or creates one."""
-    bare = QUOTED.sub(" ", NULL_REDIRECT.sub(" ", command))
-    return SHELL_WRITE.search(bare) is not None
+    """Whether a shell command writes a file of the trial's own: a simple
+    command that redirects into a file, or copies, moves or creates one."""
+    return any(word in WRITE_COMMANDS or ">" in text
+               for word, text in simple_commands(command))
 
 
 def shell_reads(command):
-    """The templates a shell command reads, in order: those a reading
+    """The templates a shell command reads, in order: every one a reading
     command names under the vendored copy."""
-    return SHELL_READ.findall(command)
+    return [template
+            for word, text in simple_commands(command, keep_quotes=True)
+            if word in READ_COMMANDS
+            for template in TEMPLATE_PATH.findall(text)]
 
 
 def mapped_templates(arm):
@@ -3323,6 +3350,25 @@ def round5e_checks():
                    == ["templates/core/quality.md"]
                    and shell_reads("Get-Content %s" % quality)
                    == ["templates/core/quality.md"],
+                   None))
+    http = "%s/templates/backend/http.md" % into
+    checks.append(("a shell command is read one simple command at a time: "
+                   "every operand of a reading command counts, and a verb "
+                   "in an argument is no command",
+                   shell_reads("cat %s %s" % (quality, http))
+                   == ["templates/core/quality.md",
+                       "templates/backend/http.md"]
+                   and shell_reads("cat '%s' | head" % quality)
+                   == ["templates/core/quality.md"]
+                   and shell_reads("ls %s && cat %s" % (quality, http))
+                   == ["templates/backend/http.md"]
+                   and not shell_writes("rg -n mkdir src")
+                   and not shell_writes("echo mkdir src")
+                   and shell_writes("/usr/bin/cp a b")
+                   and shell_writes("FOO=1 mkdir x")
+                   and shell_writes("pytest -q | tee log.txt")
+                   and shell_writes("C:\\Windows\\System32\\xcopy.exe a b"
+                                    " > out.txt"),
                    None))
     silent_note = "\n".join(map_use_lines({"lazyref-2": {}},
                                           {"lazyref-2": never_wrote}))
