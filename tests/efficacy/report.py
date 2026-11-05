@@ -2850,7 +2850,7 @@ TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
-    r"\d?>{1,2}\s*(&\d|/dev/null|\$null|NUL\b)", re.IGNORECASE)
+    r"\d?>{1,2}\s*(['\"]?)(&\d|/dev/null|\$null|NUL\b)\1", re.IGNORECASE)
 
 # Quoted text is an argument, not an operator or a command, so it is taken
 # out before a command is read for a write.
@@ -2954,8 +2954,8 @@ def shell_reads(command, known=()):
     map it matches."""
     found = []
     directory = ""
-    for index, (word, text) in enumerate(
-            simple_commands(command, keep_quotes=True)):
+    commands = simple_commands(command, keep_quotes=True)
+    for index, (word, text) in enumerate(commands):
         words = [token for token in words_of(text)
                  if not ASSIGNMENT.match(token)
                  and token.lower() not in BODY_OPENERS][1:]
@@ -2967,9 +2967,14 @@ def shell_reads(command, known=()):
                 else posixpath.join(directory, target))
             continue
 
-        # A loop over files reads them in its body, so the files it runs
-        # over count as read where the body's own words name none.
+        # A loop over files counts them as read when its body, up to
+        # `done`, reads what it is given; a body that only names them does
+        # not.
         if word == "for":
+            body = itertools.takewhile(lambda step: step[0] != "done",
+                                       commands[index + 1:])
+            if not any(step[0] in READ_COMMANDS for step in body):
+                continue
             words = words[words.index("in") + 1:] if "in" in words else []
         elif word not in READ_COMMANDS:
             continue
@@ -3841,8 +3846,9 @@ def round5e_checks():
     checks.append(("a subagent pointing at the previous delegation's result "
                    "is charged to its own delegation, a quoted pattern is one "
                    "operand, a path follows the call's directory change, a "
-                   "wildcard stands for no slash, and a loop's files count "
-                   "as read",
+                   "wildcard stands for no slash, a loop's files count as "
+                   "read when its body reads, and a quoted null device is "
+                   "no write",
                    in_a_row["uses"] == [(1, chain[0]), (2, chain[2])]
                    and read_names('grep "mention %s" README.md' % quality)
                    == []
@@ -3859,6 +3865,10 @@ def round5e_checks():
                    == ["templates/core/quality.md"]
                    and read_names('for f in %s/templates/*/*.md; do cat "$f"; '
                                   'done' % into, chain) == chain
+                   and read_names('for f in %s/templates/*/*.md; do echo "$f"; '
+                                  'done; cat README.md' % into, chain) == []
+                   and not shell_writes('cat %s 2>"/dev/null"' % quality)
+                   and not shell_writes("cat %s 2>'/dev/null'" % quality)
                    and read_names("(cd %s && cat templates/core/git.md)"
                                   % into) == ["templates/core/git.md"]
                    and read_names("if test -f x; then cat %s; fi" % quality)
