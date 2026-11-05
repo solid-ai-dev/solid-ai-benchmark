@@ -22,6 +22,7 @@ import io
 import json
 import math
 import os
+import posixpath
 import random
 import re
 import shutil
@@ -2865,6 +2866,28 @@ HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*)\n.*?\n\s*\3\s*(?=\n|$)",
 # a file to read.
 PATTERN_FIRST = ("grep", "rg", "awk", "sed", "select-string")
 
+# The commands that change the directory the simple commands after them in
+# the same shell call run in, so a relative path they name is resolved
+# against it.
+CHANGE_DIR = ("cd", "pushd", "set-location", "sl")
+
+# A path that starts somewhere other than the current directory: at a
+# root, a drive or the home directory.
+ABSOLUTE = re.compile(r"^(/|[A-Za-z]:|~)")
+
+
+def words_of(text):
+    """A simple command's words, a quoted argument staying one word for
+    all the spaces in it."""
+    quoted = []
+
+    def stash(match):
+        quoted.append(match.group(0))
+        return "\x00%d\x00" % (len(quoted) - 1)
+    return [re.sub(r"\x00(\d+)\x00",
+                   lambda match: quoted[int(match.group(1))], word)
+            for word in QUOTED.sub(stash, text).split()]
+
 
 def simple_commands(command, keep_quotes=False):
     """A shell command's simple commands, each as (command word, text), the
@@ -2914,23 +2937,39 @@ def shell_reads(command, known=()):
     the vendored copy, a wildcard operand standing for each template of the
     map it matches."""
     found = []
+    directory = ""
     for index, (word, text) in enumerate(
             simple_commands(command, keep_quotes=True)):
+        words = [token for token in words_of(text)[1:]
+                 if not ASSIGNMENT.match(token)]
+        operands = [token for token in words if not token.startswith("-")]
+        if word in CHANGE_DIR:
+            target = operands[0].strip("'\"") if operands else ""
+            directory = "" if target in ("", "-") else posixpath.normpath(
+                target if ABSOLUTE.match(target)
+                else posixpath.join(directory, target))
+            continue
         if word not in READ_COMMANDS:
             continue
 
         # A search's or a script's first operand is what to look for, not
         # a file it reads, so it is left out of the files.
-        if word in PATTERN_FIRST:
-            operands = [token for token in text.split()[1:]
-                        if not token.startswith("-")]
-            text = " ".join(operands[1:])
-        for operand in TEMPLATE_OPERAND.findall(text):
-            if any(mark in operand for mark in "*?["):
-                found.extend((index, template) for template in known
-                             if fnmatch.fnmatchcase(template, operand))
-            elif operand.endswith(".md"):
-                found.append((index, operand))
+        if word in PATTERN_FIRST and operands:
+            words.remove(operands[0])
+        for token in words:
+            matched = TEMPLATE_OPERAND.findall(token)
+
+            # A path with no vendored copy in it may be relative to the
+            # directory an earlier command of the call moved into.
+            if not matched and directory and not token.startswith("-"):
+                matched = TEMPLATE_OPERAND.findall(posixpath.normpath(
+                    posixpath.join(directory, token.strip("'\""))))
+            for operand in matched:
+                if any(mark in operand for mark in "*?["):
+                    found.extend((index, template) for template in known
+                                 if fnmatch.fnmatchcase(template, operand))
+                elif operand.endswith(".md"):
+                    found.append((index, operand))
     return found
 
 
@@ -2955,16 +2994,19 @@ DELEGATIONS = ("Agent", "Task")
 
 
 def tool_calls_by_turn(files, written_at=None):
-    """Every tool call in the transcripts as (turn, tool, input), a turn
-    being one message of the model: several lines may share a message id,
-    so a new id is what counts a turn. Given a dict as `written_at`, each
-    line's uuid is filed under the turn current once it was written."""
+    """Every tool call in the transcripts as (turn, tool, input, line), a
+    turn being one message of the model and the line the call's place in
+    the transcripts: several lines may share a message id, so a new id is
+    what counts a turn. Given a dict as `written_at`, each line's uuid is
+    filed under its (turn, line)."""
     calls = []
     turn = 0
+    at = 0
     last_message = object()
     for file in files:
         with io.open(file, encoding="utf-8", errors="replace") as handle:
             for line in handle:
+                at += 1
                 try:
                     record = json.loads(line)
                 except ValueError:
@@ -2977,7 +3019,7 @@ def tool_calls_by_turn(files, written_at=None):
                     last_message = message.get("id")
                     turn += 1
                 if written_at is not None and record.get("uuid"):
-                    written_at[record["uuid"]] = turn
+                    written_at[record["uuid"]] = (turn, at)
                 if record.get("type") != "assistant":
                     continue
                 content = message.get("content")
@@ -2987,14 +3029,14 @@ def tool_calls_by_turn(files, written_at=None):
                         given = block.get("input")
                         calls.append((turn, block.get("name"),
                                       given if isinstance(given, dict)
-                                      else {}))
+                                      else {}, at))
     return calls
 
 
-def delegation_turn(file, written_at, fallback):
-    """The session's turn a subagent's transcript was started at: the turn
-    of the session's line its first record points back to, or `fallback`
-    where it points at none the session wrote."""
+def delegation_anchor(file, written_at):
+    """The (turn, line) of the session's line a subagent's transcript
+    points back to from its first record, or None where it points at none
+    the session wrote."""
     with io.open(file, encoding="utf-8", errors="replace") as handle:
         for line in handle:
             try:
@@ -3008,7 +3050,7 @@ def delegation_turn(file, written_at, fallback):
                 return written_at[parent]
             if record.get("type") == "assistant":
                 break
-    return fallback
+    return None
 
 
 def map_use(files, arm, templates=None, delegated=()):
@@ -3032,21 +3074,24 @@ def map_use(files, arm, templates=None, delegated=()):
         return [template for template in templates
                 if not known or template in known]
     written_at = {}
-    own = [(turn, name, given, False)
-           for turn, name, given in tool_calls_by_turn(files, written_at)]
-    first_delegation = next((turn for turn, name, _, _ in own
-                             if name in DELEGATIONS), None)
+    parsed = tool_calls_by_turn(files, written_at)
+    own = [(turn, name, given, False) for turn, name, given, _ in parsed]
+    delegations = [(line, turn) for turn, name, _, line in parsed
+                   if name in DELEGATIONS]
     calls = list(own)
     for file in delegated:
-        at = delegation_turn(file, written_at, first_delegation)
+        anchor = delegation_anchor(file, written_at)
 
-        # The line a subagent points back to is the one before the message
-        # that delegated, so the delegation is the first one from there on.
-        if at is not None:
-            at = next((turn for turn, name, _, _ in own
-                       if name in DELEGATIONS and turn >= at), at)
+        # The line a subagent points back to is the delegating message or
+        # the one before it, a result of the same turn or of the one before
+        # perhaps, so the delegation is the first one from that line on.
+        if anchor is not None:
+            at = next((turn for line, turn in delegations
+                       if line >= anchor[1]), anchor[0])
+        else:
+            at = delegations[0][1] if delegations else None
         calls.extend((at if at is not None else turn, name, given, True)
-                     for turn, name, given in tool_calls_by_turn([file]))
+                     for turn, name, given, _ in tool_calls_by_turn([file]))
     calls.sort(key=lambda call: call[0])
     uses = []
     before = set()
@@ -3688,6 +3733,51 @@ def round5e_checks():
                    and read_names("sed -n 1,40p %s" % quality)
                    == ["templates/core/quality.md"],
                    (shell_first, anchored)))
+    # Two delegations in a row: the second subagent points back at the
+    # first one's result, written in the first one's turn, and is charged
+    # to the second delegation all the same. A quoted pattern with spaces
+    # is one operand; a path is resolved against the directory an earlier
+    # command of the call moved into.
+    os.makedirs(scratch)
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(stamped("user", "r0", "v0", {"type": "text",
+                                                  "text": "go"}))
+        handle.write(stamped("assistant", "r1", "v1", call(
+            "Agent", prompt="read quality")))
+        handle.write(stamped("user", "r1r", "v1r", {"type": "text",
+                                                    "text": "done"}))
+        handle.write(stamped("assistant", "r2", "v2", call(
+            "Agent", prompt="read http")))
+        handle.write(stamped("assistant", "r3", "v3", call(
+            "Write", file_path="a.py")))
+    children = []
+    for index, (uuid, template) in enumerate(
+            (("v0", "core/quality.md"), ("v1r", "backend/http.md"))):
+        child = os.path.join(scratch, "agent-%d.jsonl" % index)
+        with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps({"type": "fork-context-ref",
+                                     "parentLastUuid": uuid}) + "\n")
+            handle.write(line("assistant", "d%d" % index, call(
+                "Read", file_path="/pen/%s/templates/%s" % (into, template))))
+        children.append(child)
+    in_a_row = map_use([parent], "lazyref", chain, children)
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a subagent pointing at the previous delegation's result "
+                   "is charged to its own delegation, a quoted pattern is one "
+                   "operand, and a path follows the call's directory change",
+                   in_a_row["uses"] == [(1, chain[0]), (2, chain[2])]
+                   and read_names('grep "mention %s" README.md' % quality)
+                   == []
+                   and read_names("grep 'x y' %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("cd %s && cat templates/core/quality.md"
+                                  % into) == ["templates/core/quality.md"]
+                   and read_names("cd %s/templates; cat core/git.md "
+                                  "../templates/core/quality.md; cd ..; ls" % into)
+                   == ["templates/core/git.md", "templates/core/quality.md"]
+                   and read_names("cd src && cat core/quality.md") == [],
+                   in_a_row))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
     checks.append(("a map no trial read is said to be ignored, not read on "
