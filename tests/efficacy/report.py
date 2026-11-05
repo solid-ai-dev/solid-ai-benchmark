@@ -37,10 +37,11 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
-                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, SCORABLE,
-                     TEMPLATES_ENV, VOIDING, TrialError, canonical, git,
-                     reach, read_transcripts, scoring_area, split_name,
-                     templates_root, trial_name)
+                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, ROUND5E_ARMS,
+                     SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING, TrialError,
+                     canonical, git, reach, read_transcripts, scoring_area,
+                     split_name, templates_root, transcript_files,
+                     trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +55,7 @@ REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 # turn and runs again as round 5c, which changes only where a workspace sits.
 ROUND5_REGISTRATION = "docs/rounds/round-5c.md"
 ROUND5D_REGISTRATION = "docs/rounds/round-5d.md"
+ROUND5E_REGISTRATION = "docs/rounds/round-5e.md"
 
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
@@ -95,7 +97,17 @@ CONTRASTS = (("short", "none"), ("hybrid", "none"), ("hand", "none"),
              # Round 5d: each templates arm against a person's file, and the
              # 40-line file against the same generation without its budget.
              ("inline", "hand"), ("hybrid", "hand"), ("reference", "hand"),
-             ("skills", "hand"), ("short", "inline"))
+             ("skills", "hand"), ("short", "inline"),
+
+             # Round 5e: each map arm against none, against the arm it
+             # answers (H7, H9), against the other reused arms, and the skill
+             # against the file (H8).
+             ("lazyref", "none"), ("lazyskills", "none"),
+             ("lazyref", "reference"), ("lazyskills", "skills"),
+             ("lazyskills", "lazyref"),
+             ("lazyref", "skills"), ("lazyskills", "reference"),
+             ("lazyref", "hand"), ("lazyskills", "hand"),
+             ("lazyref", "short"), ("lazyskills", "short"))
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -651,7 +663,7 @@ def is_round5(trials):
     """Whether the run holds a round-5 arm, so that round's registration,
     its K and its margins, governs it."""
     return (any(arm_of(name) in ROUND5_ARMS for name in trials)
-            or is_round5d(trials))
+            or is_round5d(trials) or is_round5e(trials))
 
 
 def is_round5d(trials):
@@ -660,15 +672,34 @@ def is_round5d(trials):
     return any(arm_of(name) in ROUND5D_ARMS for name in trials)
 
 
+def is_round5e(trials):
+    """Whether the run holds a round-5e arm, so that round's registration
+    governs it, under round 5d's verdict rules."""
+    return any(arm_of(name) in ROUND5E_ARMS for name in trials)
+
+
+def later_rules_of(trials):
+    """Whether round 5d's verdict rules govern the run: they do from round
+    5d on, so round 5e reads under them too."""
+    return is_round5d(trials) or is_round5e(trials)
+
+
 # The arms round 5 registers. A block is complete only when every one of
 # them has its trial, so a run that lost a trial or an arm is part-run.
 ROUND5_RUN = ("none", "inline", "hybrid", "reference", "skills")
 
 
+def round_arms(trials):
+    """The arms the run's round registers as fresh trials."""
+    if is_round5e(trials):
+        return ROUND5E_ARMS
+    return ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
+
+
 def owed_blocks(trials):
     """The blocks of round 5's K that still miss a registered arm's trial,
     in order."""
-    run = ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
+    run = round_arms(trials)
     return [block for block in range(1, ROUND5_K + 1)
             if any(trial_name(arm, block) not in trials for arm in run)]
 
@@ -690,7 +721,7 @@ def blocks_named(blocks):
 
 def margins_of(trials):
     """The margins a run's contrasts are held against."""
-    return ROUND5D_MARGINS if is_round5d(trials) else ROUND5_MARGINS
+    return ROUND5D_MARGINS if later_rules_of(trials) else ROUND5_MARGINS
 
 
 def active_contrasts(trials):
@@ -733,7 +764,8 @@ def crossed_labels(trials):
 def collect(trials, metrics=METRICS, later_rules=None):
     """Metric values by metric, arm and trial index, read by round 5d's
     rules for a round-5d run or where `later_rules` asks for them."""
-    working_only = is_round5d(trials) if later_rules is None else later_rules
+    working_only = (later_rules_of(trials) if later_rules is None
+                    else later_rules)
     table = {}
     for key, label, direction, accessor in metrics:
         if key in SUPERSEDED_IN_ROUND5 or (working_only
@@ -1069,7 +1101,7 @@ def round_contrasts(trials, table, seed):
     """`table`'s contrasts read the way the round registered: its margins,
     its crossings, and round 5d's rules for a round-5d run."""
     return contrasts(table, seed, crossed_labels(trials), margins_of(trials),
-                     is_round5d(trials))
+                     later_rules_of(trials))
 
 
 def withdrawals(trials, path=WITHDRAWN):
@@ -1148,7 +1180,7 @@ def cross_check(trials, other, seed, later_rules=None):
     """How far the other vendor's judge agrees with the rounds' judge on the
     trials it read, per judge row, and the contrasts it reads itself, by
     round 5d's rules for a round-5d run or where `later_rules` asks."""
-    strict = is_round5d(trials) if later_rules is None else later_rules
+    strict = later_rules_of(trials) if later_rules is None else later_rules
     rows = {}
     for key in JUDGE_ROWS:
         dimension = key[len("judge_"):]
@@ -1372,6 +1404,14 @@ def python_problem(trials):
     return ("the trials were installed on more than one Python: %s"
             % ", ".join("%s (%s, for one)" % (minor, name)
                         for minor, name in sorted(found.items())))
+
+
+def registration_of(trials):
+    """The registration a run is read against: the latest round whose arm
+    it holds."""
+    if is_round5e(trials):
+        return ROUND5E_REGISTRATION
+    return ROUND5D_REGISTRATION if is_round5d(trials) else ROUND5_REGISTRATION
 
 
 def registration_problem(root, registration, repository=REPOSITORY):
@@ -1695,11 +1735,15 @@ def write_report(root, trials, table, results, seed, out_dir,
                                 blocks=k))
     lines.append("")
 
-    if is_round5(trials) and not is_round5d(trials):
+    if is_round5(trials) and not later_rules_of(trials):
         lines.extend(round5_section(trials, table, results))
         lines.append("")
     if is_round5d(trials):
         lines.extend(round5d_section(trials, table, results, seed,
+                                     margins_of(trials)))
+        lines.append("")
+    if is_round5e(trials):
+        lines.extend(round5e_section(root, trials, table, results, seed,
                                      margins_of(trials)))
         lines.append("")
 
@@ -2010,6 +2054,14 @@ PLAIN_QUESTIONS = {
     "skills-hand": "Does the skills approach do as well as a person's file?",
     "short-hand": "Does a 40-line file from the templates do as well as a "
                   "person's file of the same length?",
+    "lazyref-reference": "Does a template read when the work touches its "
+                         "topics do as well as the same template read "
+                         "before the work starts?",
+    "lazyskills-lazyref": "Does loading a template as a skill do as well as "
+                          "reading it as a file, at the same moments?",
+    "lazyskills-skills": "Do templates loaded whole as skills, at a named "
+                         "moment, do as well as task skills offered by "
+                         "description?",
 }
 PLAIN_ANSWERS = {"supported": "yes", "refuted": "no",
                  "inconclusive": "not settled: the runs could not tell "
@@ -2565,6 +2617,15 @@ ROUND5D_HYPOTHESES = (
      "held"),
 )
 
+# Round 5e's hypotheses, as registered: each asks for no loss, under round
+# 5d's rules. H7 and H9 cross rounds and read unpaired; H8 is paired.
+ROUND5E_HYPOTHESES = (
+    ("H7, on demand against up front", "lazyref-reference", "held"),
+    ("H8, a skill against a file", "lazyskills-lazyref", "held"),
+    ("H9, one skill per template against one skill per task",
+     "lazyskills-skills", "held"),
+)
+
 # Each leave-two-out reading takes fewer resamples than the report's
 # intervals, so an unpaired contrast's 435 readings stay cheap.
 LEAVE_TWO_OUT_RESAMPLES = 2000
@@ -2733,6 +2794,397 @@ def round5d_section(trials, table, results, seed, margins,
         lines.append("  - profile: %s" % "; ".join(
             "%s %s" % (axis, word) for axis, word in profile(results, label)))
     return lines
+
+
+# The tools whose call writes a file of the trial's own. A read of the map's
+# templates before the first of them came before any work.
+WRITES = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+
+def mapped_templates(arm):
+    """What an arm's file points the agent at: the skills it carries, by
+    name, or the templates it vendors, by path; empty for an arm with
+    neither."""
+    entry = ARMS.get(arm) or {}
+    if entry.get("skills"):
+        folder = os.path.join(ARMS_DIR, entry["skills"])
+        return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+    if entry.get("vendor"):
+        record = generation_records().get(arm) or {}
+        return list(record.get("resolved_files") or [])
+    return []
+
+
+def map_use(files, arm, templates=None):
+    """How one trial used what its file points at, from its transcripts:
+    each template read from the vendored copy or loaded as a skill, as
+    (turn, template) in order, and the turn of the trial's first write to a
+    file of its own, or None."""
+    entry = ARMS.get(arm) or {}
+    known = set(mapped_templates(arm) if templates is None else templates)
+    marker = VENDORED["into"] + "/"
+    uses = []
+    first_write = None
+    turn = 0
+    last_message = object()
+    for file in files:
+        with io.open(file, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict) \
+                        or record.get("type") != "assistant":
+                    continue
+                message = record.get("message") or {}
+
+                # One turn of the model may be written as several lines that
+                # share a message id, so a new id is what counts a turn.
+                if message.get("id") != last_message:
+                    last_message = message.get("id")
+                    turn += 1
+                content = message.get("content")
+                for block in content if isinstance(content, list) else []:
+                    if not isinstance(block, dict) \
+                            or block.get("type") != "tool_use":
+                        continue
+                    given = block.get("input")
+                    given = given if isinstance(given, dict) else {}
+                    name = block.get("name")
+                    if name in WRITES:
+                        if first_write is None:
+                            first_write = turn
+                    elif name == "Read" and entry.get("vendor"):
+                        path = str(given.get("file_path") or "")
+                        path = path.replace("\\", "/")
+                        if marker in path:
+                            uses.append((turn, path.split(marker, 1)[1]))
+                    elif name == "Skill" and entry.get("skills"):
+                        skill = str(given.get("skill") or "").strip()
+                        if skill in known:
+                            uses.append((turn, skill))
+    return {"uses": uses, "first_write": first_write}
+
+
+def map_uses(root, trials):
+    """Every trial's map use, by name, for the arms whose file points at
+    the templates and whose transcripts the root still holds."""
+    home = os.path.join(root, "home")
+    uses = {}
+    for record in run_records(root):
+        if record.get("outcome") not in SCORABLE:
+            continue
+        name = name_of(record)
+        if name not in trials:
+            continue
+        arm = arm_of(name)
+        templates = mapped_templates(arm)
+        if not templates:
+            continue
+        files = transcript_files(home, record.get("workspace") or "",
+                                 started(record))
+        if files:
+            uses[name] = map_use(files, arm, templates)
+    return uses
+
+
+def mean_of(values):
+    """The mean of the values, or None of none."""
+    return statistics.fmean(values) if values else None
+
+
+def median_of(values):
+    """The median of the values, or None of none."""
+    return float(statistics.median(values)) if values else None
+
+
+def map_use_rows(trials, uses):
+    """Per arm: trials read, templates in its map, how many each trial read
+    or loaded, how many before its first write, the turn of the first, and
+    how many trials read every template before writing anything."""
+    rows = []
+    for arm in ARMS:
+        names = [name for name in ordered(trials)
+                 if arm_of(name) == arm and name in uses]
+        if not names:
+            continue
+        total = len(mapped_templates(arm))
+        counts, before, firsts = [], [], []
+        for name in names:
+            use = uses[name]
+            counts.append(len({template for _, template in use["uses"]}))
+            before.append(len({
+                template for turn, template in use["uses"]
+                if use["first_write"] is None or turn < use["first_write"]}))
+            if use["uses"]:
+                firsts.append(use["uses"][0][0])
+        rows.append({"arm": arm, "trials": len(names), "total": total,
+                     "read": mean_of(counts), "before": mean_of(before),
+                     "first": median_of(firsts),
+                     "up_front": sum(1 for count in before
+                                     if total and count >= total)})
+    return rows
+
+
+def map_use_lines(trials, uses):
+    """The use-of-the-map table and the note beside H7."""
+    rows = map_use_rows(trials, uses)
+    lines = ["### Use of the map", "",
+             "From each trial's transcript: the templates it read from the "
+             "vendored copy or loaded as skills, counted once each, the "
+             "turn the first happened at, and how many came before the "
+             "trial's first write to a file of its own.", "",
+             "| Arm | Trials | Templates in the map | Read or loaded, mean "
+             "| Before the first write, mean | First at turn, median "
+             "| Read all before writing |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
+
+    def shown(value, places=1):
+        return "—" if value is None else ("%%.%df" % places) % value
+    for row in rows:
+        lines.append("| %s | %d | %d | %s | %s | %s | %d of %d |" % (
+            row["arm"], row["trials"], row["total"], shown(row["read"]),
+            shown(row["before"]), shown(row["first"], 0), row["up_front"],
+            row["trials"]))
+    for row in rows:
+        if row["arm"] != "lazyref":
+            continue
+        lines.append("")
+        if row["up_front"]:
+            lines.append("Beside H7: `lazyref` read every template before "
+                         "its first write in %d of %d trials. Those trials "
+                         "measured reading up front, not on demand."
+                         % (row["up_front"], row["trials"]))
+        else:
+            lines.append("Beside H7: no `lazyref` trial read every template "
+                         "before its first write, so H7 reads on-demand "
+                         "reading.")
+    return lines
+
+
+# Round 5d's screen for round 6: the candidates, read against the bare arm,
+# and how many of them go on.
+SCREEN_CANDIDATES = ("inline", "hybrid", "reference", "skills", "hand",
+                     "short") + ROUND5E_ARMS
+SCREEN_KEEPS = 4
+SCREEN_ROWS = ROUND5D_ROWS + ("reliability",)
+
+
+def round6_screen(table, results):
+    """Each candidate against the bare arm: out where a deciding row reads
+    worse, the rest ranked by rows better and then by mean cost, the top
+    four going on to round 6. Candidates the run holds no contrast for are
+    left out."""
+    rows = []
+    for arm in SCREEN_CANDIDATES:
+        label = "%s-%s" % (arm, BARE)
+        if not any(label in results.get(key, {}) for key in SCREEN_ROWS):
+            continue
+        readings = {key: row_reading(results.get(key, {}).get(label))
+                    for key in SCREEN_ROWS}
+        rows.append({"arm": arm,
+                     "worse": [key for key in SCREEN_ROWS
+                               if readings[key] == "worse"],
+                     "better": sum(1 for reading in readings.values()
+                                   if reading == "better"),
+                     "cost": arm_mean(table, "cost_usd", arm),
+                     "rank": None, "round6": False})
+    kept = [row for row in rows if not row["worse"]]
+    kept.sort(key=lambda row: (-row["better"], row["cost"]
+                               if row["cost"] is not None else float("inf")))
+    for rank, row in enumerate(kept, 1):
+        row["rank"] = rank
+        row["round6"] = rank <= SCREEN_KEEPS
+    return rows
+
+
+def screen_lines(table, results):
+    """The screen as a table, and the arms round 6 runs."""
+    rows = round6_screen(table, results)
+    lines = ["### Round 6's arms, by the screen of 13d.9", "",
+             "Each candidate is read against `%s` by the rules of 13d.7. An "
+             "arm worse on a deciding row is out; the rest rank by how many "
+             "rows read better, then by mean cost. The screen decides which "
+             "arms run again, not which arm is better." % BARE, "",
+             "| Arm | Rows better | Rows worse | Mean cost | Screen |",
+             "| --- | --- | --- | --- | --- |"]
+    for row in rows:
+        if row["worse"]:
+            screen = "out: %s worse" % ", ".join(
+                SHORT.get(key, key) for key in row["worse"])
+        else:
+            screen = "rank %d%s" % (row["rank"],
+                                   ", round 6" if row["round6"] else "")
+        lines.append("| %s | %d | %d | %s | %s |" % (
+            row["arm"], row["better"], len(row["worse"]),
+            "—" if row["cost"] is None else "$%.2f" % row["cost"], screen))
+    chosen = [row["arm"] for row in sorted(
+        (row for row in rows if row["round6"]), key=lambda row: row["rank"])]
+    lines.extend(["", "Round 6 runs `%s`%s." % (
+        BARE, " and " + spoken(["`%s`" % arm for arm in chosen])
+        if chosen else " alone")])
+    return lines
+
+
+def round5e_section(root, trials, table, results, seed, margins):
+    """Round 5e's answer: round 5d's reading of H7 to H9, how each trial
+    used its map, and the screen for round 6."""
+    lines = round5d_section(trials, table, results, seed, margins,
+                            ROUND5E_HYPOTHESES,
+                            "## Round 5e: the templates on demand")
+    lines.append("")
+    lines.extend(map_use_lines(trials, map_uses(root, trials)))
+    lines.append("")
+    lines.extend(screen_lines(table, results))
+    return lines
+
+
+def round5e_checks():
+    """Round 5e's rules: its arms are read under round 5d's rules and its
+    own registration, its contrasts are declared, H7 to H9 read as
+    registered, the map's use is counted from the transcript, and the
+    screen ranks round 6's candidates as 13d.9 says."""
+    checks = []
+    fresh = {"lazyref-1": {}, "lazyskills-1": {}}
+    earlier = {"hand-1": {}, "short-1": {}}
+    got = (is_round5e(fresh), is_round5d(fresh), later_rules_of(fresh),
+           round_arms(fresh) == ROUND5E_ARMS,
+           margins_of(fresh) is ROUND5D_MARGINS,
+           registration_of(fresh), registration_of(earlier),
+           owed_blocks(fresh) == list(range(2, ROUND5_K + 1)))
+    checks.append(("round 5e reads under round 5d's rules, against its own "
+                   "registration, owing its own arms' blocks",
+                   got == (True, False, True, True, True,
+                           ROUND5E_REGISTRATION, ROUND5D_REGISTRATION, True),
+                   got))
+
+    present = {"%s-1" % arm: {} for arm in
+               ("none", "reference", "skills", "hand", "short") + ROUND5E_ARMS}
+    active = active_contrasts(present)
+    wanted = [tuple(label.split("-")) for _, label, _ in ROUND5E_HYPOTHESES]
+    against = [(arm, other) for arm in ROUND5E_ARMS
+               for other in ("none", "reference", "skills", "hand", "short")]
+    got = (all(pair in active for pair in wanted + against),
+           all(label in PLAIN_QUESTIONS for _, label, _ in ROUND5E_HYPOTHESES))
+    checks.append(("round 5e's contrasts are declared: each map arm against "
+                   "none and every reused arm, and the skill against the "
+                   "file", got == (True, True), got))
+
+    def results_for(label, **overrides):
+        readings = {key: "held" for key in SCREEN_ROWS}
+        readings.update(overrides)
+        return {key: {label: {"verdict": reading}}
+                for key, reading in readings.items()}
+    label = "lazyref-reference"
+    got = [round5d_hypothesis(results_for(label), label, "held")[0],
+           round5d_hypothesis(results_for(label, task_success="better"),
+                              label, "held")[0],
+           round5d_hypothesis(results_for(label, judge_security="worse"),
+                              label, "held")[0],
+           round5d_hypothesis(results_for(label, reliability="worse"),
+                              label, "held")[0],
+           round5d_hypothesis(results_for(label, task_success="open"),
+                              label, "held")[0]]
+    checks.append(("H7 to H9 are supported when every row is held or better, "
+                   "refuted by any worse row, reliability's included",
+                   got == ["supported", "supported", "refuted", "refuted",
+                           "inconclusive"], got))
+
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-map-use-self-test")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+
+    def call(name, **given):
+        return {"type": "tool_use", "id": "t", "name": name, "input": given}
+
+    def line(kind, message_id, *blocks):
+        return json.dumps({"type": kind,
+                           "message": {"id": message_id,
+                                       "content": list(blocks)}}) + "\n"
+    into = VENDORED["into"]
+    planted = os.path.join(scratch, "planted.jsonl")
+    with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("user", "u1", {"type": "text", "text": "go"}))
+        handle.write(line("assistant", "a1", call(
+            "Read", file_path="C:\\pen\\%s\\templates\\core\\quality.md"
+            % into.replace("/", "\\"))))
+        handle.write(line("assistant", "a1", {"type": "text", "text": "ok"}))
+        handle.write(line("assistant", "a2", call(
+            "Read", file_path="/pen/%s/templates/core/quality.md" % into)))
+        handle.write(line("assistant", "a3", call("Write", file_path="x.py")))
+        handle.write(line("assistant", "a4", call(
+            "Read", file_path="/pen/%s/templates/backend/http.md" % into)))
+        handle.write(line("assistant", "a5", call("Read",
+                                                  file_path="/pen/x.py")))
+    reading = map_use([planted], "lazyref",
+                      ["templates/core/quality.md",
+                       "templates/backend/http.md"])
+    skills = os.path.join(scratch, "skills.jsonl")
+    with io.open(skills, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "s1", call("Skill",
+                                                  skill="base-quality")))
+        handle.write(line("assistant", "s2", call("Skill", skill="run")))
+        handle.write(line("assistant", "s3", call("Edit", file_path="x.py"),
+                          call("Skill", skill="backend-api")))
+    loading = map_use([skills], "lazyskills", ["base-quality", "backend-api"])
+    rows = map_use_rows({"lazyref-1": {}, "lazyskills-1": {}},
+                        {"lazyref-1": reading, "lazyskills-1": loading})
+    summary = [(row["arm"], row["read"], row["before"], row["first"],
+                row["up_front"]) for row in rows]
+    shutil.rmtree(scratch, ignore_errors=True)
+    got = (reading, loading, summary)
+    checks.append(("the map's use counts each template read or skill loaded, "
+                   "with its turn, and those before the first write",
+                   reading == {"uses": [(1, "templates/core/quality.md"),
+                                        (2, "templates/core/quality.md"),
+                                        (4, "templates/backend/http.md")],
+                               "first_write": 3}
+                   and loading == {"uses": [(1, "base-quality"),
+                                            (3, "backend-api")],
+                                   "first_write": 3}
+                   and summary == [("lazyref", 2.0, 1.0, 1.0, 0),
+                                   ("lazyskills", 2.0, 1.0, 1.0, 0)],
+                   got))
+    got = (mapped_templates("none"), len(mapped_templates("lazyskills")),
+           len(mapped_templates("lazyref")))
+    checks.append(("an arm's map is its skills or its vendored chain, and the "
+                   "bare arm has none", got == ([], 13, 13), got))
+
+    # Two arms better on two rows, the cheaper first; one out on task
+    # success; three held, by cost; the fifth in rank stays out of round 6.
+    costs = {"inline": 10.0, "hybrid": 8.0, "reference": 6.0, "skills": 5.0,
+             "hand": 9.0, "short": 20.0}
+    table = {"cost_usd": {"values": {arm: {1: cost, 2: cost}
+                                     for arm, cost in costs.items()}}}
+    results = {key: {} for key in SCREEN_ROWS}
+    for arm in costs:
+        for key in SCREEN_ROWS:
+            results[key]["%s-none" % arm] = {"verdict": "held"}
+    for key in ("task_success", "judge_security"):
+        results[key]["inline-none"]["verdict"] = "better"
+        results[key]["hybrid-none"]["verdict"] = "better"
+    results["task_success"]["reference-none"]["verdict"] = "worse"
+    screen = {row["arm"]: (row["rank"], row["round6"], row["worse"])
+              for row in round6_screen(table, results)}
+    checks.append(("the screen drops an arm worse than none on a deciding "
+                   "row, ranks the rest by rows better and then by cost, "
+                   "and keeps four",
+                   screen == {"hybrid": (1, True, []),
+                              "inline": (2, True, []),
+                              "skills": (3, True, []),
+                              "hand": (4, True, []),
+                              "short": (5, False, []),
+                              "reference": (None, False, ["task_success"])},
+                   screen))
+    text = "\n".join(screen_lines(table, results))
+    checks.append(("the screen names the arms round 6 runs",
+                   "Round 6 runs `none` and `hybrid`, `inline`, `skills` and "
+                   "`hand`." in text
+                   and "out: %s worse" % SHORT["task_success"] in text,
+                   text.splitlines()[-1]))
+    return checks
 
 
 def round5d_checks(seed):
@@ -6179,6 +6631,7 @@ def self_test(seed):
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
     checks.extend(round5d_checks(seed))
+    checks.extend(round5e_checks())
     checks.extend(iso_checks(seed))
     checks.extend(band_checks(seed))
     checks.extend(failed_build_checks())
@@ -6249,8 +6702,7 @@ def main(argv):
     if is_round5(trials):
         try:
             problem = registration_problem(
-                options.root, ROUND5D_REGISTRATION if is_round5d(trials)
-                else ROUND5_REGISTRATION)
+                options.root, registration_of(trials))
         except TrialError as error:
             problem = str(error)
         if problem:

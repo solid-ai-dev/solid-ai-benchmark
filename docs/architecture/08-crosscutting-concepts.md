@@ -554,6 +554,15 @@ Round 5's:
 | `reference − hybrid` | H3: does naming the templates alone deliver less? |
 | `skills − inline` | The same rules, with and without the split into skills |
 
+Round 5e's, read under round 5d's rules:
+
+| Contrast | Asks |
+| -------- | ---- |
+| `lazyref − reference` | H7: does a template read when the work touches its topics deliver what one read up front does? |
+| `lazyskills − lazyref` | H8: does a skill load deliver what a file read does, at the same moments? |
+| `lazyskills − skills` | H9: do whole templates as skills, at a named moment, deliver what task skills do? |
+| each map arm − `none`, `hand`, `short`, and the other reused arm | Secondary, no verdict; the `none` reading feeds round 6's screen |
+
 **Rules**
 
 | # | Rule | In practice | Requirement |

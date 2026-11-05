@@ -4,6 +4,10 @@ Registered on 2026-11-05, while round 5d ran and before any round-5e trial ran.
 Round 5d keeps its registration as it was when its first trial ran; this one is
 a registration of its own.
 
+Amended on 2026-11-05, before any round-5e trial ran: the report's reading of
+the round moved from "still needed" to done in 13e.5, and the reuse of the
+earlier rounds' arms is what remains.
+
 ## 13e. Round 5e: the templates on demand, against rounds 5c and 5d
 
 ### 13e.1 What it takes from rounds 5c and 5d
@@ -158,14 +162,17 @@ Done with this registration:
   them, and builds both from round 5's spec at its registered content
 - the report names both arms in plain words
 
-The report still gains, with a self-test for each:
+Done after it, before any round-5e trial, each with a self-test:
 
-- round 5c's `reference` and `skills` and round 5d's `hand` and `short` read
-  with their scores, judgings, security readings and tool lock, as 13d.5 reads
-  round 5c's `none`
-- the contrasts of H7 and H9, unpaired, and H8, paired
-- the use-of-the-map rows of 13e.4, read from the transcripts
-- the round-6 screen of 13d.9 with round 5e's arms among the candidates
+- the report reads a round-5e run under round 5d's rules and against this
+  registration, with the contrasts of H7 and H9, unpaired, and H8, paired
+- the use-of-the-map rows of 13e.4, read from the transcripts, with the note
+  beside H7
+- the round-6 screen of 13d.9, with round 5e's arms among the candidates
+
+Still needed: round 5c's `reference` and `skills` and round 5d's `hand` and
+`short` brought into round 5e's root by `reuse.py`, scored and read as they
+were, with their tool lock.
 
 ### 13e.6 When it runs
 
