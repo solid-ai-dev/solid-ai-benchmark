@@ -16,6 +16,7 @@ compute.
 
 import argparse
 import datetime
+import fnmatch
 import glob
 import io
 import json
@@ -2833,6 +2834,11 @@ READ_COMMANDS = ("cat", "type", "head", "tail", "sed", "less", "more", "bat",
 TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
                            + r"(templates/[\w./-]+\.md)")
 
+# A shell operand under the vendored copy that may carry a wildcard, which
+# is resolved against the map's templates rather than read as no file.
+TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
+                              + r"(templates/[\w./*?\[\]-]+)")
+
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
@@ -2870,13 +2876,21 @@ def shell_writes(command):
                for word, text in simple_commands(command))
 
 
-def shell_reads(command):
+def shell_reads(command, known=()):
     """The templates a shell command reads, in order: every one a reading
-    command names under the vendored copy."""
-    return [template
-            for word, text in simple_commands(command, keep_quotes=True)
-            if word in READ_COMMANDS
-            for template in TEMPLATE_PATH.findall(text)]
+    command names under the vendored copy, a wildcard operand standing for
+    each template of the map it matches."""
+    found = []
+    for word, text in simple_commands(command, keep_quotes=True):
+        if word not in READ_COMMANDS:
+            continue
+        for operand in TEMPLATE_OPERAND.findall(text):
+            if any(mark in operand for mark in "*?["):
+                found.extend(template for template in known
+                             if fnmatch.fnmatchcase(template, operand))
+            elif operand.endswith(".md"):
+                found.append(operand)
+    return found
 
 
 def mapped_templates(arm):
@@ -2893,22 +2907,17 @@ def mapped_templates(arm):
     return []
 
 
-def map_use(files, arm, templates=None):
-    """How one trial used what its file points at, from its transcripts:
-    each template read from the vendored copy or loaded as a skill, as
-    (turn, template) in order, and the turn of the trial's first write to a
-    file of its own, or None."""
-    entry = ARMS.get(arm) or {}
-    known = set(mapped_templates(arm) if templates is None else templates)
-    marker = VENDORED["into"] + "/"
-    named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
+# The tools that hand work to a subagent, whose transcript sits beside the
+# session's. What the subagent read or wrote is charged to the turn that
+# delegated it.
+DELEGATIONS = ("Agent", "Task")
 
-    def mapped(templates):
-        """Those of the templates that are on the arm's map."""
-        return [template for template in templates
-                if not known or template in known]
-    uses = []
-    first_write = None
+
+def tool_calls_by_turn(files):
+    """Every tool call in the transcripts as (turn, tool, input), a turn
+    being one message of the model: several lines may share a message id,
+    so a new id is what counts a turn."""
+    calls = []
     turn = 0
     last_message = object()
     for file in files:
@@ -2922,42 +2931,71 @@ def map_use(files, arm, templates=None):
                         or record.get("type") != "assistant":
                     continue
                 message = record.get("message") or {}
-
-                # One turn of the model may be written as several lines that
-                # share a message id, so a new id is what counts a turn.
                 if message.get("id") != last_message:
                     last_message = message.get("id")
                     turn += 1
                 content = message.get("content")
                 for block in content if isinstance(content, list) else []:
-                    if not isinstance(block, dict) \
-                            or block.get("type") != "tool_use":
-                        continue
-                    given = block.get("input")
-                    given = given if isinstance(given, dict) else {}
-                    name = block.get("name")
-                    command = str(given.get("command") or "")
-                    command = command.replace("\\", "/")
+                    if isinstance(block, dict) \
+                            and block.get("type") == "tool_use":
+                        given = block.get("input")
+                        calls.append((turn, block.get("name"),
+                                      given if isinstance(given, dict)
+                                      else {}))
+    return calls
 
-                    # A shell command may read a template and write a file
-                    # in one go, so it is read for both.
-                    if name in SHELLS and entry.get("vendor"):
-                        uses.extend((turn, template) for template
-                                    in mapped(shell_reads(command)))
-                    if name in WRITES or (name in SHELLS
-                                          and shell_writes(command)):
-                        if first_write is None:
-                            first_write = turn
-                    elif name == "Read" and entry.get("vendor"):
-                        path = str(given.get("file_path") or "")
-                        uses.extend((turn, template) for template in
-                                    mapped(named.findall(
-                                        path.replace("\\", "/"))))
-                    elif name == "Skill" and entry.get("skills"):
-                        skill = str(given.get("skill") or "").strip()
-                        if skill in known:
-                            uses.append((turn, skill))
-    return {"uses": uses, "first_write": first_write}
+
+def map_use(files, arm, templates=None, delegated=()):
+    """How one trial used what its file points at, from its transcripts:
+    each template read from the vendored copy or loaded as a skill, as
+    (turn, template) in order, the turn of the trial's first write to a
+    file of its own, or None, and how many of the uses a subagent made.
+
+    A subagent's transcript, in `delegated`, is read after the session's,
+    its calls charged to the turn the session first delegated at.
+    """
+    entry = ARMS.get(arm) or {}
+    known = set(mapped_templates(arm) if templates is None else templates)
+    marker = VENDORED["into"] + "/"
+    named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
+
+    def mapped(templates):
+        """Those of the templates that are on the arm's map."""
+        return [template for template in templates
+                if not known or template in known]
+    own = [(turn, name, given, False)
+           for turn, name, given in tool_calls_by_turn(files)]
+    delegation = next((turn for turn, name, _, _ in own
+                       if name in DELEGATIONS), None)
+    calls = own + [(delegation if delegation is not None else turn,
+                    name, given, True)
+                   for turn, name, given in tool_calls_by_turn(delegated)]
+    calls.sort(key=lambda call: call[0])
+    uses = []
+    first_write = None
+    by_subagent = 0
+    for turn, name, given, from_subagent in calls:
+        command = str(given.get("command") or "").replace("\\", "/")
+        found = []
+
+        # A shell command may read a template and write a file in one go,
+        # so it is read for both.
+        if name in SHELLS and entry.get("vendor"):
+            found = mapped(shell_reads(command, sorted(known)))
+        if name in WRITES or (name in SHELLS and shell_writes(command)):
+            if first_write is None:
+                first_write = turn
+        elif name == "Read" and entry.get("vendor"):
+            path = str(given.get("file_path") or "").replace("\\", "/")
+            found = mapped(named.findall(path))
+        elif name == "Skill" and entry.get("skills"):
+            skill = str(given.get("skill") or "").strip()
+            found = [skill] if skill in known else []
+        uses.extend((turn, template) for template in found)
+        if from_subagent:
+            by_subagent += len(found)
+    return {"uses": uses, "first_write": first_write,
+            "by_subagent": by_subagent}
 
 
 def map_uses(root, trials):
@@ -2975,11 +3013,28 @@ def map_uses(root, trials):
         templates = mapped_templates(arm)
         if not templates:
             continue
-        files = transcript_files(home, record.get("workspace") or "",
-                                 started(record))
+        workspace = record.get("workspace") or ""
+        files = transcript_files(home, workspace, started(record))
         if files:
-            uses[name] = map_use(files, arm, templates)
+            uses[name] = map_use(files, arm, templates,
+                                 subagent_files(home, workspace,
+                                                started(record)))
     return uses
+
+
+def subagent_files(home, workspace, since=None):
+    """The transcripts of the subagents a session in `workspace` started,
+    filed under the session's folder, left out where written before
+    `since`."""
+    folder = os.path.dirname(transcript_files(home, workspace)[0]) \
+        if transcript_files(home, workspace) else None
+    if not folder:
+        return []
+    files = sorted(glob.glob(os.path.join(folder, "*", "subagents",
+                                          "*.jsonl")))
+    if since is None:
+        return files
+    return [file for file in files if os.path.getmtime(file) >= since]
 
 
 def mean_of(values):
@@ -3018,6 +3073,7 @@ def map_use_rows(trials, uses):
         rows.append({"arm": arm, "trials": len(names), "total": total,
                      "read": mean_of(counts), "before": mean_of(before),
                      "wrote": len(before), "first": median_of(firsts),
+                     "unused": sum(1 for count in counts if not count),
                      "up_front": sum(1 for count in before
                                      if total and count >= total)})
     return rows
@@ -3027,8 +3083,11 @@ def map_use_detail(trials, uses):
     """Every trial's map use, one row each: the turn of its first write and
     each template with the turn it was read or loaded at."""
     lines = ["#### Per trial", "",
-             "| Trial | First write at turn | Templates, by turn |",
-             "| --- | --- | --- |"]
+             "A subagent's reads are charged to the turn that delegated "
+             "to it.", "",
+             "| Trial | First write at turn | By a subagent "
+             "| Templates, by turn |",
+             "| --- | --- | --- | --- |"]
     for name in ordered(trials):
         if name not in uses:
             continue
@@ -3037,9 +3096,9 @@ def map_use_detail(trials, uses):
                                       if template.startswith("templates/")
                                       else template)
                           for turn, template in use["uses"]) or "none"
-        lines.append("| %s | %s | %s |" % (
+        lines.append("| %s | %s | %d | %s |" % (
             name, "—" if use["first_write"] is None else use["first_write"],
-            reads))
+            use.get("by_subagent", 0), reads))
     return lines
 
 
@@ -3072,6 +3131,10 @@ def map_use_lines(trials, uses):
                          "be placed, so the map's use says nothing about "
                          "whether the templates were read up front or on "
                          "demand.")
+        elif row["unused"] == row["trials"]:
+            lines.append("Beside H7: no `lazyref` trial read a template of "
+                         "its map, so H7 compares a map ignored against "
+                         "templates read up front, not on-demand reading.")
         elif row["up_front"]:
             lines.append("Beside H7: `lazyref` read every template of its map "
                          "before its first write in %d of the %d trials that "
@@ -3080,7 +3143,10 @@ def map_use_lines(trials, uses):
         else:
             lines.append("Beside H7: no `lazyref` trial read every template "
                          "of its map before its first write, so H7 reads "
-                         "on-demand reading.")
+                         "on-demand reading%s." % (
+                             ", and %d of %d trials read none"
+                             % (row["unused"], row["trials"])
+                             if row["unused"] else ""))
     lines.append("")
     lines.extend(map_use_detail(trials, uses))
     return lines
@@ -3310,10 +3376,10 @@ def round5e_checks():
                    reading == {"uses": [(1, "templates/core/quality.md"),
                                         (2, "templates/core/quality.md"),
                                         (6, "templates/backend/http.md")],
-                               "first_write": 4}
+                               "first_write": 4, "by_subagent": 0}
                    and loading == {"uses": [(1, "base-quality"),
                                             (3, "backend-api")],
-                                   "first_write": 3}
+                                   "first_write": 3, "by_subagent": 0}
                    and never_wrote["first_write"] is None
                    and summary == [("lazyref", 2.0, 1.0, 1, 1.0, 0),
                                    ("lazyskills", 2.0, 1.0, 1, 1.0, 0)],
@@ -3378,13 +3444,58 @@ def round5e_checks():
                    and "on-demand reading" not in silent_note,
                    silent_note[-300:]))
     checks.append(("every trial's reads are listed with their turns",
-                   "| lazyref-1 | 4 | 1: core/quality.md, 2: core/quality.md, "
-                   "6: backend/http.md |" in detail, detail))
+                   "| lazyref-1 | 4 | 0 | 1: core/quality.md, "
+                   "2: core/quality.md, 6: backend/http.md |" in detail,
+                   detail))
+
+    # A subagent read all of the map at the parent's turn 2, before the
+    # parent's first write at turn 3; a wildcard stands for every template
+    # of the map it matches; a map read by nobody is said to be ignored.
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-map-use-self-test")
+    os.makedirs(scratch)
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "p1", call("Bash", command="ls")))
+        handle.write(line("assistant", "p2", call(
+            "Agent", prompt="read the templates")))
+        handle.write(line("assistant", "p3", call("Write", file_path="a.py")))
+    child = os.path.join(scratch, "agent.jsonl")
+    with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "c1", call(
+            "Bash", command="cat %s/templates/core/*.md" % into)))
+        handle.write(line("assistant", "c2", call(
+            "Read", file_path="/pen/%s/templates/backend/http.md" % into)))
+    chain = ["templates/core/quality.md", "templates/core/git.md",
+             "templates/backend/http.md"]
+    with_subagent = map_use([parent], "lazyref", chain, [child])
+    delegated_rows = map_use_rows({"lazyref-1": {}},
+                                  {"lazyref-1": with_subagent})
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a subagent's reads count at the turn that delegated, and "
+                   "a wildcard stands for every template of the map it "
+                   "matches",
+                   with_subagent == {
+                       "uses": [(2, "templates/core/git.md"),
+                                (2, "templates/core/quality.md"),
+                                (2, "templates/backend/http.md")],
+                       "first_write": 3, "by_subagent": 3}
+                   and delegated_rows[0]["before"] == 3.0
+                   and shell_reads("cat %s/templates/core/q*.md" % into,
+                                   chain) == ["templates/core/quality.md"],
+                   with_subagent))
+    ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
+        "uses": [], "first_write": 2, "by_subagent": 0}})
+    checks.append(("a map no trial read is said to be ignored, not read on "
+                   "demand",
+                   "compares a map ignored" in "\n".join(ignored)
+                   and "so H7 reads on-demand" not in "\n".join(ignored),
+                   ignored[-6:]))
     planted_uses = {"lazyref-1": reading}
     kept = aggregate(1, {}, {}, {}, {}, None, None, planted_uses)["map_use"]
     checks.append(("the aggregate keeps each trial's map use",
                    kept == {"lazyref-1": {
-                       "first_write": 4,
+                       "first_write": 4, "by_subagent": 0,
                        "uses": [{"turn": 1,
                                  "template": "templates/core/quality.md"},
                                 {"turn": 2,
@@ -5095,6 +5206,7 @@ def aggregate(seed, trials, table, results, withdrawn, check, iso,
     if uses is not None:
         payload["map_use"] = {
             name: {"first_write": use["first_write"],
+                   "by_subagent": use.get("by_subagent", 0),
                    "uses": [{"turn": turn, "template": template}
                             for turn, template in use["uses"]]}
             for name, use in sorted(uses.items())}

@@ -146,14 +146,17 @@ round-6 screen of 13d.9, which round 5e's arms join as candidates.
   alone;
 - cost, turns, tokens and wall time, and the words each arm puts in context on
   every turn;
-- **use of the map**, per trial, from the transcript: how many templates of the
-  map the agent read (`lazyref`, a read of a file of the chain under the
-  vendored path, by the read tool or a shell command) or loaded (`lazyskills`, a
-  skill call naming one of the arm's skills), which ones, the turn each happened
-  at, and how many happened before the trial's first write to a file of its own:
-  a write tool's call, or a shell command that redirects into a file, copies,
-  moves or creates. A trial that never wrote says nothing about reading up
-  front, and the note beside H7 says so where no trial wrote.
+- **use of the map**, per trial, from the transcript, a subagent's included and
+  charged to the turn that delegated to it: how many templates of the map the
+  agent read (`lazyref`, a read of a file of the chain under the vendored path,
+  by the read tool or a shell command that reads, a wildcard standing for every
+  template it matches) or loaded (`lazyskills`, a skill call naming one of the
+  arm's skills), which ones, the turn each happened at, and how many happened
+  before the trial's first write to a file of its own: a write tool's call, or a
+  shell command that redirects into a file, copies, moves or creates. A trial
+  that never wrote says nothing about reading up front, a map no trial read was
+  ignored rather than read on demand, and the note beside H7 says which case
+  holds.
 
 ### 13e.5 Before the first trial
 
