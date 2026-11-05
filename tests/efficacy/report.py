@@ -2849,16 +2849,23 @@ NULL_REDIRECT = re.compile(
 QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 
 
+# A here-document's body is data, not commands, and is taken out whole.
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)",
+                     re.DOTALL)
+
+
 def simple_commands(command, keep_quotes=False):
     """A shell command's simple commands, each as (command word, text), the
-    null redirections taken out and, unless asked to keep them, the quoted
-    arguments too. A separator inside quotes separates nothing."""
+    null redirections and here-document bodies taken out and, unless asked
+    to keep them, the quoted arguments too. A separator inside quotes
+    separates nothing."""
     quoted = []
 
     def stash(match):
         quoted.append(match.group(0))
         return "\x00%d\x00" % (len(quoted) - 1)
-    masked = QUOTED.sub(stash, NULL_REDIRECT.sub(" ", command))
+    masked = QUOTED.sub(stash, NULL_REDIRECT.sub(" ", HEREDOC.sub(
+        " ", command)))
     found = []
     for segment in SEGMENT.split(masked):
         segment = re.sub(r"\x00(\d+)\x00", lambda match: (
@@ -2874,27 +2881,37 @@ def simple_commands(command, keep_quotes=False):
     return found
 
 
+def first_writing_command(command):
+    """The index of the first simple command that writes a file of the
+    trial's own, one that redirects into a file or copies, moves or creates
+    one; None where none does."""
+    for index, (word, text) in enumerate(simple_commands(command)):
+        if word in WRITE_COMMANDS or ">" in text:
+            return index
+    return None
+
+
 def shell_writes(command):
-    """Whether a shell command writes a file of the trial's own: a simple
-    command that redirects into a file, or copies, moves or creates one."""
-    return any(word in WRITE_COMMANDS or ">" in text
-               for word, text in simple_commands(command))
+    """Whether a shell command writes a file of the trial's own."""
+    return first_writing_command(command) is not None
 
 
 def shell_reads(command, known=()):
-    """The templates a shell command reads, in order: every one a reading
-    command names under the vendored copy, a wildcard operand standing for
-    each template of the map it matches."""
+    """The templates a shell command reads, as (index of its simple
+    command, template) in order: every one a reading command names under
+    the vendored copy, a wildcard operand standing for each template of the
+    map it matches."""
     found = []
-    for word, text in simple_commands(command, keep_quotes=True):
+    for index, (word, text) in enumerate(
+            simple_commands(command, keep_quotes=True)):
         if word not in READ_COMMANDS:
             continue
         for operand in TEMPLATE_OPERAND.findall(text):
             if any(mark in operand for mark in "*?["):
-                found.extend(template for template in known
+                found.extend((index, template) for template in known
                              if fnmatch.fnmatchcase(template, operand))
             elif operand.endswith(".md"):
-                found.append(operand)
+                found.append((index, operand))
     return found
 
 
@@ -3007,30 +3024,41 @@ def map_use(files, arm, templates=None, delegated=()):
                      for turn, name, given in tool_calls_by_turn([file]))
     calls.sort(key=lambda call: call[0])
     uses = []
+    before = set()
     first_write = None
     by_subagent = 0
     for turn, name, given, from_subagent in calls:
         command = str(given.get("command") or "").replace("\\", "/")
         found = []
+        writes_at = None
 
         # A shell command may read a template and write a file in one go,
-        # so it is read for both.
+        # so it is read for both, and a read in a simple command before the
+        # writing one came before the write.
         if name in SHELLS and entry.get("vendor"):
-            found = mapped(shell_reads(command, sorted(known)))
-        if name in WRITES or (name in SHELLS and shell_writes(command)):
-            if first_write is None:
-                first_write = turn
+            writes_at = first_writing_command(command)
+            for index, template in shell_reads(command, sorted(known)):
+                if template in known or not known:
+                    found.append(template)
+                    if first_write is None and (writes_at is None
+                                                or index < writes_at):
+                        before.add(template)
         elif name == "Read" and entry.get("vendor"):
             path = str(given.get("file_path") or "").replace("\\", "/")
             found = mapped(named.findall(path))
         elif name == "Skill" and entry.get("skills"):
             skill = str(given.get("skill") or "").strip()
             found = [skill] if skill in known else []
+        if name not in SHELLS and first_write is None:
+            before.update(found)
+        if first_write is None and (name in WRITES or writes_at is not None):
+            first_write = turn
         uses.extend((turn, template) for template in found)
         if from_subagent:
             by_subagent += len(found)
     return {"uses": uses, "first_write": first_write,
-            "by_subagent": by_subagent}
+            "before_write": sorted(before) if first_write is not None
+            else None, "by_subagent": by_subagent}
 
 
 def map_uses(root, trials):
@@ -3101,8 +3129,7 @@ def map_use_rows(trials, uses):
             # A trial that never wrote has no "before", and says nothing
             # about reading up front.
             if use["first_write"] is not None:
-                before.append(len({template for turn, template in use["uses"]
-                                   if turn < use["first_write"]}))
+                before.append(len(use.get("before_write") or ()))
             if use["uses"]:
                 firsts.append(use["uses"][0][0])
         rows.append({"arm": arm, "trials": len(names), "total": total,
@@ -3347,6 +3374,9 @@ def round5e_checks():
                    got == ["supported", "supported", "refuted", "refuted",
                            "inconclusive"], got))
 
+    def read_names(command, known=()):
+        """The templates a shell command reads, by name alone."""
+        return [template for _, template in shell_reads(command, known)]
     scratch = os.path.join(tempfile.gettempdir(),
                            "efficacy-report-map-use-self-test")
     shutil.rmtree(scratch, ignore_errors=True)
@@ -3411,10 +3441,12 @@ def round5e_checks():
                    reading == {"uses": [(1, "templates/core/quality.md"),
                                         (2, "templates/core/quality.md"),
                                         (6, "templates/backend/http.md")],
-                               "first_write": 4, "by_subagent": 0}
+                               "first_write": 4, "by_subagent": 0,
+                               "before_write": ["templates/core/quality.md"]}
                    and loading == {"uses": [(1, "base-quality"),
                                             (3, "backend-api")],
-                                   "first_write": 3, "by_subagent": 0}
+                                   "first_write": 3, "by_subagent": 0,
+                                   "before_write": ["base-quality"]}
                    and never_wrote["first_write"] is None
                    and summary == [("lazyref", 2.0, 1.0, 1, 1.0, 0),
                                    ("lazyskills", 2.0, 1.0, 1, 1.0, 0)],
@@ -3443,25 +3475,25 @@ def round5e_checks():
                    not shell_writes("git log --format='%h -> %s'")
                    and not shell_writes("echo 'mkdir src'")
                    and shell_writes("echo 'x' > 'my file.py'")
-                   and shell_reads("ls %s" % quality) == []
-                   and shell_reads("test -f %s && echo yes" % quality) == []
-                   and shell_reads("cat %s" % quality)
+                   and read_names("ls %s" % quality) == []
+                   and read_names("test -f %s && echo yes" % quality) == []
+                   and read_names("cat %s" % quality)
                    == ["templates/core/quality.md"]
-                   and shell_reads("sed -n 1,40p %s | head" % quality)
+                   and read_names("sed -n 1,40p %s | head" % quality)
                    == ["templates/core/quality.md"]
-                   and shell_reads("Get-Content %s" % quality)
+                   and read_names("Get-Content %s" % quality)
                    == ["templates/core/quality.md"],
                    None))
     http = "%s/templates/backend/http.md" % into
     checks.append(("a shell command is read one simple command at a time: "
                    "every operand of a reading command counts, and a verb "
                    "in an argument is no command",
-                   shell_reads("cat %s %s" % (quality, http))
+                   read_names("cat %s %s" % (quality, http))
                    == ["templates/core/quality.md",
                        "templates/backend/http.md"]
-                   and shell_reads("cat '%s' | head" % quality)
+                   and read_names("cat '%s' | head" % quality)
                    == ["templates/core/quality.md"]
-                   and shell_reads("ls %s && cat %s" % (quality, http))
+                   and read_names("ls %s && cat %s" % (quality, http))
                    == ["templates/backend/http.md"]
                    and not shell_writes("rg -n mkdir src")
                    and not shell_writes("echo mkdir src")
@@ -3514,9 +3546,12 @@ def round5e_checks():
                        "uses": [(2, "templates/core/git.md"),
                                 (2, "templates/core/quality.md"),
                                 (2, "templates/backend/http.md")],
-                       "first_write": 3, "by_subagent": 3}
+                       "first_write": 3, "by_subagent": 3,
+                       "before_write": ["templates/backend/http.md",
+                                        "templates/core/git.md",
+                                        "templates/core/quality.md"]}
                    and delegated_rows[0]["before"] == 3.0
-                   and shell_reads("cat %s/templates/core/q*.md" % into,
+                   and read_names("cat %s/templates/core/q*.md" % into,
                                    chain) == ["templates/core/quality.md"],
                    with_subagent))
     # Two delegations: each subagent is charged to the line it points back
@@ -3552,12 +3587,32 @@ def round5e_checks():
                    "and a separator inside quotes splits no command",
                    twice == {"uses": [(1, "templates/core/quality.md"),
                                       (3, "templates/backend/http.md")],
-                             "first_write": 2, "by_subagent": 2}
-                   and shell_reads('echo "x; cat %s"' % quality, chain) == []
-                   and shell_reads('cat "%s"; ls' % quality, chain)
+                             "first_write": 2, "by_subagent": 2,
+                             "before_write": ["templates/core/quality.md"]}
+                   and read_names('echo "x; cat %s"' % quality, chain) == []
+                   and read_names('cat "%s"; ls' % quality, chain)
                    == ["templates/core/quality.md"]
                    and not shell_writes('echo "a > b"'),
                    twice))
+    one_go = os.path.join(scratch, "one-go.jsonl")
+    os.makedirs(scratch)
+    heredoc = "python - <<'PY'\nprint(2 > 1)\nPY"
+    with io.open(one_go, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "g1", call("Bash", command=heredoc)))
+        handle.write(line("assistant", "g2", call(
+            "Bash", command="cat %s/%s %s/%s && mkdir -p src && cat %s/%s"
+            % (into, chain[0], into, chain[1], into, chain[2]))))
+    in_one_go = map_use([one_go], "lazyref", chain)
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a read before the writing command of one shell call "
+                   "comes before the write, and a here-document body is "
+                   "no command",
+                   in_one_go["first_write"] == 2
+                   and in_one_go["before_write"] == sorted(chain[:2])
+                   and len(in_one_go["uses"]) == 3
+                   and not shell_writes(heredoc)
+                   and shell_writes("cat a <<'EOF'\nx\nEOF\necho y > z"),
+                   in_one_go))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
     checks.append(("a map no trial read is said to be ignored, not read on "
@@ -3570,6 +3625,7 @@ def round5e_checks():
     checks.append(("the aggregate keeps each trial's map use",
                    kept == {"lazyref-1": {
                        "first_write": 4, "by_subagent": 0,
+                       "before_write": ["templates/core/quality.md"],
                        "uses": [{"turn": 1,
                                  "template": "templates/core/quality.md"},
                                 {"turn": 2,
@@ -5280,6 +5336,7 @@ def aggregate(seed, trials, table, results, withdrawn, check, iso,
     if uses is not None:
         payload["map_use"] = {
             name: {"first_write": use["first_write"],
+                   "before_write": use.get("before_write"),
                    "by_subagent": use.get("by_subagent", 0),
                    "uses": [{"turn": turn, "template": template}
                             for turn, template in use["uses"]]}
