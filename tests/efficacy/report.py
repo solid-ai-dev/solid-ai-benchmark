@@ -2889,6 +2889,15 @@ def words_of(text):
             for word in QUOTED.sub(stash, text).split()]
 
 
+def glob_matches(pattern, path):
+    """Whether a shell wildcard pattern matches a path, a wildcard standing
+    for no slash: the pattern and the path match part by part."""
+    parts = pattern.split("/")
+    pieces = path.split("/")
+    return len(parts) == len(pieces) and all(
+        fnmatch.fnmatchcase(piece, part) for part, piece in zip(parts, pieces))
+
+
 def simple_commands(command, keep_quotes=False):
     """A shell command's simple commands, each as (command word, text), the
     null redirections and here-document bodies taken out and, unless asked
@@ -2967,7 +2976,7 @@ def shell_reads(command, known=()):
             for operand in matched:
                 if any(mark in operand for mark in "*?["):
                     found.extend((index, template) for template in known
-                                 if fnmatch.fnmatchcase(template, operand))
+                                 if glob_matches(operand, template))
                 elif operand.endswith(".md"):
                     found.append((index, operand))
     return found
@@ -3336,11 +3345,28 @@ def round6_screen(trials, table, results):
     kept = [row for row in rows if not row["worse"]]
     kept.sort(key=lambda row: (-row["better"], row["cost"]
                                if row["cost"] is not None else float("inf")))
-    short = bool(owed_blocks(trials))
+    short = bool(screen_owed(trials))
     for rank, row in enumerate(kept, 1):
         row["rank"] = rank
         row["round6"] = rank <= SCREEN_KEEPS and not missing and not short
     return rows, missing
+
+
+def screen_owed(trials):
+    """The blocks of round 5's K the run still owes each arm the screen
+    reads, the bare arm and every candidate present, as (arm, blocks);
+    empty once every one of them has all K trials. A reused arm counts as
+    much as a fresh one here, since the screen reads them alike."""
+    present = {arm_of(name) for name in trials}
+    owed = []
+    for arm in (BARE,) + SCREEN_CANDIDATES:
+        if arm not in present:
+            continue
+        blocks = [block for block in range(1, ROUND5_K + 1)
+                  if trial_name(arm, block) not in trials]
+        if blocks:
+            owed.append((arm, blocks))
+    return owed
 
 
 def screen_lines(trials, table, results):
@@ -3366,7 +3392,7 @@ def screen_lines(trials, table, results):
             "—" if row["cost"] is None else "$%.2f" % row["cost"], screen))
     chosen = [row["arm"] for row in sorted(
         (row for row in rows if row["round6"]), key=lambda row: row["rank"])]
-    owed = owed_blocks(trials)
+    owed = screen_owed(trials)
     if missing:
         lines.extend(["", "The screen is partial: %s %s not in this root, so "
                       "it names no arms for round 6 yet." % (
@@ -3375,7 +3401,9 @@ def screen_lines(trials, table, results):
     elif owed:
         lines.extend(["", "The screen is provisional: the run still owes %s, "
                       "and a short run decides nothing, so it names no arms "
-                      "for round 6 yet." % blocks_named(owed)])
+                      "for round 6 yet." % spoken([
+                          "`%s` %s" % (arm, blocks_named(blocks))
+                          for arm, blocks in owed])])
     else:
         lines.extend(["", "Round 6 runs `%s`%s." % (
             BARE, " and " + spoken(["`%s`" % arm for arm in chosen])
@@ -3780,7 +3808,8 @@ def round5e_checks():
     shutil.rmtree(scratch, ignore_errors=True)
     checks.append(("a subagent pointing at the previous delegation's result "
                    "is charged to its own delegation, a quoted pattern is one "
-                   "operand, and a path follows the call's directory change",
+                   "operand, a path follows the call's directory change, and "
+                   "a wildcard stands for no slash",
                    in_a_row["uses"] == [(1, chain[0]), (2, chain[2])]
                    and read_names('grep "mention %s" README.md' % quality)
                    == []
@@ -3791,7 +3820,10 @@ def round5e_checks():
                    and read_names("cd %s/templates; cat core/git.md "
                                   "../templates/core/quality.md; cd ..; ls" % into)
                    == ["templates/core/git.md", "templates/core/quality.md"]
-                   and read_names("cd src && cat core/quality.md") == [],
+                   and read_names("cd src && cat core/quality.md") == []
+                   and read_names("cat %s/templates/*.md" % into, chain) == []
+                   and read_names("cat %s/templates/*/q*.md" % into, chain)
+                   == ["templates/core/quality.md"],
                    in_a_row))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
@@ -3872,12 +3904,25 @@ def round5e_checks():
     checks.append(("the screen names no arm for round 6 while the run is "
                    "short of its K",
                    not any(row["round6"] for row in short_rows)
-                   and "still owes blocks 2 to 15" in short_text
+                   and "still owes `none` blocks 2 to 15" in short_text
+                   and "`lazyskills` blocks 2 to 15, and a short run"
+                   in short_text
                    and "names no arms for round 6 yet" in short_text,
                    short_text.splitlines()[-1]))
-    for arm in ROUND5E_ARMS:
+    for arm in list(costs) + [BARE]:
         for block in range(2, ROUND5_K + 1):
-            held[trial_name(arm, block)] = {}
+            if (arm, block) != ("hand", 7):
+                held[trial_name(arm, block)] = {}
+    reused_short, _ = round6_screen(held, table, results)
+    checks.append(("a reused arm short of its K holds the screen as a fresh "
+                   "one does",
+                   not any(row["round6"] for row in reused_short)
+                   and screen_owed(held) == [("hand", [7])]
+                   and "still owes `hand` block 7"
+                   in "\n".join(
+                       screen_lines(held, table, results)),
+                   screen_owed(held)))
+    held[trial_name("hand", 7)] = {}
     full_rows, missing = round6_screen(held, table, results)
     screen = {row["arm"]: (row["rank"], row["round6"], row["worse"])
               for row in full_rows}
