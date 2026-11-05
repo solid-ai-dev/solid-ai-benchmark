@@ -2852,12 +2852,17 @@ QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 def simple_commands(command, keep_quotes=False):
     """A shell command's simple commands, each as (command word, text), the
     null redirections taken out and, unless asked to keep them, the quoted
-    arguments too."""
-    bare = NULL_REDIRECT.sub(" ", command)
-    if not keep_quotes:
-        bare = QUOTED.sub(" ", bare)
+    arguments too. A separator inside quotes separates nothing."""
+    quoted = []
+
+    def stash(match):
+        quoted.append(match.group(0))
+        return "\x00%d\x00" % (len(quoted) - 1)
+    masked = QUOTED.sub(stash, NULL_REDIRECT.sub(" ", command))
     found = []
-    for segment in SEGMENT.split(bare):
+    for segment in SEGMENT.split(masked):
+        segment = re.sub(r"\x00(\d+)\x00", lambda match: (
+            quoted[int(match.group(1))] if keep_quotes else " "), segment)
         words = [word for word in segment.split()
                  if not ASSIGNMENT.match(word)]
         if not words:
@@ -2913,10 +2918,11 @@ def mapped_templates(arm):
 DELEGATIONS = ("Agent", "Task")
 
 
-def tool_calls_by_turn(files):
+def tool_calls_by_turn(files, written_at=None):
     """Every tool call in the transcripts as (turn, tool, input), a turn
     being one message of the model: several lines may share a message id,
-    so a new id is what counts a turn."""
+    so a new id is what counts a turn. Given a dict as `written_at`, each
+    line's uuid is filed under the turn current once it was written."""
     calls = []
     turn = 0
     last_message = object()
@@ -2927,13 +2933,17 @@ def tool_calls_by_turn(files):
                     record = json.loads(line)
                 except ValueError:
                     continue
-                if not isinstance(record, dict) \
-                        or record.get("type") != "assistant":
+                if not isinstance(record, dict):
                     continue
                 message = record.get("message") or {}
-                if message.get("id") != last_message:
+                if record.get("type") == "assistant" \
+                        and message.get("id") != last_message:
                     last_message = message.get("id")
                     turn += 1
+                if written_at is not None and record.get("uuid"):
+                    written_at[record["uuid"]] = turn
+                if record.get("type") != "assistant":
+                    continue
                 content = message.get("content")
                 for block in content if isinstance(content, list) else []:
                     if isinstance(block, dict) \
@@ -2945,6 +2955,26 @@ def tool_calls_by_turn(files):
     return calls
 
 
+def delegation_turn(file, written_at, fallback):
+    """The session's turn a subagent's transcript was started at: the turn
+    of the session's line its first record points back to, or `fallback`
+    where it points at none the session wrote."""
+    with io.open(file, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            parent = record.get("parentLastUuid") or record.get("parentUuid")
+            if parent in written_at:
+                return written_at[parent]
+            if record.get("type") == "assistant":
+                break
+    return fallback
+
+
 def map_use(files, arm, templates=None, delegated=()):
     """How one trial used what its file points at, from its transcripts:
     each template read from the vendored copy or loaded as a skill, as
@@ -2952,7 +2982,9 @@ def map_use(files, arm, templates=None, delegated=()):
     file of its own, or None, and how many of the uses a subagent made.
 
     A subagent's transcript, in `delegated`, is read after the session's,
-    its calls charged to the turn the session first delegated at.
+    its calls charged to the turn of the session's line it points back to,
+    the moment it was started; one pointing nowhere the session wrote is
+    charged to the session's first delegation.
     """
     entry = ARMS.get(arm) or {}
     known = set(mapped_templates(arm) if templates is None else templates)
@@ -2963,13 +2995,16 @@ def map_use(files, arm, templates=None, delegated=()):
         """Those of the templates that are on the arm's map."""
         return [template for template in templates
                 if not known or template in known]
+    written_at = {}
     own = [(turn, name, given, False)
-           for turn, name, given in tool_calls_by_turn(files)]
-    delegation = next((turn for turn, name, _, _ in own
-                       if name in DELEGATIONS), None)
-    calls = own + [(delegation if delegation is not None else turn,
-                    name, given, True)
-                   for turn, name, given in tool_calls_by_turn(delegated)]
+           for turn, name, given in tool_calls_by_turn(files, written_at)]
+    first_delegation = next((turn for turn, name, _, _ in own
+                             if name in DELEGATIONS), None)
+    calls = list(own)
+    for file in delegated:
+        at = delegation_turn(file, written_at, first_delegation)
+        calls.extend((at if at is not None else turn, name, given, True)
+                     for turn, name, given in tool_calls_by_turn([file]))
     calls.sort(key=lambda call: call[0])
     uses = []
     first_write = None
@@ -3484,6 +3519,45 @@ def round5e_checks():
                    and shell_reads("cat %s/templates/core/q*.md" % into,
                                    chain) == ["templates/core/quality.md"],
                    with_subagent))
+    # Two delegations: each subagent is charged to the line it points back
+    # to, so the second one's read at turn 3 falls after the write at turn
+    # 2, and a quoted separator splits no command.
+    os.makedirs(scratch)
+
+    def stamped(kind, message_id, uuid, *blocks):
+        record = json.loads(line(kind, message_id, *blocks))
+        record["uuid"] = uuid
+        return json.dumps(record) + "\n"
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(stamped("assistant", "p1", "u1", call(
+            "Agent", prompt="read quality")))
+        handle.write(stamped("assistant", "p2", "u2", call(
+            "Write", file_path="a.py")))
+        handle.write(stamped("assistant", "p3", "u3", call(
+            "Agent", prompt="read http")))
+    children = []
+    for index, (uuid, template) in enumerate(
+            (("u1", "core/quality.md"), ("u3", "backend/http.md"))):
+        child = os.path.join(scratch, "agent-%d.jsonl" % index)
+        with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps({"type": "fork-context-ref",
+                                     "parentLastUuid": uuid}) + "\n")
+            handle.write(line("assistant", "c%d" % index, call(
+                "Read", file_path="/pen/%s/templates/%s" % (into, template))))
+        children.append(child)
+    twice = map_use([parent], "lazyref", chain, children)
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("each subagent is charged to the turn that started it, "
+                   "and a separator inside quotes splits no command",
+                   twice == {"uses": [(1, "templates/core/quality.md"),
+                                      (3, "templates/backend/http.md")],
+                             "first_write": 2, "by_subagent": 2}
+                   and shell_reads('echo "x; cat %s"' % quality, chain) == []
+                   and shell_reads('cat "%s"; ls' % quality, chain)
+                   == ["templates/core/quality.md"]
+                   and not shell_writes('echo "a > b"'),
+                   twice))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
     checks.append(("a map no trial read is said to be ignored, not read on "
