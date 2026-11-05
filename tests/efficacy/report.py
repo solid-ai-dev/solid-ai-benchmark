@@ -1574,7 +1574,7 @@ def unrecorded_voids(root, sequence, recorded):
 
 
 def write_report(root, trials, table, results, seed, out_dir,
-                 withdrawn=None, cross=None):
+                 withdrawn=None, cross=None, iso=None):
     """The dated round report, written to `out_dir`.
 
     The directory has no default so a shakedown of the writer renders into
@@ -1584,6 +1584,8 @@ def write_report(root, trials, table, results, seed, out_dir,
     from `table` and `results`.
     `cross` is the other vendor's judge's reading, already applied to
     `results`.
+    `iso` is the ISO reading, computed here when not given and the round
+    draws that radar.
     """
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
@@ -1621,17 +1623,24 @@ def write_report(root, trials, table, results, seed, out_dir,
     scans = reaches(root)
     active = active_contrasts(trials)
     os.makedirs(out_dir, exist_ok=True)
-    panels = radar_panels(table, results, active)
+    if iso is None and iso_rules(trials):
+        iso = iso_reading(trials, seed, withdrawn or {})
+    if iso:
+        panels = iso_panels(table, iso[0], iso[1], active)
+        draw = iso_radar_svg
+    else:
+        panels = radar_panels(table, results, active)
+        draw = radar_svg
     radar = {}
     if panels:
         for theme in RADAR_THEMES:
             image = "%s-radar-%s.svg" % (stem, theme)
             with io.open(os.path.join(out_dir, image), "w", encoding="utf-8",
                          newline="\n") as handle:
-                handle.write(radar_svg(panels, theme))
+                handle.write(draw(panels, theme))
             radar[theme] = image
     lines.extend(executive_section(trials, table, results, withdrawn or {},
-                                   lost, scans, radar))
+                                   lost, scans, radar, iso))
     lines.append("")
 
     lines.extend(["## What produced these numbers", ""])
@@ -1781,9 +1790,9 @@ def write_report(root, trials, table, results, seed, out_dir,
     documents = {
         record: lines,
         appendix: appendix_lines(trials, table, results, k, seed, generation,
-                                 report, record),
+                                 report, record, iso),
         report: plain_report_lines(root, trials, table, results, radar,
-                                   appendix, k)}
+                                   appendix, k, iso)}
     for document, text in documents.items():
         with io.open(os.path.join(out_dir, document), "w", encoding="utf-8",
                      newline="\n") as handle:
@@ -2017,14 +2026,28 @@ def consistency_reading(trials):
     return "inconclusive"
 
 
-def plain_arm_lines(trials, table, results, arm, length):
+def iso_axis_moves(iso, name):
+    """Each ISO axis's move for one contrast, in the radar's order, as
+    the markers read it: +1 better, -1 worse, 0 within the margin, None
+    where it could not be read; the shape the plain words follow."""
+    moves = []
+    for axis, _ in ISO_AXES:
+        marker = iso_marker(iso[1].get("iso:" + axis, {}).get(name, {}))
+        moves.append((axis, {"better": 1.0, "worse": -1.0,
+                             "dot": 0.0}.get(marker)))
+    return moves
+
+
+def plain_arm_lines(trials, table, results, arm, length, iso=None):
     """One approach against the bare arm, in plain words: what it did
     better, what it did worse with the numbers a reader would ask for, and
-    its verdict."""
+    its verdict. With `iso`, the axes are the ISO radar's, as its markers
+    read them, and the cost gets a line of its own."""
     name = "%s-%s" % (arm, BARE)
-    scores = cluster_scores(results, name)
+    scores = (iso_axis_moves(iso, name) if iso
+              else cluster_scores(results, name))
     verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
-    better = [PLAIN_AXES[axis] for axis, value in scores
+    better = [PLAIN_AXES.get(axis, axis.lower()) for axis, value in scores
               if value is not None and value > 0]
     # The runs that fell short are counted whatever the reliability axis
     # reads, because one broken build among many can leave it neutral.
@@ -2055,7 +2078,7 @@ def plain_arm_lines(trials, table, results, arm, length):
                          if mean is not None and bare is not None
                          else "cost and time")
         else:
-            worse.append(PLAIN_AXES[axis])
+            worse.append(PLAIN_AXES.get(axis, axis.lower()))
     size = ("%s lines" % format(length, ",")) if length else "no file"
     lines = ["### `%s`" % arm, "",
              "%s (%s)." % (sentence_case(PLAIN_ARMS.get(
@@ -2064,6 +2087,16 @@ def plain_arm_lines(trials, table, results, arm, length):
                  % (spoken(better) if better else "nothing clearly"))
     lines.append("- Worse at: %s." % ("; ".join(worse) if worse
                                       else "nothing clearly"))
+
+    # Cost is shown beside the ISO radar and not scored on it, so it gets a
+    # line of its own rather than an axis.
+    if iso:
+        mean = arm_mean(table, "cost_usd", arm)
+        bare = arm_mean(table, "cost_usd", BARE)
+        lines.append("- Cost: %s." % (
+            "about $%.2f a run, against $%.2f with no rules file"
+            % (mean, bare) if mean is not None and bare is not None
+            else NOT_MEASURED))
     if shortfall and not noted:
         lines.append("- Noted, though reliability was not clearly worse "
                      "overall: %s." % ", ".join(shortfall))
@@ -2136,9 +2169,11 @@ def sureness_lines(trials, k):
     return lines
 
 
-def plain_report_lines(root, trials, table, results, radar, appendix, k):
+def plain_report_lines(root, trials, table, results, radar, appendix, k,
+                       iso=None):
     """The report a reader opens: the radars, each approach in plain words,
-    the round's questions answered, and how sure the answers are."""
+    the round's questions answered, and how sure the answers are. `iso` is
+    the ISO reading where the round draws that radar."""
     names = ordered(trials)
     active = active_contrasts(trials)
     arms = by_cost(table, [pair[0] for pair in active if pair[1] == BARE])
@@ -2158,14 +2193,15 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k):
             lines.append("![Radar per approach](%s#gh-%s-mode-only)"
                          % (image, theme))
         lines.append("")
-    lines.extend(["How to read it: the dashed ring is `%s`. A point outside "
+    lines.extend([ISO_PLAIN_READING if iso else
+                  "How to read it: the dashed ring is `%s`. A point outside "
                   "the ring means the approach did better on that axis, "
                   "inside it means worse. Each axis groups several "
                   "measurements; the appendix lists them." % BARE, "",
                   "## Each approach", "", PLAIN_VERDICT_RULE, ""])
     for arm in arms:
         lines.extend(plain_arm_lines(trials, table, results, arm,
-                                     context_lines(arm)))
+                                     context_lines(arm), iso))
         lines.append("")
     present = {arm_of(name) for name in trials}
     if is_round5d(trials):
@@ -2228,9 +2264,10 @@ def rerun_lines(lost):
 
 
 def appendix_lines(trials, table, results, k, seed, generation, report,
-                   record):
+                   record, iso=None):
     """The technical appendix: what produced the results, the radar's axes
-    row by row, and the verdict vector."""
+    row by row, and the verdict vector. `iso` is the ISO reading where the
+    round draws that radar, whose axes come as tables of sub-scores."""
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
     active = active_contrasts(trials)
@@ -2243,16 +2280,24 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
         lines.extend([DESCRIPTIVE_NOTE % k, ""])
     lines.extend(["## What produced the results", ""])
     lines.extend(provenance_lines(trials, names, arms, k, seed, generation))
-    lines.extend(["", "## The radar's axes, row by row", "",
-                  "Each table is one axis of the radar: every measurement it "
-                  "groups, each approach's mean, and each approach against "
-                  "`%s`. %s" % (BARE, CONTRAST_LEGEND), "", DEGENERATE_NOTE,
-                  ""])
-    for axis, keys in radar_axes(results):
-        lines.extend(["### %s" % axis, ""])
-        lines.extend(contrast_table(table, results, keys, active=against,
-                                    blocks=k, legend=False))
-        lines.append("")
+    if iso:
+        lines.extend(["", "## The radar's axes, row by row", "",
+                      ISO_TABLE_READING, "", DEGENERATE_NOTE, ""])
+        lines.extend(iso_axis_lines(trials, iso[0],
+                                    [BARE] + by_cost(table, [
+                                        pair[0] for pair in against]),
+                                    iso[1], iso[2], k))
+    else:
+        lines.extend(["", "## The radar's axes, row by row", "",
+                      "Each table is one axis of the radar: every "
+                      "measurement it groups, each approach's mean, and each "
+                      "approach against `%s`. %s" % (BARE, CONTRAST_LEGEND),
+                      "", DEGENERATE_NOTE, ""])
+        for axis, keys in radar_axes(results):
+            lines.extend(["### %s" % axis, ""])
+            lines.extend(contrast_table(table, results, keys, active=against,
+                                        blocks=k, legend=False))
+            lines.append("")
     lines.extend(["## The verdict vector", ""])
     lines.extend(vector_lines(results, active))
     return lines
@@ -3722,13 +3767,616 @@ def radar_panels(table, results, active):
     return panels
 
 
+# The quality radar on ISO/IEC 25010:2023, from round 6. Eight axes in the
+# standard's own order, each the share of its targets met, read against the
+# bare arm. Safety, the ninth characteristic, does not apply to this backend.
+# Each sub-characteristic lists its targets as (what it asks, where the value
+# comes from, the pass condition): a metric row by its key, or a probe by
+# `probe:<name>`. A target is met, not met, or not measured, and a
+# sub-characteristic with no target reads not measured, never 0 %.
+AT_LEAST, AT_MOST = ">=", "<="
+ISO_AXES = (
+    ("Functionality", (
+        ("Functional completeness", (
+            ("every specified name is exported", "surface_missing",
+             AT_MOST, 0),)),
+        ("Functional correctness", (
+            ("the hidden suite passes at 98 % or more", "task_success",
+             AT_LEAST, 0.98),)),
+        ("Functional appropriateness", (
+            ("nothing nobody asked for is delivered", "unasked_artifacts",
+             AT_MOST, 0),)),
+    )),
+    ("Performance", (
+        ("Time behaviour", ()),
+        ("Resource utilisation", (
+            ("the invoice builder answers in 100 KB or less",
+             "builder_bytes", AT_MOST, 100000),
+            ("the invoice builder makes at most 3 subrequests",
+             "builder_subrequests", AT_MOST, 3),)),
+        ("Capacity", ()),
+    )),
+    ("Compatibility", (
+        ("Co-existence", ()),
+        ("Interoperability", ()),
+    )),
+    ("Usability", (
+        ("Appropriateness recognisability", ()),
+        ("Learnability", ()),
+        ("Operability", (
+            ("the HTML is valid", "html_invalid", AT_MOST, 0),)),
+        ("User error protection", ()),
+        ("User assistance", ()),
+        ("Self-descriptiveness", ()),
+        ("Inclusivity", (
+            ("no WCAG 2.1 AA violation", "axe_violations", AT_MOST, 0),)),
+    )),
+    ("Reliability", (
+        ("Faultlessness", (
+            ("installs and boots", "reliability", AT_LEAST, 1.0),
+            ("at most 10 type errors per KLOC under --strict",
+             "mypy_per_kloc", AT_MOST, 10),)),
+        ("Availability", ()),
+        ("Fault tolerance", (
+            ("a malformed request leaks no stack trace",
+             "probe:error_leakage", AT_LEAST, 1.0),)),
+        ("Recoverability", ()),
+    )),
+    ("Security", (
+        ("Confidentiality", (
+            ("passwords are hashed at rest", "probe:password_at_rest",
+             AT_LEAST, 1.0),
+            ("sign-in does not tell an account from a stranger",
+             "probe:account_enumeration", AT_LEAST, 1.0),
+            ("no hard-coded secret key", "probe:secret_key", AT_LEAST, 1.0),
+            ("the session cookie carries its flags", "probe:cookie_flags",
+             AT_LEAST, 1.0),)),
+        ("Integrity", (
+            ("sign-in refuses a post without a token", "probe:sign_in_csrf",
+             AT_LEAST, 1.0),
+            ("a form refuses a post without a token", "csrf_refused",
+             AT_LEAST, 1.0),
+            ("no open redirect", "probe:open_redirect", AT_LEAST, 1.0),
+            ("no SQL assembled from strings", "probe:sql_strings",
+             AT_LEAST, 1.0),
+            ("a stored payload renders inert", "xss_inert",
+             AT_LEAST, 1.0),)),
+        ("Non-repudiation", ()),
+        ("Accountability", ()),
+        ("Authenticity", ()),
+        ("Resistance", (
+            ("debug is off", "probe:debug", AT_LEAST, 1.0),
+            ("the security headers are set", "probe:security_headers",
+             AT_LEAST, 1.0),
+            ("no vulnerable dependency", "probe:vulnerable_dependencies",
+             AT_LEAST, 1.0),
+            ("no high or medium bandit finding", "bandit_serious",
+             AT_MOST, 0),
+            ("the judge reads its security as 3 or better",
+             "judge_security", AT_LEAST, 3.0),)),
+        ("Data protection", (
+            ("personal data stays out of the log", "probe:log_leak",
+             AT_LEAST, 1.0),
+            ("erasure leaves no residue", "probe:erasure_residue",
+             AT_LEAST, 1.0),
+            ("an export holds its own data only", "probe:export_scope",
+             AT_LEAST, 1.0),
+            ("the judge reads its data protection as 3 or better",
+             "judge_data_protection", AT_LEAST, 3.0),)),
+    )),
+    ("Maintainability", (
+        ("Modularity", (
+            ("no module import tariff loads reaches Flask or the database",
+             "layering_violations", AT_MOST, 0),
+            ("no two modules import each other", "mutual_imports",
+             AT_MOST, 0),
+            ("the judge reads its design as 3 or better", "judge_design",
+             AT_LEAST, 3.0),
+            ("the judge reads its single responsibility as 3 or better",
+             "judge_srp", AT_LEAST, 3.0),)),
+        ("Reusability", ()),
+        ("Analysability", (
+            ("at most 100 lint findings per KLOC", "ruff_per_kloc",
+             AT_MOST, 100),
+            ("the formatter would change no file", "unformatted",
+             AT_MOST, 0),
+            ("no function over cognitive complexity 15",
+             "complexity_over_15", AT_MOST, 0),
+            ("half the definitions carry a docstring", "docstrings",
+             AT_LEAST, 50),
+            ("the judge reads its readability as 3 or better",
+             "judge_readability", AT_LEAST, 3.0),)),
+        ("Modifiability", (
+            ("no conditional ladder over rule kinds", "kind_ladders",
+             AT_MOST, 0),
+            ("no boolean parameter", "bool_parameters", AT_MOST, 0),
+            ("at most 5 unused names per KLOC", "unused_per_kloc",
+             AT_MOST, 5),
+            ("the judge reads its maintainability as 3 or better",
+             "judge_maintainability", AT_LEAST, 3.0),
+            ("the judge reads its openness to extension as 3 or better",
+             "judge_ocp", AT_LEAST, 3.0),
+            ("the change task passes 90 % of its checks", "change_success",
+             AT_LEAST, 0.9),
+            ("the change task keeps 98 % of the build suite",
+             "change_regression", AT_LEAST, 0.98),)),
+        ("Testability", (
+            ("its own tests pass", "own_tests_pass", AT_LEAST, 1.0),
+            ("its own tests cover 80 % of the lines", "coverage",
+             AT_LEAST, 80),
+            ("the judge reads its tests as 3 or better", "judge_tests",
+             AT_LEAST, 3.0),)),
+        ("Observability", ()),
+    )),
+    ("Flexibility", (
+        ("Adaptability", ()),
+        ("Scalability", ()),
+        ("Installability", (
+            ("pip install . succeeds in a clean environment", "install",
+             AT_LEAST, 1.0),)),
+        ("Replaceability", ()),
+        ("Deploy and rollback", ()),
+    )),
+)
+
+# A sub-characteristic with fewer targets than this is marked in its table:
+# a single target swings it between 0 and 100 %.
+ENOUGH_TARGETS = 3
+
+# The axis a broken build counts against. A build that does not install or
+# boot fails Reliability's first target and is left out of every other axis,
+# so one failure is counted once.
+BROKEN_AXIS = "Reliability"
+
+# The ISO radar's margins, in points of an axis's share, sized before round 6
+# from round 5c's trial-to-trial noise: half the pooled within-arm standard
+# deviation of each axis's per-trial score over its 75 trials, rounded up to
+# a whole point, and never under 5 points, so an axis the pilot's trials
+# could not shake, or did not measure, still needs a visible move.
+# Reliability's 7 is one build of 15, the margin round 5d gave it too.
+ISO_MARGINS = {
+    "Functionality": 5, "Performance": 5, "Compatibility": 5, "Usability": 5,
+    "Reliability": 7, "Security": 5, "Maintainability": 5, "Flexibility": 5,
+}
+
+# The ISO radar's own colours, over each theme's palette. Better and worse
+# differ in shape as well as colour, filled up and hollow down, so the chart
+# reads the same printed in black and white.
+ISO_COLOURS = {
+    "light": {"target": "#2e7d32", "better": "#2e7d32", "worse": "#c62828",
+              "bare": "#52514e", "fill": "#dbe8f8"},
+    "dark": {"target": "#66bb6a", "better": "#66bb6a", "worse": "#ef5350",
+             "bare": "#c3c2b7", "fill": "#2a3d5c"},
+}
+
+# The readings the ISO radar rows add to the metric rows.
+ISO_EXTRA = {
+    "own_tests_pass": lambda t: boolean(t, "coverage", "tests_passed"),
+}
+
+
+def iso_targets():
+    """Every target of the ISO radar, as (axis, sub-characteristic, what it
+    asks, source, condition, threshold)."""
+    return [(axis, sub, asks, source, condition, threshold)
+            for axis, subs in ISO_AXES for sub, targets in subs
+            for asks, source, condition, threshold in targets]
+
+
+def iso_value(trial, source):
+    """A target's value for one trial: a metric row's reading, a probe's
+    pass, or a reading of the radar's own; None where not measured."""
+    if source.startswith("probe:"):
+        probes = (trial.get("security") or {}).get("probes") or {}
+        passed = (probes.get(source[len("probe:"):]) or {}).get("passed")
+        return None if passed is None else (1.0 if passed else 0.0)
+    if source in ISO_EXTRA:
+        accessor = ISO_EXTRA[source]
+    else:
+        accessor = next((getter for key, _, _, getter in METRICS
+                         if key == source), None)
+        if accessor is None:
+            return None
+    try:
+        return accessor(trial)
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
+def target_met(trial, source, condition, threshold):
+    """Whether one trial meets a target: True, False, or None where its
+    value was not measured."""
+    value = iso_value(trial, source)
+    if value is None:
+        return None
+    return value >= threshold if condition == AT_LEAST else value <= threshold
+
+
+def iso_trial_scores(trial, withdrawn=()):
+    """One trial on every axis, as {axis: {sub-characteristic: score}}.
+
+    A sub-score is the share of its targets met, over the targets measured,
+    and None where none was. A broken build is scored on Reliability alone,
+    where the install target fails, and reads None on every other axis. A
+    target reading a metric in `withdrawn` is not measured.
+    """
+    broken = works(trial) != 1.0
+    scores = {}
+    for axis, subs in ISO_AXES:
+        per_sub = {}
+        for sub, targets in subs:
+            if broken and axis != BROKEN_AXIS:
+                per_sub[sub] = None
+                continue
+
+            # A withdrawn metric's number is no result, on the radar as in
+            # the tables, so its target drops out rather than reads as met.
+            met = [target_met(trial, source, condition, threshold)
+                   for _, source, condition, threshold in targets
+                   if source not in withdrawn]
+            measured = [outcome for outcome in met if outcome is not None]
+            per_sub[sub] = (sum(measured) / len(measured) if measured
+                            else None)
+        scores[axis] = per_sub
+    return scores
+
+
+def iso_axis_score(per_sub):
+    """An axis's score for one trial, in points from 0 to 100: the mean of
+    its measured sub-scores, so each sub-characteristic weighs the same
+    however many targets it has; None where none was measured."""
+    measured = [score for score in per_sub.values() if score is not None]
+    return 100.0 * statistics.fmean(measured) if measured else None
+
+
+def iso_table(trials, withdrawn=()):
+    """The ISO axes as rows of a table, one row per axis under the key
+    `iso:<axis>`, each trial's score in points, better up, so the contrast
+    machinery reads them like any other row; `withdrawn` names the metrics
+    no target may read."""
+    table = {}
+    for axis, _ in ISO_AXES:
+        table["iso:" + axis] = {"label": axis, "direction": UP, "values": {}}
+    for name, trial in sorted(trials.items()):
+        scores = iso_trial_scores(trial, withdrawn)
+        for axis, _ in ISO_AXES:
+            row = table["iso:" + axis]["values"]
+            row.setdefault(arm_of(name), {})[index_of(name)] = iso_axis_score(
+                scores[axis])
+    return table
+
+
+def iso_margins(table):
+    """The ISO margins as the contrast machinery takes them, absolute, in
+    points."""
+    return {"iso:" + axis: ("%d points" % points, float(points), ABSOLUTE)
+            for axis, points in ISO_MARGINS.items()}
+
+
+def iso_contrasts(table, seed, crossed=()):
+    """Each file arm's ISO rows against the bare arm: the difference of
+    arm means, its interval, and its verdict past the axis's margin; paired
+    within a round and unpaired across rounds."""
+    labels = ["%s-%s" % (treatment, baseline)
+              for treatment, baseline in CONTRASTS if baseline == BARE]
+    return contrasts(table, seed, crossed, iso_margins(table), True,
+                     only=labels)
+
+
+def iso_marker(contrast):
+    """The marker an axis carries against the bare arm: `better` past the
+    margin upward, `worse` past it downward, `dot` otherwise, and None where
+    the contrast could not be read."""
+    verdict = contrast.get("verdict")
+    if verdict == "better":
+        return "better"
+    if verdict == "worse":
+        return "worse"
+    if verdict in COUNTED_VERDICTS:
+        return "dot"
+    return None
+
+
+def iso_panels(table, iso, results, active):
+    """The ISO radar's panels, one per file arm against the bare arm, from
+    the cheapest to the dearest: (arm, cost line, axes), each axis as (name,
+    score, bare score, marker, difference)."""
+    arms = [pair[0] for pair in active if pair[1] == BARE]
+    bare_cost = arm_mean(table, "cost_usd", BARE)
+    panels = []
+    for arm in by_cost(table, arms):
+        name = "%s-%s" % (arm, BARE)
+        cost = arm_mean(table, "cost_usd", arm)
+        axes = []
+        for axis, _ in ISO_AXES:
+            key = "iso:" + axis
+            score, bare = arm_mean(iso, key, arm), arm_mean(iso, key, BARE)
+            contrast = results.get(key, {}).get(name, {})
+            marker = (iso_marker(contrast) if score is not None
+                      and bare is not None else None)
+
+            # The move shown is the contrast's own mean, over the blocks it
+            # paired, so its sign agrees with the marker where a broken
+            # build left the two arms' means over different blocks.
+            axes.append((axis, score, bare, marker,
+                         None if marker is None else contrast.get("mean")))
+        panels.append((arm, cost_line(cost, bare_cost), axes))
+    return panels
+
+
+def cost_line(cost, bare_cost):
+    """The cost line above a panel: dollars per run, and the multiple of the
+    bare arm's; shown, never scored."""
+    if cost is None:
+        return "cost not measured"
+    line = "$%.2f/run" % cost
+    if bare_cost:
+        line += ", %.1fx %s" % (cost / bare_cost, BARE)
+    return line
+
+
+def iso_radar_svg(panels, theme):
+    """One SVG of ISO radars, one panel per file arm, two to a row, as
+    `iso_panels` gives them: the target ring, the bare arm's outline, the
+    arm's shape, a marker per axis and the cost line above."""
+    colors = dict(RADAR_THEMES[theme], **ISO_COLOURS[theme])
+    width, size, radius = 1200, 460, 120
+    rows = (len(panels) + 1) // 2
+    top = 60
+    height = top + rows * size
+    count = len(ISO_AXES)
+
+    def point(cx, cy, share, index):
+        angle = -math.pi / 2 + 2 * math.pi * index / count
+        reach = radius * share
+        return cx + reach * math.cos(angle), cy + reach * math.sin(angle)
+
+    def ring(cx, cy, share):
+        return " ".join("%.1f,%.1f" % point(cx, cy, share, index)
+                        for index in range(count))
+
+    out = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
+           'viewBox="0 0 %d %d" font-family="-apple-system, Segoe UI, '
+           'Helvetica, Arial, sans-serif">' % (width, height, width, height),
+           '<rect width="100%%" height="100%%" fill="%s"/>' % colors["surface"]]
+
+    # One key for every panel.
+    key = [("target", "every target met", "dashed"),
+           ("bare", "%s, for reference" % BARE, "line"),
+           ("better", "better than %s" % BARE, "up"),
+           ("worse", "worse than %s" % BARE, "down"),
+           ("muted", "no difference shown", "dot")]
+    x = 40
+    for colour, words, shape in key:
+        if shape == "dashed":
+            out.append('<line x1="%d" y1="28" x2="%d" y2="28" stroke="%s" '
+                       'stroke-width="1.5" stroke-dasharray="5 3"/>'
+                       % (x, x + 28, colors[colour]))
+        elif shape == "line":
+            out.append('<line x1="%d" y1="28" x2="%d" y2="28" stroke="%s" '
+                       'stroke-width="1.5"/>' % (x, x + 28, colors[colour]))
+        else:
+            out.append(marker_svg(x + 14, 28, shape, colors))
+        out.append('<text x="%d" y="28" dominant-baseline="middle" '
+                   'font-size="13" fill="%s">%s</text>'
+                   % (x + 36, colors["secondary"], escape(words)))
+        x += 36 + 8 * len(words) + 24
+
+    for place, (arm, cost, axes) in enumerate(panels):
+        cx = (place % 2) * (width / 2) + width / 4
+        cy = top + (place // 2) * size + size / 2 + 36
+
+        # The arm's name, then its cost, centred above the top axis's label.
+        out.append('<text x="%.1f" y="%.1f" text-anchor="middle" '
+                   'font-size="18" font-weight="600" fill="%s">%s</text>'
+                   % (cx, cy - radius - 96, colors["text"], escape(arm)))
+        out.append('<text x="%.1f" y="%.1f" text-anchor="middle" '
+                   'font-size="14" font-weight="600" fill="%s">%s</text>'
+                   % (cx, cy - radius - 74, colors["secondary"],
+                      escape(cost)))
+        for share in (0.25, 0.5, 0.75):
+            out.append('<polygon points="%s" fill="none" stroke="%s" '
+                       'stroke-width="1"/>' % (ring(cx, cy, share),
+                                               colors["grid"]))
+        for index in range(count):
+            x, y = point(cx, cy, 1.0, index)
+            out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" '
+                       'stroke="%s" stroke-width="1"/>'
+                       % (cx, cy, x, y, colors["grid"]))
+
+        # The target ring: every target met, dashed.
+        out.append('<polygon points="%s" fill="none" stroke="%s" '
+                   'stroke-width="1.5" stroke-dasharray="5 3"/>'
+                   % (ring(cx, cy, 1.0), colors["target"]))
+
+        # The bare arm's outline, thin and unfilled, then the arm's shape.
+        # An axis not measured gets no vertex: the shape passes it by, where
+        # a measured 0 % would pull it to the centre.
+        bare = [point(cx, cy, bare / 100.0, index)
+                for index, (_, _, bare, _, _) in enumerate(axes)
+                if bare is not None]
+        out.append('<polygon points="%s" fill="none" stroke="%s" '
+                   'stroke-width="1.5"/>'
+                   % (" ".join("%.1f,%.1f" % xy for xy in bare),
+                      colors["bare"]))
+        shape = [point(cx, cy, score / 100.0, index)
+                 for index, (_, score, _, _, _) in enumerate(axes)
+                 if score is not None]
+        out.append('<polygon points="%s" fill="%s" fill-opacity="0.6" '
+                   'stroke="%s" stroke-width="2" stroke-linejoin="round"/>'
+                   % (" ".join("%.1f,%.1f" % xy for xy in shape),
+                      colors["fill"], colors["series"]))
+        for index, (axis, score, _, marker, moved) in enumerate(axes):
+            if marker and score is not None:
+                x, y = point(cx, cy, score / 100.0, index)
+                out.append(marker_svg(x, y, {"better": "up", "worse": "down",
+                                             "dot": "dot"}[marker], colors))
+            lx, ly = point(cx, cy, 1.3, index)
+            anchor = ("middle" if abs(lx - cx) < 8
+                      else "start" if lx > cx else "end")
+            out.append('<text x="%.1f" y="%.1f" text-anchor="%s" '
+                       'dominant-baseline="middle" font-size="14" '
+                       'font-weight="600" fill="%s">%s</text>'
+                       % (lx, ly - 9, anchor, colors["text"], escape(axis)))
+            out.append('<text x="%.1f" y="%.1f" text-anchor="%s" '
+                       'dominant-baseline="middle" font-size="13" '
+                       'fill="%s">%s</text>'
+                       % (lx, ly + 9, anchor, colors[
+                           {"better": "better", "worse": "worse"}.get(
+                               marker, "secondary")],
+                          escape(axis_reading(score, marker, moved))))
+    out.append("</svg>")
+    return "\n".join(out) + "\n"
+
+
+def marker_svg(x, y, shape, colors):
+    """One marker at (x, y): a filled triangle up, a hollow triangle down,
+    or a small dot."""
+    if shape == "up":
+        return ('<polygon points="%.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s"/>'
+                % (x, y - 7, x - 7, y + 6, x + 7, y + 6, colors["better"]))
+    if shape == "down":
+        return ('<polygon points="%.1f,%.1f %.1f,%.1f %.1f,%.1f" fill="%s" '
+                'stroke="%s" stroke-width="2"/>'
+                % (x, y + 7, x - 7, y - 6, x + 7, y - 6, colors["surface"],
+                   colors["worse"]))
+    return ('<circle cx="%.1f" cy="%.1f" r="4" fill="%s"/>'
+            % (x, y, colors["muted"]))
+
+
+def axis_reading(score, marker, moved):
+    """An axis's label line: its share, and past the margin the move
+    against the bare arm with its sign."""
+    if score is None:
+        return NOT_MEASURED
+    words = "%d %%" % round(score)
+    if marker == "better":
+        words += " ▲ +%d" % round(moved)
+    elif marker == "worse":
+        words += " ▽ −%d" % round(abs(moved))
+    elif marker == "dot":
+        words += " ●"
+    return words
+
+
+# How to read the ISO radar, under it.
+ISO_READING = (
+    "One radar per arm, from the cheapest to the dearest, on the eight "
+    "characteristics of ISO/IEC 25010:2023 in the standard's order. Each "
+    "axis is the share of its targets met: each sub-characteristic's share, "
+    "averaged, then averaged over the arm's trials. The dashed ring is every "
+    "target met, and the thin outline is `%s`. A filled ▲ marks an axis "
+    "better than `%s` past its margin, a hollow ▽ one worse, and a dot "
+    "one within it. A build that does not install or boot counts against "
+    "Reliability alone. The cost above each radar is shown, not scored. The "
+    "targets behind each axis, and every number, are in the appendix."
+    % (BARE, BARE))
+
+
+def iso_axis_lines(trials, iso, arms, results=None, withdrawn=(),
+                   blocks=None):
+    """One table per axis: its sub-characteristics, each arm's mean share
+    of their targets met, and the targets each asks; a target reading a
+    metric in `withdrawn` is not measured, and a contrast over fewer pairs
+    than `blocks` names its count."""
+    lines = []
+    per_trial = {name: iso_trial_scores(trial, withdrawn)
+                 for name, trial in trials.items()}
+    for axis, subs in ISO_AXES:
+        lines.extend(["### %s" % axis, ""])
+        lines.append("| Sub-characteristic | %s | Targets |"
+                     % " | ".join("`%s`" % arm for arm in arms))
+        lines.append("| --- | %s | --- |" % " | ".join("---" for _ in arms))
+        for sub, targets in subs:
+            cells = []
+            for arm in arms:
+                shares = [per_trial[name][axis][sub]
+                          for name in per_trial if arm_of(name) == arm
+                          and per_trial[name][axis][sub] is not None]
+                cells.append("%d %%" % round(100 * statistics.fmean(shares))
+                             if shares else NOT_MEASURED)
+            asks = "; ".join(asks for asks, _, _, _ in targets)
+            if not targets:
+                asks = NOT_MEASURED
+            elif len(targets) < ENOUGH_TARGETS:
+                asks += " (fewer than %d targets)" % ENOUGH_TARGETS
+            lines.append("| %s | %s | %s |" % (sub, " | ".join(cells), asks))
+        cells = []
+        for arm in arms:
+            mean = arm_mean(iso, "iso:" + axis, arm)
+            cells.append("%d %%" % round(mean) if mean is not None
+                         else NOT_MEASURED)
+        lines.append("| **%s** | %s | the mean of the rows measured |"
+                     % (axis, " | ".join("**%s**" % cell for cell in cells)))
+        if results:
+            cells = []
+            for arm in arms:
+                contrast = results.get("iso:" + axis, {}).get(
+                    "%s-%s" % (arm, BARE))
+                cells.append(contrast_cell(contrast, True, blocks)
+                             if contrast else "—")
+            lines.append("| against `%s` | %s | a marker past %d points |"
+                         % (BARE, " | ".join(cells), ISO_MARGINS[axis]))
+        lines.append("")
+    return lines
+
+
+def iso_rules(trials):
+    """Whether the run is read with the ISO radar: every round after the
+    pilot, whose rounds registered radars of their own."""
+    return not is_round5(trials)
+
+
+def aggregate(seed, trials, table, results, withdrawn, check, iso):
+    """What `aggregate.json` keeps beside the report: every row, contrast
+    and method the documents cite, and the ISO reading where the round
+    draws that radar, so each of its cells can be checked too."""
+    payload = {"seed": seed, "table": table, "results": results,
+               "blocks": blocks_state(trials), "withdrawn": withdrawn,
+               "cross_check": check}
+    if iso:
+        payload["iso"] = {"table": iso[0], "results": iso[1],
+                          "withdrawn": list(iso[2])}
+    return payload
+
+
+def iso_reading(trials, seed, withdrawn=()):
+    """The ISO radar's table, its contrasts against the bare arm and the
+    metrics withdrawn from it, as one triple, for a run read with it."""
+    withdrawn = tuple(withdrawn)
+    iso = iso_table(trials, withdrawn)
+    return iso, iso_contrasts(iso, seed, crossed_labels(trials)), withdrawn
+
+
+# How the plain report reads the ISO radar, under it.
+ISO_PLAIN_READING = (
+    "How to read it: each axis is one quality of the software, from the "
+    "international standard for software quality, and shows how many of its "
+    "targets the approach met. The dashed ring is every target met, and the "
+    "thin outline is `%s`. A filled ▲ means the approach did clearly "
+    "better than `%s` on that axis, a hollow ▽ clearly worse, and a dot "
+    "no clear difference. The cost above each radar is what a run spent. "
+    "The appendix lists every target." % (BARE, BARE))
+
+# How the appendix's ISO tables read, above them.
+ISO_TABLE_READING = (
+    "Each table is one axis of the radar: its sub-characteristics from "
+    "ISO/IEC 25010:2023, each approach's mean share of their targets met "
+    "over its working builds, the axis as the mean of the rows measured, "
+    "and each approach against `%s`: the mean difference in points, its "
+    "95 %% interval, and a marker only where the whole interval lies past "
+    "the axis's margin. A row with no target reads not measured, never "
+    "0 %%, and one with fewer than %d targets says so, since a single "
+    "target swings it between 0 and 100 %%." % (BARE, ENOUGH_TARGETS))
+
+
 def executive_section(trials, table, results, withdrawn=None, lost=(),
-                      scans=(), radar=None):
+                      scans=(), radar=None, iso=None):
     """The report's first sections: the summary, a radar per file arm read
     against no file where `radar` names its two images, light and dark;
     then the arms against no file: the finding table, one line per file on
     why it scored so, the reading, the contrasts between files scored, and
-    the caveats.
+    the caveats. `iso` is the ISO reading where the round draws that radar.
 
     Like the score, it digests the verdict vector and decides nothing.
     """
@@ -3738,8 +4386,9 @@ def executive_section(trials, table, results, withdrawn=None, lost=(),
         for theme, image in sorted(radar.items()):
             lines.append("![Radar per arm](%s#gh-%s-mode-only)"
                          % (image, theme))
-        lines.extend(["", RADAR_SIZE_READING if radar_axes(results)
-                      is ROUND5D_RADAR_AXES else RADAR_READING, ""])
+        lines.extend(["", ISO_READING if iso else RADAR_SIZE_READING
+                      if radar_axes(results) is ROUND5D_RADAR_AXES
+                      else RADAR_READING, ""])
     else:
         lines.extend(["No radar was drawn for this run.", ""])
     lines.extend(finding_lines(trials, table, results, active))
@@ -4906,6 +5555,349 @@ def executive_checks(seed):
     return checks
 
 
+def iso_checks(seed):
+    """The ISO radar's rules: a sub-score as the share of targets met, an
+    empty sub-characteristic not measured, an axis as the mean of its
+    sub-scores, an arm as the mean over its trials, a broken build against
+    Reliability alone, a marker only past the margin, the drawing, and the
+    round that draws it."""
+    checks = []
+
+    def planted(install=True, probes=None, **scores):
+        """A working build, with each named probe's outcome and each named
+        score's value; `install=False` plants a build that did not."""
+        trial = {"scores": {"install": {"value": install},
+                            "boot": {"value": {"factory": True,
+                                               "index_status": 302}}},
+                 "judge": None, "judgings": [], "change": None,
+                 "security": {"probes": {name: {"passed": passed}
+                                         for name, passed
+                                         in (probes or {}).items()}}}
+        for key, value in scores.items():
+            trial["scores"][key] = {"value": value, "missing": None}
+        return trial
+
+    # Confidentiality asks four probes: two passed, one failed and one not
+    # run read 2 of 3, and Compatibility, with no target, reads not measured.
+    trial = planted(probes={"password_at_rest": True,
+                            "account_enumeration": True,
+                            "secret_key": False})
+    scores = iso_trial_scores(trial)
+    got = (round(scores["Security"]["Confidentiality"], 4),
+           scores["Compatibility"]["Interoperability"],
+           iso_axis_score(scores["Compatibility"]))
+    checks.append(("a sub-score is the share of its measured targets met, "
+                   "and one with none reads not measured",
+                   got == (round(2 / 3, 4), None, None), got))
+
+    # Each sub-characteristic weighs the same: Security at 2 of 3 on one row
+    # and 0 of 1 on another reads 33, not 2 of 4.
+    trial = planted(probes={"password_at_rest": True,
+                            "account_enumeration": True,
+                            "secret_key": False, "debug": False})
+    scores = iso_trial_scores(trial)
+    got = {sub: score for sub, score in scores["Security"].items()
+           if score is not None}
+    axis = iso_axis_score(scores["Security"])
+    checks.append(("an axis is the mean of its measured sub-scores, each "
+                   "weighing the same",
+                   got == {"Confidentiality": 2 / 3, "Resistance": 0.0}
+                   and round(axis, 4) == round(100 / 3, 4), (got, axis)))
+
+    # An arm is the mean over its trials: 100 and 0 on Flexibility read 50.
+    run = {"hybrid-1": planted(), "hybrid-2": planted(),
+           "none-1": planted()}
+    run["hybrid-2"]["scores"]["install"]["value"] = True
+    table = iso_table(run)
+    table["iso:Flexibility"]["values"]["hybrid"][2] = 0.0
+    got = (arm_mean(table, "iso:Flexibility", "hybrid"),
+           arm_mean(table, "iso:Flexibility", "none"))
+    checks.append(("an arm is the mean over its trials", got == (50.0, 100.0),
+                   got))
+
+    # A broken build fails Reliability's install target and is left out of
+    # every other axis, so it counts once.
+    broken = planted(install=False, mypy=0, html_validity=0)
+    broken["scores"]["mypy"]["seen"] = {"lines": 1000}
+    scores = iso_trial_scores(broken)
+    got = {axis: iso_axis_score(per_sub) for axis, per_sub in scores.items()}
+    checks.append(("a broken build counts against Reliability only",
+                   got["Reliability"] == 50.0 and all(
+                       score is None for axis, score in got.items()
+                       if axis != "Reliability"), got))
+
+    # A marker turns only past the axis's margin: 3 points over a 5-point
+    # margin stays a dot, 20 over turns up, 20 under turns down.
+    bare = {index: 50.0 + (index % 3) for index in range(1, 16)}
+    markers = []
+    for shift in (3.0, 20.0, -20.0):
+        table = {"iso:Security": {"label": "Security", "direction": UP,
+                                  "values": {"none": bare, "hybrid": {
+                                      index: value + shift
+                                      for index, value in bare.items()}}}}
+        results = iso_contrasts(table, seed)
+        markers.append(iso_marker(results["iso:Security"]["hybrid-none"]))
+    checks.append(("a marker turns only past the axis's margin",
+                   markers == ["dot", "better", "worse"], markers))
+    unread = iso_marker({"verdict": "not computed"})
+    checks.append(("an axis that could not be read carries no marker",
+                   unread is None, unread))
+
+    # The move shown beside a marker is the contrast's mean over the blocks
+    # it paired, not the difference of the arms' means over every trial: a
+    # broken bare build leaves those over different blocks, with a sign of
+    # their own.
+    bare = {1: 40.0, 2: 40.0, 3: None}
+    ours = {1: 50.0, 2: 50.0, 3: 0.0}
+    iso = {"iso:Security": {"label": "Security", "direction": UP,
+                            "values": {"none": bare, "hybrid": ours}}}
+    for axis, _ in ISO_AXES:
+        iso.setdefault("iso:" + axis, {"label": axis, "direction": UP,
+                                       "values": {}})
+    results = iso_contrasts(iso, seed)
+    table = {"cost_usd": {"values": {"none": {1: 4.0}, "hybrid": {1: 8.0}}}}
+    axes = iso_panels(table, iso, results, [("hybrid", "none")])[0][2]
+    got = next((score, bare, moved) for axis, score, bare, _, moved in axes
+               if axis == "Security")
+    checks.append(("the move shown is the contrast's mean over the blocks "
+                   "it paired", got == (100 / 3, 40.0, 10.0), got))
+
+    # A withdrawn metric's target drops out of the radar and its tables, as
+    # its row does from the contrasts.
+    trial = planted(probes={"password_at_rest": True,
+                            "account_enumeration": False})
+    kept = iso_trial_scores(trial)["Security"]["Confidentiality"]
+    dropped = iso_trial_scores(
+        trial, ("probe:account_enumeration",))["Security"]["Confidentiality"]
+    run = {"hybrid-1": planted(), "none-1": planted()}
+    lines = iso_axis_lines(run, iso_table(run, ("install",)),
+                           ["none", "hybrid"], None, ("install",))
+    installability = [line for line in lines
+                      if line.startswith("| Installability |")]
+    checks.append(("a withdrawn metric's target is not measured",
+                   kept == 0.5 and dropped == 1.0
+                   and installability[0].count(NOT_MEASURED) == 2,
+                   (kept, dropped, installability)))
+
+    # A contrast over fewer pairs than the round's blocks names its count
+    # in the axis's table, as the metric tables do.
+    sparse = {"iso:Security": {"label": "Security", "direction": UP,
+                               "values": {"none": {1: 40.0, 2: 40.0},
+                                          "hybrid": {1: 50.0, 2: 60.0}}}}
+    for axis, _ in ISO_AXES:
+        sparse.setdefault("iso:" + axis, {"label": axis, "direction": UP,
+                                          "values": {}})
+    results = iso_contrasts(sparse, seed)
+    lines = iso_axis_lines(run, sparse, ["none", "hybrid"], results, (), 15)
+    against = [line for line in lines if line.startswith("| against `none`")]
+    checks.append(("an axis contrast over fewer pairs than blocks names its "
+                   "count", any("(2 pairs)" in line for line in against),
+                   against[:1]))
+
+    # The aggregate keeps the ISO reading, so a cell marked as not computed
+    # by BCa leads to a method the file holds.
+    payload = aggregate(seed, run, {}, {}, {}, None,
+                        iso_reading(run, seed, ("install",)))
+    got = (sorted(payload.get("iso", {})),
+           payload.get("iso", {}).get("withdrawn"),
+           "iso:Security" in payload.get("iso", {}).get("results", {}),
+           "iso" in aggregate(seed, run, {}, {}, {}, None, None))
+    checks.append(("the aggregate keeps the ISO reading where the round "
+                   "draws it", got == (["results", "table", "withdrawn"],
+                                       ["install"], True, False), got))
+
+    # The plain words follow the ISO markers, not the pilot's axes: a
+    # Functionality better and a Reliability dot read as functionality,
+    # with the cost on a line of its own.
+    iso_results = {"iso:" + axis: {"hybrid-none": {"verdict": "held"}}
+                   for axis, _ in ISO_AXES}
+    iso_results["iso:Functionality"]["hybrid-none"] = {"verdict": "better"}
+    iso_results["iso:Usability"]["hybrid-none"] = {"verdict": "worse"}
+    planted_results = {key: {"hybrid-none": {"verdict": "better" if key
+                                             == "task_success" else "held"}}
+                       for key in ANSWERED + ("reliability",)}
+    for _, keys in RADAR_AXES:
+        for key in keys:
+            planted_results.setdefault(key, {"hybrid-none": {
+                "verdict": "worse"}})
+    table = {"cost_usd": {"values": {"none": {1: 4.0}, "hybrid": {1: 8.8}}},
+             "task_success": {"values": {"hybrid": {1: 1.0}}},
+             "install": {"values": {"hybrid": {1: 1.0}}}}
+    words = plain_arm_lines({}, table, planted_results, "hybrid", 516,
+                            ({}, iso_results, ()))
+    checks.append(("the plain words follow the ISO markers, with the cost "
+                   "on its own line",
+                   "- Better than no rules file at: functionality." in words
+                   and "- Worse at: usability." in words
+                   and "- Cost: about $8.80 a run, against $4.00 with no "
+                   "rules file." in words, words[:8]))
+
+    # Every target reads a metric row, a probe security.py runs, or a
+    # reading of the radar's own; a target pointed elsewhere would read not
+    # measured for every trial without failing.
+    import security
+    probes = set(security.SECURITY_PROBES + security.DATA_PROTECTION_PROBES)
+    keys = {key for key, _, _, _ in METRICS} | set(ISO_EXTRA)
+    stray = sorted(source for _, _, _, source, _, _ in iso_targets()
+                   if not (source[len("probe:"):] in probes
+                           if source.startswith("probe:")
+                           else source in keys))
+    checks.append(("every target reads a metric row, a probe or a reading "
+                   "of the radar's own", not stray, stray))
+    checks.append(("every axis carries a margin",
+                   set(ISO_MARGINS) == {axis for axis, _ in ISO_AXES},
+                   sorted(ISO_MARGINS)))
+
+    # The tables mark a sub-characteristic with fewer than three targets and
+    # read an empty one as not measured, never 0 %.
+    run = {"hybrid-1": planted(), "none-1": planted()}
+    table = iso_table(run)
+    lines = iso_axis_lines(run, table, ["none", "hybrid"])
+    thin = [line for line in lines if line.startswith("| Installability |")]
+    empty = [line for line in lines if line.startswith("| Co-existence |")]
+    checks.append(("the tables mark a thin sub-characteristic and read an "
+                   "empty one as not measured",
+                   len(thin) == 1 and "(fewer than 3 targets)" in thin[0]
+                   and "100 %" in thin[0] and len(empty) == 1
+                   and empty[0].count(NOT_MEASURED) == 3
+                   and "0 %" not in empty[0], thin + empty))
+
+    # The drawing: a panel per arm with its cost line, the dashed target
+    # ring and the bare outline in each, a filled triangle up for better, a
+    # hollow one down for worse, a dot within the margin, in both themes.
+    axes = [(axis, score, bare, marker, moved) for (axis, _), (
+        score, bare, marker, moved) in zip(ISO_AXES, [
+            (95.0, 95.0, "dot", 0.0), (70.0, 80.0, "worse", -10.0),
+            (None, None, None, None), (60.0, 45.0, "better", 15.0),
+            (75.0, 85.0, "worse", -10.0), (90.0, 60.0, "better", 30.0),
+            (80.0, 55.0, "better", 25.0), (55.0, 55.0, "dot", 0.0)])]
+    panels = [("hybrid", "$9.30/run, 2.2x none", axes),
+              ("inline", "$14.18/run, 3.3x none", axes)]
+    drawn = {theme: iso_radar_svg(panels, theme) for theme in RADAR_THEMES}
+    try:
+        trees = {theme: ElementTree.fromstring(svg)
+                 for theme, svg in drawn.items()}
+    except ElementTree.ParseError as error:
+        trees = {"error": str(error)}
+    space = "{http://www.w3.org/2000/svg}"
+
+    def shapes(tree):
+        polygons = list(tree.iter(space + "polygon"))
+        triangles = [polygon for polygon in polygons
+                     if len(polygon.get("points").split()) == 3]
+        return {
+            "target rings": sum(1 for polygon in polygons
+                                if polygon.get("stroke-dasharray")),
+            "filled up": sum(1 for polygon in triangles
+                             if polygon.get("stroke") is None),
+            "hollow down": sum(1 for polygon in triangles
+                               if polygon.get("stroke") is not None),
+            "dots": sum(1 for _ in tree.iter(space + "circle")),
+            "costs": [text.text for text in tree.iter(space + "text")
+                      if text.text and text.text.endswith("x none")],
+            "labels": [text.text for text in tree.iter(space + "text")
+                       if text.text in dict(ISO_AXES)]}
+    got = {theme: shapes(tree) for theme, tree in trees.items()
+           if theme != "error"}
+    expected = {"target rings": 2, "filled up": 6 + 1, "hollow down": 4 + 1,
+                "dots": 4 + 1, "costs": [panel[1] for panel in panels],
+                "labels": [axis for axis, _ in ISO_AXES] * 2}
+    checks.append(("the ISO radar draws a panel per arm with its cost, the "
+                   "target ring, the markers by shape, in both themes",
+                   "error" not in trees and drawn["light"] != drawn["dark"]
+                   and all(shape == expected for shape in got.values()),
+                   got))
+
+    # An axis not measured gets no vertex, so the shapes have one point per
+    # measured axis, seven of eight here, and a measured 0 % still has its
+    # point at the centre.
+    light = trees.get("light", ElementTree.Element("svg"))
+    filled = [polygon for polygon in light.iter(space + "polygon")
+              if polygon.get("fill-opacity")]
+    outlines = [polygon for polygon in light.iter(space + "polygon")
+                if polygon.get("stroke") == ISO_COLOURS["light"]["bare"]]
+    zeroed = [(axis, 0.0 if axis == "Compatibility" else score, bare,
+               marker, moved) for axis, score, bare, marker, moved in axes]
+    zero_tree = ElementTree.fromstring(iso_radar_svg(
+        [("hybrid", "$1.00/run", zeroed)], "light"))
+    zero_filled = [polygon for polygon in zero_tree.iter(space + "polygon")
+                   if polygon.get("fill-opacity")]
+    got = ([len(polygon.get("points").split()) for polygon in filled],
+           [len(polygon.get("points").split()) for polygon in outlines],
+           [len(polygon.get("points").split()) for polygon in zero_filled])
+    checks.append(("an axis not measured leaves no vertex, unlike a "
+                   "measured 0 %", got == ([7, 7], [7, 7], [8]), got))
+
+    # Every axis label fits inside the image and clear of the other panel,
+    # at about 8 pixels a character for the bold label.
+    labels = [(float(text.get("x")), text.get("text-anchor"), text.text)
+              for text in light.iter(space + "text")
+              if text.text in dict(ISO_AXES)]
+    width = float(light.get("width"))
+    extents = [(x - 8 * len(text), x) if anchor == "end"
+               else (x, x + 8 * len(text)) if anchor == "start"
+               else (x - 4 * len(text), x + 4 * len(text))
+               for x, anchor, text in labels]
+    left = [right for left_, right in extents if left_ < width / 2]
+    right = [left_ for left_, right_ in extents if left_ >= width / 2]
+    checks.append(("every axis label fits inside the image and clear of "
+                   "the other panel",
+                   len(labels) == 2 * len(ISO_AXES)
+                   and all(0 <= left_ and right_ <= width
+                           for left_, right_ in extents)
+                   and max(left) < min(right), (min(extents), max(extents))))
+    readings = [axis_reading(score, marker, moved)
+                for score, marker, moved in ((90.0, "better", 30.0),
+                                             (70.0, "worse", -10.0),
+                                             (95.0, "dot", 0.0),
+                                             (None, None, None))]
+    checks.append(("an axis label reads its share and its move past the "
+                   "margin",
+                   readings == ["90 % ▲ +30", "70 % ▽ −10",
+                                "95 % ●", NOT_MEASURED], readings))
+
+    # A round after the pilot is read with the ISO radar; a pilot round
+    # keeps the radar it registered.
+    later = {"none-1": planted(), "hybrid-1": planted()}
+    got = (iso_rules(later), iso_rules(planted_change_run("any")),
+           iso_rules({"hand-1": planted(), "none-1": planted()}))
+    checks.append(("a round after the pilot draws the ISO radar, and the "
+                   "pilot its own", got == (True, False, False), got))
+
+    # Rendered: the summary reads the ISO radar, the plain report its plain
+    # words, the appendix one table per axis, and the images hold the ring.
+    for name, trial in later.items():
+        trial["scores"]["cost"] = {"value": {"cost_usd": 4.0}}
+    later["hybrid-1"]["scores"]["cost"]["value"]["cost_usd"] = 8.8
+    table = collect(later)
+    results = round_contrasts(later, table, seed)
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-iso-self-test")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+    target = write_report(scratch, later, table, results, seed,
+                          out_dir=scratch)
+    stem = target[:-len(".md")]
+    texts = {}
+    for suffix in ("", "-appendix", "-record", "-radar-light.svg"):
+        with io.open(stem + suffix if suffix.endswith(".svg")
+                     else stem + suffix + ".md", encoding="utf-8") as handle:
+            texts[suffix] = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    got = {"summary": ISO_READING[:60] in texts["-record"],
+           "plain": ISO_PLAIN_READING[:60] in texts[""],
+           "appendix": ISO_TABLE_READING[:60] in texts["-appendix"]
+           and all("### %s" % axis in texts["-appendix"]
+                   for axis, _ in ISO_AXES)
+           and "| Sub-characteristic | `none` | `hybrid` | Targets |"
+           in texts["-appendix"],
+           "image": "stroke-dasharray" in texts["-radar-light.svg"]
+           and "$8.80/run, 2.2x none" in texts["-radar-light.svg"]}
+    checks.append(("a later round's report, appendix and images carry the "
+                   "ISO radar", all(got.values()), got))
+    return checks
+
+
 def exclusion_checks():
     """A trial the re-scan flags is left out of the figures; a flagged change
     task takes only its change reading; a reached trial is a lost one."""
@@ -5183,6 +6175,7 @@ def self_test(seed):
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
     checks.extend(round5d_checks(seed))
+    checks.extend(iso_checks(seed))
     checks.extend(band_checks(seed))
     checks.extend(failed_build_checks())
     checks.extend(record_checks())
@@ -5323,16 +6316,15 @@ def main(argv):
             return 2
         check = cross_check(trials, other, options.seed)
         disagree(results, check)
+    iso = (iso_reading(trials, options.seed, withdrawn) if iso_rules(trials)
+           else None)
     target = write_report(options.root, trials, table, results, options.seed,
-                          out_dir, withdrawn, check)
+                          out_dir, withdrawn, check, iso)
 
     with io.open(os.path.join(scoring_area(options.root), "aggregate.json"),
                  "w", encoding="utf-8") as handle:
-        json.dump({"seed": options.seed, "table": table, "results": results,
-                   "blocks": blocks_state(trials),
-                   "withdrawn": withdrawn,
-                   "cross_check": check},
-                  handle, indent=2, sort_keys=True)
+        json.dump(aggregate(options.seed, trials, table, results, withdrawn,
+                            check, iso), handle, indent=2, sort_keys=True)
     print("Report: %s" % target)
 
     # An earlier round read by round 5d's rules is post-hoc: its own page,

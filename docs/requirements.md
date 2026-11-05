@@ -5,8 +5,9 @@
 - **Terms:** defined in the [glossary](architecture/12-glossary.md). The
   reasons behind each rule are in
   [chapter 8](architecture/08-crosscutting-concepts.md).
-- **IDs:** `FR-<capability>-<n>` or `QG-<characteristic>-<n>`; cite a
-  requirement by its ID.
+- **IDs:** `FR-<capability>-<n>` or `QG-<characteristic>-<n>` for the
+  benchmark, `QT-<characteristic>-<n>` for a target the app under test is
+  scored on; cite a requirement by its ID.
 - **Numbering:** a new requirement takes the next free number; a removed
   ID is never reused. Before the baseline, a section may be renumbered.
 - **Baseline:** none declared yet, so a requirement may still be reworded
@@ -176,6 +177,7 @@
 | FR-12-09 | The benchmark shall blank a withdrawn metric on every run its grader's revision graded, and keep it on the others. | Report |
 | FR-12-10 | The benchmark shall fix a fault found in its instruments, validate the fix, re-score in full every round that reads the faulty scores, and replace each report with a dated note keeping the verdicts it replaces. | Scorer, Report, Owner |
 | FR-12-11 | Removed: merged into FR-12-10. | - |
+| FR-12-12 | From round 6 the benchmark shall draw one radar per file arm against `none` on the eight ISO/IEC 25010:2023 characteristics, each axis the share of its targets met, with a marker only past the axis's margin, a broken build counted against Reliability alone, the cost shown above and one table of sub-scores per axis in the appendix. | Report |
 
 ### 13 Records and archive
 
@@ -268,3 +270,100 @@
 | Self-tests | Each script's `--self-test`, which plants the case each rule guards against. | QG-01-05, QG-05-01, QG-05-02, QG-06-01, QG-06-02, QG-07-01 |
 | CI runners | `ubuntu-latest` and `windows-latest`, Python 3.12, stub agent CLIs that refuse to run. | QG-07-01, QG-08-02 |
 | Private archive | `braboj/tariff-runs`, each round's run root and readings. | QG-05-03, QG-06-03 |
+
+## Quality targets of the app under test
+
+- **Use:** the report's radar scores every build on ISO/IEC 25010:2023, each
+  axis the share of its targets met. These are the targets.
+- **Numbering:** characteristics in the standard's order, as the quality
+  requirements above; a sub-characteristic with no target is not listed, and
+  reads not measured in the report.
+- **Target:** a pass or a fail per build. "The judge reads it as 3 or better"
+  is the mean of the judge's three readings on its 1 to 5 scale.
+- **Fixed:** before round 6's first trial, for this app; a change is a new
+  registration.
+- **Read from:** the scorer's row, the probe, or the judge's row the target
+  reads; a build the reading did not reach is not measured, never a fail.
+
+### 01 Functional suitability
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-01-01 | Functional completeness | Every name the specification requires is exported. | Specified names missing |
+| QT-01-02 | Functional correctness | The hidden suite passes at 98 % or more. | Hidden-suite pass rate |
+| QT-01-03 | Functional appropriateness | Nothing nobody asked for is delivered. | Artifacts nobody asked for |
+
+### 02 Performance efficiency
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-02-01 | Resource utilisation | The invoice builder answers in 100 KB or less. | Invoice builder response size |
+| QT-02-02 | Resource utilisation | The invoice builder makes at most 3 subrequests. | Invoice builder subrequests |
+
+### 04 Interaction capability
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-04-01 | Operability | The HTML is valid. | HTML validity errors |
+| QT-04-02 | Inclusivity | No WCAG 2.1 AA violation. | Accessibility violations |
+
+### 05 Reliability
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-05-01 | Faultlessness | The build installs and boots. | Installs and boots |
+| QT-05-02 | Faultlessness | At most 10 type errors per KLOC under `mypy --strict`. | Type errors per KLOC |
+| QT-05-03 | Fault tolerance | A malformed request leaks no stack trace. | Probe `error_leakage` |
+
+### 06 Security
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-06-01 | Confidentiality | Passwords are hashed at rest. | Probe `password_at_rest` |
+| QT-06-02 | Confidentiality | Sign-in does not tell an account from a stranger. | Probe `account_enumeration` |
+| QT-06-03 | Confidentiality | No hard-coded secret key. | Probe `secret_key` |
+| QT-06-04 | Confidentiality | The session cookie carries its flags. | Probe `cookie_flags` |
+| QT-06-05 | Integrity | Sign-in refuses a post without a token. | Probe `sign_in_csrf` |
+| QT-06-06 | Integrity | A form refuses a post without a token. | CSRF refused without a token |
+| QT-06-07 | Integrity | No open redirect. | Probe `open_redirect` |
+| QT-06-08 | Integrity | No SQL assembled from strings. | Probe `sql_strings` |
+| QT-06-09 | Integrity | A stored payload renders inert. | Stored payload renders inert |
+| QT-06-10 | Resistance | Debug is off. | Probe `debug` |
+| QT-06-11 | Resistance | The security headers are set. | Probe `security_headers` |
+| QT-06-12 | Resistance | No vulnerable dependency. | Probe `vulnerable_dependencies` |
+| QT-06-13 | Resistance | No high or medium `bandit` finding. | Security findings, high and medium |
+| QT-06-14 | Resistance | The judge reads its security as 3 or better. | Judge, security |
+| QT-06-15 | Data protection | Personal data stays out of the log. | Probe `log_leak` |
+| QT-06-16 | Data protection | Erasure leaves no residue. | Probe `erasure_residue` |
+| QT-06-17 | Data protection | An export holds its own data only. | Probe `export_scope` |
+| QT-06-18 | Data protection | The judge reads its data protection as 3 or better. | Judge, data protection |
+
+### 07 Maintainability
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-07-01 | Modularity | No module `import tariff` loads reaches Flask or the database. | Layering violations |
+| QT-07-02 | Modularity | No two modules import each other. | Mutually importing module pairs |
+| QT-07-03 | Modularity | The judge reads its design as 3 or better. | Judge, design |
+| QT-07-04 | Modularity | The judge reads its single responsibility as 3 or better. | Judge, SRP |
+| QT-07-05 | Analysability | At most 100 lint findings per KLOC. | Lint findings per KLOC |
+| QT-07-06 | Analysability | The formatter would change no file. | Files the formatter would change |
+| QT-07-07 | Analysability | No function over cognitive complexity 15. | Functions over complexity 15 |
+| QT-07-08 | Analysability | Half the definitions carry a docstring. | Docstring coverage |
+| QT-07-09 | Analysability | The judge reads its readability as 3 or better. | Judge, readability |
+| QT-07-10 | Modifiability | No conditional ladder over rule kinds. | Conditional ladders over rule kinds |
+| QT-07-11 | Modifiability | No boolean parameter. | Boolean parameters |
+| QT-07-12 | Modifiability | At most 5 unused names per KLOC. | Unused names per KLOC |
+| QT-07-13 | Modifiability | The judge reads its maintainability as 3 or better. | Judge, maintainability |
+| QT-07-14 | Modifiability | The judge reads its openness to extension as 3 or better. | Judge, OCP |
+| QT-07-15 | Modifiability | The change task passes 90 % of its checks. | Change task, acceptance pass rate |
+| QT-07-16 | Modifiability | The change task keeps 98 % of the build suite. | Change task, build suite pass rate after it |
+| QT-07-17 | Testability | Its own tests pass. | The trial's own tests |
+| QT-07-18 | Testability | Its own tests cover 80 % of the lines. | Line coverage of the trial's own tests |
+| QT-07-19 | Testability | The judge reads its tests as 3 or better. | Judge, test quality |
+
+### 08 Flexibility
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-08-01 | Installability | `pip install .` succeeds in a clean environment. | Installs in a clean environment |

@@ -158,8 +158,30 @@ accessibility and form rows here.
 - **Off the radar:** cost, turns and tokens go to the cost line; code size
   stays a neutral row in the tables.
 
-## Open
+## First re-score, 2026-11-04
 
-| Item | Proposal |
-| ---- | -------- |
-| A first re-score | The current system on the new axes; the old chart read Tests high, Reliability and Economy low |
+Round 5c's 75 trials, re-scored in round 5d's root, read on the new axes
+with the targets and margins ADR-023 fixes. Each cell is the arm's mean
+share of targets met; a marker is a move past the margin against `none`.
+
+| Axis | `none` | `reference` | `skills` | `hybrid` | `inline` |
+| ---- | ------ | ----------- | -------- | -------- | -------- |
+| Functionality | 100 % | 97 % ● | 100 % ● | 100 % ● | 98 % ● |
+| Performance | 100 % | 100 % ● | 100 % ● | 100 % ● | 100 % ● |
+| Compatibility | not measured | not measured | not measured | not measured | not measured |
+| Usability | 50 % | 50 % ● | 50 % ● | 50 % ● | 50 % ● |
+| Reliability | 75 % | 65 % ● | 97 % ▲ +22 | 97 % ▲ +22 | 95 % ▲ +20 |
+| Security | 71 % | 81 % ▲ +10 | 83 % ▲ +12 | 82 % ▲ +11 | 83 % ▲ +12 |
+| Maintainability | 57 % | 66 % ● | 65 % ● | 70 % ▲ +13 | 70 % ▲ +13 |
+| Cost per run | $4.29 | $7.21, 1.7x | $9.30, 2.2x | $11.78, 2.7x | $14.18, 3.3x |
+
+- The old chart read Tests high and Reliability and Economy low; on the new
+  axes every file arm but `reference` lifts Reliability, every one lifts
+  Security, and the two long files lift Maintainability, at 2 to 3 times the
+  cost.
+- `reference`'s Reliability, 10 points under `none` from its two broken
+  builds, stays a dot: its interval reaches 5 points short of the margin.
+- Usability reads 50 % everywhere: every build is valid HTML and every build
+  has the same ten accessibility violations, so the axis has nothing to say
+  until its probes land (#119). Performance and Flexibility read 100 %
+  everywhere for the same reason, and Compatibility has no target yet.

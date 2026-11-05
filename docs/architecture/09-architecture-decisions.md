@@ -60,6 +60,7 @@ report shows first.
 | [ADR-003](../decisions/003-k-blocks-and-escalation.md) | A round fixes K before its first trial, 15 from round 5, and no run goes past it; the escalation of rounds registered at K = 3 retired with them | Accepted |
 | [ADR-013](../decisions/013-what-the-report-opens-with.md) | The report opens with the finding table, and keeps the score table only for contrasts between two files | Accepted |
 | [ADR-015](../decisions/015-contrasts-and-verdicts.md) | A contrast gets a verdict only when both its arms run in the same round | Accepted |
+| [ADR-023](../decisions/023-the-iso-radar.md) | From round 6 the radar reads ISO/IEC 25010:2023: eight axes, each the share of its targets met against `none`, a marker only past the axis's margin, the cost shown above | Accepted |
 
 ## 9.5 Running and keeping a round
 
