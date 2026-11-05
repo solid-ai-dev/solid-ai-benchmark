@@ -2938,14 +2938,38 @@ def simple_commands(command, keep_quotes=False):
     return found
 
 
+# The flags that turn a reading or fetching command into a writing one:
+# an edit in place, or a download to a file.
+WRITING_FLAGS = {"sed": ("-i", "--in-place"),
+                 "curl": ("-o", "-O", "--output", "--remote-name"),
+                 "wget": ("-O", "--output-document")}
+
+
 def first_writing_command(command):
     """The index of the first simple command that writes a file of the
-    trial's own, one that redirects into a file or copies, moves or creates
-    one; None where none does."""
+    trial's own, one that redirects into a file, copies, moves or creates
+    one, edits in place or downloads to a file; None where none does. A
+    program's own writes, a script's say, are not read."""
     for index, (word, text) in enumerate(simple_commands(command)):
-        if word in WRITE_COMMANDS or ">" in text:
+        flags = [token for token in words_of(text)[1:]
+                 if token.startswith("-")]
+        if word in WRITE_COMMANDS or ">" in text or any(
+                flag.split("=")[0] in WRITING_FLAGS.get(word, ())
+                or (word == "sed" and flag.startswith("-i"))
+                for flag in flags):
             return index
     return None
+
+
+def brace_expanded(token):
+    """The words a shell makes of a brace list, a{b,c} as ab and ac; the
+    token itself where it has none."""
+    match = re.search(r"\{([^{}]*,[^{}]*)\}", token)
+    if not match:
+        return [token]
+    head, tail = token[:match.start()], token[match.end():]
+    return [word for part in match.group(1).split(",")
+            for word in brace_expanded(head + part + tail)]
 
 
 def shell_writes(command):
@@ -2965,7 +2989,8 @@ def shell_reads(command, known=()):
     def noted(tokens, at):
         """Every template the tokens name, under the vendored copy or
         relative to the directory moved into, charged to command `at`."""
-        for token in tokens:
+        for token in itertools.chain.from_iterable(map(brace_expanded,
+                                                       tokens)):
             matched = TEMPLATE_OPERAND.findall(token)
 
             # A path with no vendored copy in it may be relative to the
@@ -3646,15 +3671,24 @@ def round5e_checks():
                            for _, template in reading["uses"])
                    and summary[0][3] == 1 and summary[0][5] == 0,
                    (reading, summary)))
-    checks.append(("a shell read of a template counts, and a redirection to "
-                   "the null device or into another stream is no write",
+    checks.append(("a shell read of a template counts, a redirection to "
+                   "the null device or into another stream is no write, an "
+                   "edit in place or a download is one, and a brace list "
+                   "expands",
                    (6, "templates/backend/http.md") in reading["uses"]
                    and not shell_writes("ls src 2>/dev/null")
                    and not shell_writes("pytest 2>&1 | tail")
                    and not shell_writes("Get-Content x.py > $null")
                    and shell_writes("echo x > x.py")
                    and shell_writes("cat a >> b.txt")
-                   and shell_writes("mkdir src"),
+                   and shell_writes("mkdir src")
+                   and shell_writes("sed -i 's/a/b/' app.py")
+                   and shell_writes("curl -o app.py https://x")
+                   and shell_writes("wget -O app.py https://x")
+                   and not shell_writes("sed -n 1p app.py")
+                   and not shell_writes("curl -s https://x")
+                   and read_names("cat %s/templates/{core,backend}/*.md" % into,
+                                  chain) == chain,
                    reading["uses"]))
     quality = "%s/templates/core/quality.md" % into
     checks.append(("quoted text is no shell operator, and a path a shell "
