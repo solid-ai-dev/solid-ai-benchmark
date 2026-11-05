@@ -2857,6 +2857,11 @@ NULL_REDIRECT = re.compile(
 QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
 
 
+# A backslash before a line break continues the command on the next line,
+# so the two lines are one command.
+CONTINUATION = re.compile(r"\\\r?\n")
+
+
 # A here-document's body is data, not commands, and is taken out whole;
 # the rest of its opening line, a redirection perhaps, stays.
 HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*)\n.*?\n\s*\3\s*(?=\n|$)",
@@ -3142,7 +3147,8 @@ def map_use(files, arm, templates=None, delegated=()):
     first_write = None
     by_subagent = 0
     for turn, name, given, from_subagent in calls:
-        command = str(given.get("command") or "").replace("\\", "/")
+        command = CONTINUATION.sub(" ", str(given.get("command") or "")
+                                   ).replace("\\", "/")
         found = []
         writes_at = None
 
@@ -3781,13 +3787,13 @@ def round5e_checks():
     with io.open(one_go, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(line("assistant", "g1", call("Bash", command=heredoc)))
         handle.write(line("assistant", "g2", call(
-            "Bash", command="cat %s/%s %s/%s && mkdir -p src && cat %s/%s"
+            "Bash", command="cat %s/%s \\\n  %s/%s && mkdir -p src && cat %s/%s"
             % (into, chain[0], into, chain[1], into, chain[2]))))
     in_one_go = map_use([one_go], "lazyref", chain)
     shutil.rmtree(scratch, ignore_errors=True)
     checks.append(("a read before the writing command of one shell call "
-                   "comes before the write, and a here-document body is "
-                   "no command",
+                   "comes before the write, a here-document body is no "
+                   "command, and a backslash continues a line",
                    in_one_go["first_write"] == 2
                    and in_one_go["before_write"] == sorted(chain[:2])
                    and len(in_one_go["uses"]) == 3
