@@ -2944,12 +2944,61 @@ WRITING_FLAGS = {"sed": ("-i", "--in-place"),
                  "curl": ("-o", "-O", "--output", "--remote-name"),
                  "wget": ("-O", "--output-document")}
 
+# A program run with its code in the command, as a quoted argument or a
+# here-document, writes where the code does: a shell's code is read as a
+# shell command of its own, an interpreter's for a call that opens a file
+# to write. A script run from a file of the trial's own is not read: the
+# trial wrote that file first, and that write was counted.
+SHELL_PROGRAMS = ("bash", "sh", "zsh", "pwsh", "powershell", "cmd")
+INTERPRETERS = ("python", "python3", "py", "node", "ruby", "perl")
+WRITING_CODE = re.compile(
+    r"write_text\(|write_bytes\(|open\([^)]*,\s*['\"][wax]"
+    r"|open\([^)]*mode\s*=\s*['\"][wax]|writeFile|appendFile"
+    r"|createWriteStream|File\.(write|open\([^)]*['\"][wa])"
+    r"|set-content|out-file|add-content", re.IGNORECASE)
+
+
+def heredoc_bodies(command):
+    """Each here-document of a shell command, as (its delimiter, its
+    body)."""
+    return [(match.group(3), match.group(0)[len(match.group(1)):])
+            for match in HEREDOC.finditer(command)]
+
+
+def program_code(text, bodies):
+    """The code a program run carries: its quoted arguments, and the body
+    of a here-document the run reads."""
+    code = QUOTED.findall(text)
+    code.extend(body for delimiter, body in bodies
+                if "<<" in text and delimiter in text)
+    return "\n".join(code)
+
+
+def unquoted(piece):
+    """A quoted argument without its outer quotes, one pair only."""
+    if len(piece) >= 2 and piece[0] == piece[-1] and piece[0] in "'\"":
+        return piece[1:-1]
+    return piece
+
+
+def program_writes(word, text, bodies):
+    """Whether a program run writes a file in the code it carries."""
+    code = program_code(text, bodies)
+    if not code:
+        return False
+    if word in SHELL_PROGRAMS:
+        return any(first_writing_command(unquoted(piece)) is not None
+                   for piece in code.split("\n"))
+    return WRITING_CODE.search(code) is not None
+
 
 def first_writing_command(command):
     """The index of the first simple command that writes a file of the
     trial's own, one that redirects into a file, copies, moves or creates
-    one, edits in place or downloads to a file; None where none does. A
-    program's own writes, a script's say, are not read."""
+    one, edits in place or downloads to a file, or runs code that does;
+    None where none does."""
+    bodies = heredoc_bodies(command)
+    kept = simple_commands(command, keep_quotes=True)
     for index, (word, text) in enumerate(simple_commands(command)):
         flags = [token for token in words_of(text)[1:]
                  if token.startswith("-")]
@@ -2957,6 +3006,9 @@ def first_writing_command(command):
                 flag.split("=")[0] in WRITING_FLAGS.get(word, ())
                 or (word == "sed" and flag.startswith("-i"))
                 for flag in flags):
+            return index
+        if word in SHELL_PROGRAMS + INTERPRETERS and program_writes(
+                word, kept[index][1], bodies):
             return index
     return None
 
@@ -2985,10 +3037,16 @@ def shell_reads(command, known=()):
     found = []
     directory = ""
     commands = simple_commands(command, keep_quotes=True)
+    writing = first_writing_command(command)
 
     def noted(tokens, at):
+        """Every template the tokens name, charged to command `at`."""
+        found.extend((at, template) for template in named(tokens))
+
+    def named(tokens):
         """Every template the tokens name, under the vendored copy or
-        relative to the directory moved into, charged to command `at`."""
+        relative to the directory moved into, in order."""
+        templates = []
         for token in itertools.chain.from_iterable(map(brace_expanded,
                                                        tokens)):
             matched = TEMPLATE_OPERAND.findall(token)
@@ -3000,10 +3058,11 @@ def shell_reads(command, known=()):
                     posixpath.join(directory, token.strip("'\""))))
             for operand in matched:
                 if any(mark in operand for mark in "*?["):
-                    found.extend((at, template) for template in known
-                                 if glob_matches(operand, template))
+                    templates.extend(template for template in known
+                                     if glob_matches(operand, template))
                 elif operand.endswith(".md"):
-                    found.append((at, operand))
+                    templates.append(operand)
+        return templates
     for index, (word, text) in enumerate(commands):
         words = [token for token in words_of(text)
                  if not ASSIGNMENT.match(token)
@@ -3018,17 +3077,31 @@ def shell_reads(command, known=()):
 
         # A loop's files are read by the command of its body, up to `done`,
         # that reads its variable, and are charged to that command; a body
-        # that only names them, or reads something else, reads none.
+        # that only names them, or reads something else, reads none. A body
+        # that also writes has written by its second iteration, so only the
+        # first file's read is charged to the reading command: the rest are
+        # charged to the loop's end, after the write.
         if word == "for":
-            variable = re.compile(r"\$\{?%s\b" % re.escape(words[0])) if words else None
+            variable = (re.compile(r"\$\{?%s\b" % re.escape(words[0]))
+                        if words else None)
             files = words[words.index("in") + 1:] if "in" in words else []
-            for at, (verb, body) in enumerate(commands[index + 1:],
+            end = next((at for at, (verb, _) in enumerate(
+                commands[index + 1:], index + 1) if verb == "done"),
+                len(commands))
+            body_writes = writing is not None and index < writing < end
+            for at, (verb, body) in enumerate(commands[index + 1:end],
                                               index + 1):
-                if verb == "done":
-                    break
                 if verb in READ_COMMANDS and variable \
                         and variable.search(body):
-                    noted(files, at)
+                    templates = named(files)
+                    if body_writes:
+                        found.extend((at, template)
+                                     for template in templates[:1])
+                        found.extend((end, template)
+                                     for template in templates[1:])
+                    else:
+                        found.extend((at, template)
+                                     for template in templates)
             continue
         if word not in READ_COMMANDS:
             continue
@@ -3937,7 +4010,8 @@ def round5e_checks():
                                   'README.md; done' % into, chain) == []
                    and shell_reads('for f in %s/templates/*/*.md; do echo s > '
                                    'n.txt; cat "${f}"; done' % into, chain)
-                   == [(2, template) for template in chain]
+                   == [(2, chain[0])] + [(3, template)
+                                         for template in chain[1:]]
                    and first_writing_command(
                        'for f in x; do echo s > n.txt; cat "$f"; done') == 1
                    and read_names("Select-String -Path %s -Pattern TODO"
@@ -3951,6 +4025,50 @@ def round5e_checks():
                    and read_names("if test -f x; then cat %s; fi" % quality)
                    == ["templates/core/quality.md"],
                    in_a_row))
+    checks.append(("a loop whose body writes reads its first file before "
+                   "the write and the rest after it",
+                   shell_reads('for f in %s/templates/*/*.md; do cat "$f"; '
+                               'echo done >> notes.txt; done' % into, chain)
+                   == [(1, chain[0])] + [(3, template)
+                                         for template in chain[1:]]
+                   and shell_reads('for f in %s/templates/*/*.md; do cat '
+                                   '"$f" >> all.md; done' % into, chain)
+                   == [(1, chain[0])] + [(2, template)
+                                         for template in chain[1:]]
+                   and shell_reads('echo s > n.txt; for f in %s/templates/'
+                                   '*/*.md; do cat "$f"; done' % into, chain)
+                   == [(2, template) for template in chain]
+                   and shell_reads('for f in %s/templates/*/*.md; do cat '
+                                   '"$f"; done; echo s > n.txt' % into, chain)
+                   == [(1, template) for template in chain],
+                   shell_reads('for f in %s/templates/*/*.md; do cat "$f"; '
+                               'echo done >> notes.txt; done' % into,
+                               chain)))
+    checks.append(("a program run writes where the code it carries does, "
+                   "and a script run from a file is no write of its own",
+                   shell_writes("python -c \"open('x.py', 'w').write('a')\"")
+                   and shell_writes("python3 -c 'from pathlib import Path; "
+                                    "Path(\"x\").write_text(\"a\")'")
+                   and shell_writes("py - <<'EOF'\nimport json\n"
+                                    "with open('x.json', mode='w') as f:\n"
+                                    "    json.dump({}, f)\nEOF")
+                   and shell_writes("node -e \"require('fs').writeFileSync("
+                                    "'x.js', 'a')\"")
+                   and shell_writes("bash -c 'echo a > x.txt'")
+                   and shell_writes("pwsh -Command 'Set-Content x.txt a'")
+                   and shell_writes("bash <<'EOF'\nmkdir src\nEOF")
+                   and not shell_writes(
+                       "python -c 'print(open(\"x\").read())'")
+                   and not shell_writes("python -c 'print(1 > 0)'")
+                   and not shell_writes("bash -c 'echo \"a > b\"'")
+                   and not shell_writes("python build.py")
+                   and not shell_writes("py -m pytest -q")
+                   and not shell_writes("node x.js")
+                   and not shell_writes(
+                       "cat <<'EOF'\nopen(\"x\", \"w\")\nEOF")
+                   and first_writing_command(
+                       "cat %s; python -c \"open('x', 'w')\"" % quality) == 1,
+                   None))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
     checks.append(("a map no trial read is said to be ignored, not read on "
