@@ -239,7 +239,9 @@ sequence.
 
 **Task success** is the hidden suite's pass rate. The suite lives in a
 private repository and is cloned only at scoring time, never into a
-workspace (FR-09-01). It covers:
+workspace (FR-09-01), at its newest revision or at the one the scoring
+names, so a root begun at one revision is finished at it (FR-09-10). It
+covers:
 
 - the Python API: rule precedence, stacking, tier boundaries, rounding to
   the cent, jurisdiction tables, invalid rules refused
