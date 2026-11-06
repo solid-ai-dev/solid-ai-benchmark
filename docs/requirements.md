@@ -136,6 +136,7 @@
 | FR-09-07 | The benchmark shall count every edited and new file as change-task churn, and nothing in an environment. | Scorer |
 | FR-09-08 | The benchmark shall state in the change prompt everything the grader drives. | Harness |
 | FR-09-09 | The benchmark shall have the change-task acceptance modules written before any change-task run. | Owner |
+| FR-09-10 | The benchmark shall grade at the hidden suite's newest revision, or at the one named for the scoring, so a root begun at one revision is finished at it. | Scorer |
 
 ### 10 The judge
 

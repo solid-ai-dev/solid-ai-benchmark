@@ -477,8 +477,9 @@ def test_paths(workspace):
     return found
 
 
-def clone_suite(where):
-    """Clone the hidden suite at scoring time, never into the workspace.
+def clone_suite(where, revision=None):
+    """Clone the hidden suite at scoring time, never into the workspace, at
+    its newest revision or at the one named.
 
     Returns the checkout and its revision. The revision goes into the report
     and into the suite's own result, so a score states which grader produced
@@ -491,8 +492,35 @@ def clone_suite(where):
     if outcome["failed"] or outcome["status"] != 0:
         raise ScoreError("the hidden suite could not be cloned: %s"
                          % (outcome["stderr"] or outcome["stdout"])[:400])
-    revision = run(["git", "-C", where, "rev-parse", "HEAD"], timeout=120)
-    return {"path": where, "revision": revision["stdout"].strip()}
+    if revision:
+        checkout_revision(where, revision)
+    return {"path": where, "revision": head_of(where)}
+
+
+def checkout_revision(checkout, revision):
+    """Check a shallow clone out at `revision`, fetched by itself.
+
+    A root is finished at the suite revision it was begun at: a trial scored
+    later, after the suite moved on, is graded at the earlier revision by
+    name rather than left unscored or graded by another suite.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ScoreError("the hidden suite's revision %s is not a full "
+                         "commit hash, which is what a score records"
+                         % revision)
+    for argv in (["fetch", "--quiet", "--depth", "1", "origin", revision],
+                 ["checkout", "--quiet", "--detach", revision]):
+        outcome = run(["git", "-C", checkout] + argv, timeout=600)
+        if outcome["failed"] or outcome["status"] != 0:
+            raise ScoreError("the hidden suite has no revision %s: %s"
+                             % (revision,
+                                (outcome["stderr"] or outcome["stdout"])[:400]))
+
+
+def head_of(checkout):
+    """The commit a checkout is at."""
+    return run(["git", "-C", checkout, "rev-parse", "HEAD"],
+               timeout=120)["stdout"].strip()
 
 
 def run_hidden_suite(venv, suite, workspace, which):
@@ -1819,6 +1847,54 @@ def coverage_checks(scratch):
     ]
 
 
+def revision_checks(scratch):
+    """A clone is checked out at the revision asked for, fetched by itself
+    into the shallow clone, and a revision the suite has not is refused."""
+    source = os.path.join(scratch, "suite-source")
+    os.makedirs(source)
+
+    def git(*argv):
+        return run(["git", "-C", source] + list(argv), timeout=120)
+    git("init", "--quiet", "--initial-branch=main")
+    git("config", "user.email", "self-test@example.invalid")
+    git("config", "user.name", "self-test")
+    git("config", "uploadpack.allowReachableSHA1InWant", "true")
+    revisions = []
+    for word in ("first", "second"):
+        with io.open(os.path.join(source, "suite.txt"), "w",
+                     encoding="utf-8") as handle:
+            handle.write(word + "\n")
+        git("add", "suite.txt")
+        git("commit", "--quiet", "-m", word)
+        revisions.append(head_of(source))
+    clone = os.path.join(scratch, "suite-clone")
+    run(["git", "clone", "--quiet", "--depth", "1",
+         "file:///" + source.replace("\\", "/").lstrip("/"), clone],
+        timeout=120)
+    newest = head_of(clone)
+    checkout_revision(clone, revisions[0])
+    with io.open(os.path.join(clone, "suite.txt"), encoding="utf-8") as handle:
+        content = handle.read().strip()
+    try:
+        checkout_revision(clone, "0" * 40)
+        refused = None
+    except ScoreError as error:
+        refused = str(error)
+    try:
+        checkout_revision(clone, revisions[0][:7])
+        short = None
+    except ScoreError as error:
+        short = str(error)
+    return [("a shallow clone starts at the newest revision",
+             newest == revisions[1]),
+            ("the suite is checked out at the revision asked for",
+             head_of(clone) == revisions[0] and content == "first"),
+            ("a revision the suite has not is refused",
+             refused is not None and "has no revision" in refused),
+            ("a short hash is refused, since the scores record the full one",
+             short is not None and "full commit hash" in short)]
+
+
 def scope_checks(scratch):
     """Size splits a tree's tracked files into app code, test code and
     generated files, and leaves docs and configuration out."""
@@ -1992,7 +2068,7 @@ def self_test():
               + coverage_checks(scratch) + ruler_checks(scratch)
               + adherence_checks(scratch)
               + python_files_checks(scratch)
-              + scope_checks(scratch))
+              + scope_checks(scratch) + revision_checks(scratch))
     dropped = create_venv(os.path.join(scratch, "dropped"))
     drop_venv(dropped)
     checks.append(("a scored trial's environment is dropped",
@@ -2108,6 +2184,10 @@ def parse_args(argv):
     parser.add_argument("--no-web", dest="web", action="store_false",
                         help="skip the web-quality probes, which need a "
                              "browser and a Java runtime")
+    parser.add_argument("--suite-revision", metavar="COMMIT",
+                        help="grade at this commit of the hidden suite, its "
+                             "full hash, rather than at its newest; a root "
+                             "begun at one revision is finished at it")
     parser.add_argument("--self-test", action="store_true",
                         help="prove the missing-vs-zero rule fires; score "
                              "nothing")
@@ -2162,7 +2242,8 @@ def score_trials(options):
             raise ScoreError("no %s trial in the run records ended %s"
                              % (options.task, " or ".join(SCORABLE)))
         suite = clone_suite(os.path.join(scoring_area(options.root),
-                                         "hidden-suite"))
+                                         "hidden-suite"),
+                            options.suite_revision)
     except (ScoreError, TrialError) as error:
         print("refused: %s" % error)
         lib.print_verdict(False, "0 scored, 1 refused")

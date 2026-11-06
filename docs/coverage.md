@@ -130,6 +130,7 @@ when:
 | FR-09-07 | Self-test | `score.py` "churn counts an edit and a new file, not an environment"<br>`score.py` "the churn plant landed" |
 | FR-09-08 | Self-test | `harness.py` "the change prompt names the API and fields the grader drives"<br>`harness.py` "the change prompt is read whole from its file" |
 | FR-09-09 | Untestable | An order of work; the round's registration fixes it. |
+| FR-09-10 | Self-test | `score.py` "a shallow clone starts at the newest revision"<br>`score.py` "the suite is checked out at the revision asked for"<br>`score.py` "a revision the suite has not is refused"<br>`score.py` "a short hash is refused, since the scores record the full one" |
 
 ## 10 The judge
 
