@@ -2944,6 +2944,31 @@ WRITING_FLAGS = {"sed": ("-i", "--in-place"),
                  "curl": ("-o", "-O", "--output", "--remote-name"),
                  "wget": ("-O", "--output-document")}
 
+# The null device as a download's destination: no file is written.
+NULL_DEVICE = re.compile(r"^(/dev/null|\$null|NUL)$", re.IGNORECASE)
+
+
+def writes_by_flag(word, tokens):
+    """Whether a reading or fetching command's flags make it a writing
+    one: an edit in place, or a download to a file rather than to the
+    null device. The flag's value is attached with `=` or is the next
+    token."""
+    names = WRITING_FLAGS.get(word, ())
+    for at, token in enumerate(tokens):
+        if not token.startswith("-"):
+            continue
+        if word == "sed" and token.startswith("-i"):
+            return True
+        name, _, value = token.partition("=")
+        if name not in names:
+            continue
+        if not value and at + 1 < len(tokens) \
+                and not tokens[at + 1].startswith("-"):
+            value = tokens[at + 1]
+        if not NULL_DEVICE.match(unquoted(value)):
+            return True
+    return False
+
 # A program run with its code in the command, as a quoted argument or a
 # here-document, writes where the code does: a shell's code is read as a
 # shell command of its own, an interpreter's for a call that opens a file
@@ -3000,12 +3025,8 @@ def first_writing_command(command):
     bodies = heredoc_bodies(command)
     kept = simple_commands(command, keep_quotes=True)
     for index, (word, text) in enumerate(simple_commands(command)):
-        flags = [token for token in words_of(text)[1:]
-                 if token.startswith("-")]
-        if word in WRITE_COMMANDS or ">" in text or any(
-                flag.split("=")[0] in WRITING_FLAGS.get(word, ())
-                or (word == "sed" and flag.startswith("-i"))
-                for flag in flags):
+        if word in WRITE_COMMANDS or ">" in text or writes_by_flag(
+                word, words_of(kept[index][1])[1:]):
             return index
         if word in SHELL_PROGRAMS + INTERPRETERS and program_writes(
                 word, kept[index][1], bodies):
@@ -3037,6 +3058,7 @@ def shell_reads(command, known=()):
     found = []
     directory = ""
     commands = simple_commands(command, keep_quotes=True)
+    bodies = heredoc_bodies(command)
     writing = first_writing_command(command)
 
     def noted(tokens, at):
@@ -3103,21 +3125,43 @@ def shell_reads(command, known=()):
                         found.extend((at, template)
                                      for template in templates)
             continue
+
+        # A shell run with its code in the command reads where the code
+        # does, and those reads are this one command's.
+        if word in SHELL_PROGRAMS:
+            for piece in program_code(text, bodies).split("\n"):
+                found.extend((index, template) for _, template
+                             in shell_reads(unquoted(piece), known))
+            continue
         if word not in READ_COMMANDS:
             continue
 
         # A search's or a script's first operand is what to look for, not
         # a file it reads, unless a flag names it, so it is left out of the
-        # files.
+        # files. A flag carries the pattern in itself, as --regexp=TODO,
+        # -pattern:TODO or -eTODO, or in the token after it.
         if word in PATTERN_FIRST and operands:
             flagged = next((at for at, token in enumerate(words[:-1])
                             if token.lower() in PATTERN_FLAGS), None)
-            if flagged is None:
-                words.remove(operands[0])
-            else:
+            if flagged is not None:
                 words.pop(flagged + 1)
+            elif not any(map(pattern_attached, words)):
+                words.remove(operands[0])
         noted(words, index)
     return found
+
+
+def pattern_attached(token):
+    """Whether a flag carries a search's pattern in itself: --regexp=TODO,
+    -pattern:TODO or -eTODO."""
+    lower = token.lower()
+    for flag in PATTERN_FLAGS:
+        if lower.startswith(flag + "=") or lower.startswith(flag + ":"):
+            return True
+        if len(flag) == 2 and len(lower) > 2 and lower.startswith(flag) \
+                and not lower.startswith("--"):
+            return True
+    return False
 
 
 def mapped_templates(arm):
@@ -4068,6 +4112,38 @@ def round5e_checks():
                        "cat <<'EOF'\nopen(\"x\", \"w\")\nEOF")
                    and first_writing_command(
                        "cat %s; python -c \"open('x', 'w')\"" % quality) == 1,
+                   None))
+    checks.append(("a download to the null device is no write, an inline "
+                   "shell's reads are the command's, and a flag carries a "
+                   "search's pattern in itself",
+                   not shell_writes("curl -s -o /dev/null https://x")
+                   and not shell_writes("curl -s --output=/dev/null https://x")
+                   and not shell_writes("curl -s -o NUL https://x")
+                   and not shell_writes('curl -s -o "/dev/null" https://x')
+                   and not shell_writes("wget -O $null https://x")
+                   and shell_writes("curl -s -o out.html https://x")
+                   and shell_writes("curl -O https://x/app.py")
+                   and shell_writes("wget -O app.py https://x")
+                   and shell_reads('bash -c "cat %s/templates/*/*.md"' % into,
+                                   chain) == [(0, template) for template in chain]
+                   and shell_reads("pwsh -Command 'Get-Content %s'" % quality,
+                                   chain) == [(0, "templates/core/quality.md")]
+                   and shell_reads("bash <<'EOF'\ncat %s\nEOF" % quality,
+                                   chain) == [(0, "templates/core/quality.md")]
+                   and shell_reads("ls; sh -c 'cat %s'" % quality, chain)
+                   == [(1, "templates/core/quality.md")]
+                   and first_writing_command(
+                       "bash -c 'cat %s; echo a > b'" % quality) == 0
+                   and read_names("rg --regexp=TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("grep -eTODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("Select-String -Pattern:TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("grep --extended-regexp TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("grep -n TODO %s" % quality)
+                   == ["templates/core/quality.md"],
                    None))
     ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
         "uses": [], "first_write": 2, "by_subagent": 0}})
