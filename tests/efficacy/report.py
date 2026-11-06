@@ -3437,7 +3437,11 @@ def map_use_lines(trials, uses):
              "From each trial's transcript: the templates it read from the "
              "vendored copy or loaded as skills, counted once each, the "
              "turn the first happened at, and how many came before the "
-             "trial's first write to a file of its own.", "",
+             "trial's first write to a file of its own. A shell call is "
+             "read from its text, one simple command at a time, so the "
+             "counts approximate what a shell did: a read or a write its "
+             "text does not show, inside a program it ran say, is not "
+             "seen.", "",
              "| Arm | Trials | Templates in the map | Read or loaded, mean "
              "| Before the first write, mean | First at turn, median "
              "| Read all before writing |",

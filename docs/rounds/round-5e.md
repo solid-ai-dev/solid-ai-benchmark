@@ -153,10 +153,13 @@ round-6 screen of 13d.9, which round 5e's arms join as candidates.
   template it matches) or loaded (`lazyskills`, a skill call naming one of the
   arm's skills), which ones, the turn each happened at, and how many happened
   before the trial's first write to a file of its own: a write tool's call, or a
-  shell command that redirects into a file, copies, moves or creates. A trial
-  that never wrote says nothing about reading up front, a map no trial read was
-  ignored rather than read on demand, and the note beside H7 says which case
-  holds.
+  shell command that redirects into a file, copies, moves or creates. A shell
+  call is read from its text, one simple command at a time, so the counts
+  approximate what a shell did: a read or a write its text does not show,
+  inside a program it ran say, is not seen, and an inline shell's reads and
+  writes are the one command's. A trial that never wrote says nothing about
+  reading up front, a map no trial read was ignored rather than read on demand,
+  and the note beside H7 says which case holds.
 
 ### 13e.5 Before the first trial
 
