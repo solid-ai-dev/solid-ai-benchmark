@@ -230,18 +230,48 @@ def plain_scoring(argv):
             and not options.trial and not options.run)
 
 
+def in_hand(area, scores, readings):
+    """What the live scorer is working on, as (phase, when it changed, trial
+    name): the trial being scored or the one being read for security, or
+    None between the two.
+
+    The scorer scores each trial and then reads the scored ones for
+    security. Whichever of the two directories changed last holds the trial
+    in hand, so a refused trial's directory, left without a result, does not
+    hide the readings that follow it.
+    """
+    scoring = in_progress(os.path.join(area, "scoring"), scores)
+    reading = in_progress(os.path.join(area, "security"), readings)
+    if scoring and (not reading or scoring > reading):
+        return ("scoring",) + scoring
+    if reading:
+        return ("security",) + reading
+    return None
+
+
 def scoring_lines(root, arms, k, alive=live_scorer):
     """The scoring's lines: one bar per arm of trials scored, with their
-    security readings, and the trial being scored; none before scoring
-    starts."""
+    security readings, and the trial in hand on its arm's line; none before
+    scoring starts."""
     area = scoring_area(root)
     if not os.path.isdir(area):
         return []
     scores = names_in(os.path.join(area, "scores"))
     readings = names_in(os.path.join(area, "security-scores"))
+    claim = read_claim(claim_path(area, "score.py"))
+    live = bool(claim and alive(claim))
+    hand = in_hand(area, scores, readings) if live else None
+    if hand:
+        phase, changed, trial = hand
+        minutes = (time.time() - changed) // 60
+        if phase == "scoring":
+            working = "  scoring %s, %d min" % (trial, minutes)
+        else:
+            working = "  reading %s for security, %d min" % (trial, minutes)
     lines = ["", "Scored"]
     total = len(arms) * k
     done = 0
+    named = False
     for name in arms:
         scored = len(blocks_of(scores, name))
         read = len(blocks_of(readings, name))
@@ -249,24 +279,20 @@ def scoring_lines(root, arms, k, alive=live_scorer):
         line = "%-10s %s %2d/%d" % (name, bar(scored, k), scored, k)
         if read:
             line += "  %d read for security" % read
+
+        # The trial in hand sits on its arm's line, as the run's running trial
+        # does, with the minutes since its directory last changed.
+        if hand and arm_of(trial) == name:
+            line += working
+            named = True
         lines.append(line)
     summary = "%-10s %s %2d/%d" % ("all", bar(done, total), done, total)
 
-    # The scorer marks the area while it runs, scores each trial and then
-    # reads the scored ones for security. Whichever of the two changed last is
-    # the one in hand, so a refused trial's directory, left without a result,
-    # does not hide the readings that follow it.
-    claim = read_claim(claim_path(area, "score.py"))
-    if claim and alive(claim):
-        scoring = in_progress(os.path.join(area, "scoring"), scores)
-        reading = in_progress(os.path.join(area, "security"), readings)
-        phase = None
-        if scoring and (not reading or scoring > reading):
-            phase = "scoring"
-            summary += "  scoring %s" % scoring[1]
-        elif reading:
-            phase = "security"
-            summary += "  reading %s for security" % reading[1]
+    # A trial of an arm the records do not name has no line of its own, so
+    # the summary names it.
+    if hand and not named:
+        summary += working
+    if live:
         try:
             begun = datetime.datetime.fromisoformat(claim["started"])
         except (KeyError, TypeError, ValueError):
@@ -286,7 +312,8 @@ def scoring_lines(root, arms, k, alive=live_scorer):
                         if written >= begun.timestamp())
             elapsed = time.time() - begun.timestamp()
             summary += "  %.1f h in" % (elapsed / 3600)
-            if fresh and plain and phase == "scoring" and done < total:
+            if (fresh and plain and hand and hand[0] == "scoring"
+                    and done < total):
                 left = elapsed / fresh * (total - done)
                 summary += ", about %.1f h of scoring left" % (left / 3600)
     lines.extend(["", summary])
@@ -411,6 +438,10 @@ def self_test():
     # security readings are left, and they have no estimate.
     all_scored = scoring_lines(scratch, ("none",), 1, alive=lambda claim: True)
 
+    # The trial in hand belongs to an arm the records do not name.
+    dated(os.path.join(area, "scoring", "hybrid-1"), 58, folder=True)
+    one_arm = scoring_lines(scratch, ("none",), 1, alive=lambda claim: True)
+
     # A rescore keeps the scores it has not replaced, so what is left of it
     # cannot be told from the area.
     with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
@@ -458,15 +489,20 @@ def self_test():
         ("an arm's security readings are counted beside it",
          "1 read for security" in scored.get("none", "")
          and "read for security" not in scored.get("inline", "")),
-        ("the trial being scored is named, not one already scored",
-         "scoring hybrid-1" in scored.get("all", "")),
+        ("the trial being scored is named on its arm's line, with its minutes",
+         "scoring hybrid-1, 20 min" in scored.get("hybrid", "")
+         and "  scoring " not in scored.get("all", "")),
         ("the scorer's tools are never named as the trial in hand",
          not any("tools" in line for line in live + rescoring + securing)),
         ("a trial being rescored is named while its old score stays",
-         any("scoring none-1" in line for line in rescoring)),
+         any(line.startswith("none") and "scoring none-1" in line
+             for line in rescoring)),
         ("a refused trial's directory does not hide the security reading",
-         any("reading inline-1 for security" in line for line in securing)
+         any(line.startswith("inline") and "reading inline-1 for security, 3 min"
+             in line for line in securing)
          and not any("  scoring " in line for line in securing)),
+        ("a trial of an arm with no line is named on the scoring's line",
+         "scoring hybrid-1" in one_arm[-1]),
         ("the security pass shows no scoring estimate, bar short or not",
          not any("left" in line for line in securing)),
         ("a rescore shows its time in and no time left",
@@ -483,7 +519,8 @@ def self_test():
                                    ["--run", "run-1.json"],
                                    ["--task", "change"], ["--bogus"]))),
         ("the scoring's line counts every arm and estimates what is left",
-         " 3/75" in scored.get("all", "") and "h of scoring left" in scored.get("all", "")),
+         " 3/75" in scored.get("all", "")
+         and "h of scoring left" in scored.get("all", "")),
         ("a scorer that has ended names no trial and no pace",
          not any("scoring " in line or " h in" in line for line in stale)),
     ]
