@@ -802,19 +802,32 @@ def unpaired_note(results):
                       for label in unpaired]))
 
 
+# The install rate's interval is not a bootstrap: a share of 1.0 in both
+# arms resamples to the same zero every time. Newcombe's score interval
+# (1998, method 10) gives it a width from the Wilson interval of each share.
+RELIABILITY_METHOD = (
+    "The install rate's interval is Newcombe's score interval instead, "
+    "from the Wilson interval of each arm's share: over the blocks' "
+    "agreement where the contrast is paired, from the two shares on their "
+    "own where it is not.")
+
+
 def interval_method(results, k):
-    """How the intervals were made, in a sentence or two: paired within a
+    """How the intervals were made, in a few sentences: paired within a
     block, and unpaired for the contrasts whose arms ran in different
-    rounds, each named. At a K too small to decide anything, the paired
-    sentence gives way to the descriptive note, so only the unpaired one
-    is given."""
-    if k < FEWEST_DECIDING:
-        return unpaired_note(results)
-    text = ("Each interval below is a 95 %% bootstrap interval over the "
-            "paired differences of its contrast, one per block that "
-            "measured both arms: K = %d at most, and a cell that had fewer "
-            "names its count." % k)
-    return " ".join(part for part in (text, unpaired_note(results)) if part)
+    rounds, each named; the install rate's score interval apart. At a K
+    too small to decide anything, the paired sentence gives way to the
+    descriptive note, so only the other two are given."""
+    parts = []
+    if k >= FEWEST_DECIDING:
+        parts.append("Each interval below is a 95 %% bootstrap interval over "
+                     "the paired differences of its contrast, one per block "
+                     "that measured both arms: K = %d at most, and a cell "
+                     "that had fewer names its count." % k)
+    parts.append(unpaired_note(results))
+    if "reliability" in results:
+        parts.append(RELIABILITY_METHOD)
+    return " ".join(part for part in parts if part)
 
 
 def method_lines(results, k):
@@ -7383,7 +7396,11 @@ def iso_checks(seed):
                    and "hybrid − none, are unpaired" in interval_method(
                        across, FEWEST_DECIDING)
                    and interval_method(results, FEWEST_DECIDING).endswith(
-                       "names its count."),
+                       "names its count.")
+                   and "Newcombe's score interval" in interval_method(
+                       {"reliability": {}}, FEWEST_DECIDING)
+                   and "Newcombe" not in interval_method(results,
+                                                         FEWEST_DECIDING),
                    interval_method(across, FEWEST_DECIDING)))
 
     # A withdrawn metric's target drops out of the radar and its tables, as
