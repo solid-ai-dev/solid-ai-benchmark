@@ -825,7 +825,13 @@ def interval_method(results, k):
                      "that measured both arms: K = %d at most, and a cell "
                      "that had fewer names its count." % k)
     parts.append(unpaired_note(results))
-    if "reliability" in results:
+
+    # Read from the intervals themselves: a round before 5d bootstrapped the
+    # install rate like any other row, and its report says so by silence.
+    if any(str((contrast.get("interval") or {}).get("method", ""))
+           .startswith("Newcombe")
+           for contrast in results.get("reliability", {}).values()
+           if isinstance(contrast, dict)):
         parts.append(RELIABILITY_METHOD)
     return " ".join(part for part in parts if part)
 
@@ -7398,9 +7404,13 @@ def iso_checks(seed):
                    and interval_method(results, FEWEST_DECIDING).endswith(
                        "names its count.")
                    and "Newcombe's score interval" in interval_method(
-                       {"reliability": {}}, FEWEST_DECIDING)
-                   and "Newcombe" not in interval_method(results,
-                                                         FEWEST_DECIDING),
+                       {"reliability": {"hybrid-none": {
+                           "interval": newcombe_paired([(1.0, 1.0)] * 6)}}},
+                       FEWEST_DECIDING)
+                   and "Newcombe" not in interval_method(
+                       {"reliability": {"hybrid-none": {"interval": {
+                           "method": "BCa, 2000 resamples, 95%"}}}},
+                       FEWEST_DECIDING),
                    interval_method(across, FEWEST_DECIDING)))
 
     # A withdrawn metric's target drops out of the radar and its tables, as
