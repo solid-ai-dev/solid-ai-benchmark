@@ -1629,6 +1629,18 @@ def reach_section(root, scans=None):
     return lines
 
 
+def void_row(entry):
+    """One voided trial's table row. The reason is the harness's error text,
+    a URL or a pipe in it perhaps, so it is shown as code, which Markdown
+    leaves as it is."""
+    reason = " ".join((entry["reason"] or "—").split())
+    reason = reason.replace("|", "/").replace("`", "'")[:160]
+    return ("| %s | %s | `%s` | %s | %s |"
+            % (entry["name"], entry["started_at"] or "—", reason,
+               "`%s`" % entry["kept"] if entry["kept"] else "not moved",
+               entry["rerun"] or "not re-run"))
+
+
 def lost_trials(root):
     """Every trial the harness voided, with the outcome of what replaced it."""
 
@@ -1863,14 +1875,7 @@ def write_report(root, trials, table, results, seed, out_dir,
         lines.append("")
         lines.append("| Trial | Started | Why | Kept at | Re-run |")
         lines.append("|---|---|---|---|---|")
-        for entry in lost:
-            reason = " ".join((entry["reason"] or "—").split())
-            lines.append("| %s | %s | %s | %s | %s |"
-                         % (entry["name"], entry["started_at"] or "—",
-                            reason.replace("|", "/")[:160],
-                            "`%s`" % entry["kept"] if entry["kept"]
-                            else "not moved",
-                            entry["rerun"] or "not re-run"))
+        lines.extend(void_row(entry) for entry in lost)
     lines.append("")
 
     lines.extend(reach_section(root, scans))
@@ -7860,6 +7865,13 @@ def documents_checks(seed):
                   for _, keys in RADAR_AXES for key in keys}
                  | {key: {"inline-none": {"verdict": "no improvement shown"}}
                     for key in ANSWERED}, "inline", 391)), None),
+        ("a voided trial's reason is shown as code, a URL or a pipe in it "
+         "left as it is",
+         void_row({"name": "hand-5", "started_at": "t", "kept": None,
+                   "rerun": None,
+                   "reason": "limit `hit` at https://x.y/z?a | retry"})
+         == "| hand-5 | t | `limit 'hit' at https://x.y/z?a / retry` | "
+            "not moved | not re-run |", None),
         ("run counts come from the runs scored, a spread where they differ",
          times({"none": 15, "skills": 12, "hybrid": 15},
                ["skills", "hybrid"]) == "between 12 and 15 times"
