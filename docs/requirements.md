@@ -179,6 +179,9 @@
 | FR-12-10 | The benchmark shall fix a fault found in its instruments, validate the fix, re-score in full every round that reads the faulty scores, and replace each report with a dated note keeping the verdicts it replaces. | Scorer, Report, Owner |
 | FR-12-11 | Removed: merged into FR-12-10. | - |
 | FR-12-12 | From round 6 the benchmark shall draw one radar per file arm against `none` on the eight ISO/IEC 25010:2023 characteristics, each axis the share of its targets met, with a marker only past the axis's margin, a broken build counted against Reliability alone, the cost shown above and one table of sub-scores per axis in the appendix. | Report |
+| FR-12-13 | The benchmark shall read round 5e's H7 to H9 under round 5d's rules, each a map arm against the arm it answers, unpaired where the arms ran in different rounds. | Report |
+| FR-12-14 | The benchmark shall count, per trial of an arm whose file points at the templates, each template read from the vendored copy or loaded as a skill, the turn it happened at, and how many came before the trial's first write to a file of its own. | Report |
+| FR-12-15 | The benchmark shall screen round 6's candidates against `none` as round 5d registers: out on a deciding row worse, the rest ranked by rows better and then by mean cost, the top four kept. | Report |
 
 ### 13 Records and archive
 

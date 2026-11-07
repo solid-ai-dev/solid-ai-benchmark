@@ -4,6 +4,11 @@ Registered on 2026-11-05, while round 5d ran and before any round-5e trial ran.
 Round 5d keeps its registration as it was when its first trial ran; this one is
 a registration of its own.
 
+Amended on 2026-11-05, before any round-5e trial ran: the report's reading of
+the round moved from "still needed" to done in 13e.5; all five of round 5c's
+arms are reused, so the screen of 13d.9 reads every candidate; and the reuse of
+the earlier rounds' arms is what remains.
+
 ## 13e. Round 5e: the templates on demand, against rounds 5c and 5d
 
 ### 13e.1 What it takes from rounds 5c and 5d
@@ -26,7 +31,7 @@ Three things differ: the arms, the order, and what is reused.
 | --- | --- | --- |
 | `lazyref` | 15, fresh | `arms/lazyref/CLAUDE.md`, made for 5e |
 | `lazyskills` | 15, fresh | `arms/lazyskills/`, root and 13 skills, made for 5e |
-| `none`, `reference`, `skills` | 15 each, reused | Round 5c's, re-scored in 5d's root |
+| round 5c's five arms | 15 each, reused | Round 5c's, re-scored in 5d's root |
 | `hand`, `short` | 15 each, reused | Round 5d's, scored and read |
 
 Both fresh arms live under `tests/efficacy/arms/`. They are fixed text, made by
@@ -78,8 +83,11 @@ own: 30 trials in the rotated order.
 - The run starts `lazyref-1`, `lazyskills-1`, and each block starts one arm
   later.
 - The two arms share every block, so `lazyskills` minus `lazyref` is paired.
-- No fresh `none`, `reference` or `skills` runs beside them, so drift against
-  rounds 5c and 5d goes unchecked, as in round 5d. The CLI is pinned.
+- No fresh trial of a reused arm runs beside them, so drift against rounds 5c
+  and 5d goes unchecked, as in round 5d. The CLI is pinned.
+- A contrast pairs only trials that ran in one round; a reused trial keeps
+  the root it ran in as its origin however many times it is copied on, so a
+  contrast of two reused arms from different rounds is unpaired too.
 
 ### 13e.4 Hypotheses
 
@@ -134,16 +142,24 @@ round-6 screen of 13d.9, which round 5e's arms join as candidates.
 
 - every metric of [ch. 8.6](../architecture/08-crosscutting-concepts.md) for
   each fresh arm against round 5c's `none`, `reference` and `skills` and round
-  5d's `hand` and `short`;
+  5d's `hand` and `short`; `inline` and `hybrid` are reused for the screen
+  alone;
 - cost, turns, tokens and wall time, and the words each arm puts in context on
   every turn;
-- **use of the map**, per trial, from the transcript: how many templates the
-  agent read (`lazyref`, a read of a file under the vendored path) or loaded
-  (`lazyskills`, a skill call naming one of the arm's skills), which ones, the
-  turn each happened at, and how many happened before the trial's first write
-  to a file of its own. Round 5c's `reference` read 13 of 13 in turns 1 and 2;
-  a map arm that does the same has not measured on-demand reading, and the
-  report says so beside H7.
+- **use of the map**, per trial, from the transcript, a subagent's included and
+  charged to the turn that delegated to it: how many templates of the map the
+  agent read (`lazyref`, a read of a file of the chain under the vendored path,
+  by the read tool or a shell command that reads, a wildcard standing for every
+  template it matches) or loaded (`lazyskills`, a skill call naming one of the
+  arm's skills), which ones, the turn each happened at, and how many happened
+  before the trial's first write to a file of its own: a write tool's call, or a
+  shell command that redirects into a file, copies, moves or creates. A shell
+  call is read from its text, one simple command at a time, so the counts
+  approximate what a shell did: a read or a write its text does not show,
+  inside a program it ran say, is not seen, and an inline shell's reads and
+  writes are the one command's. A trial that never wrote says nothing about
+  reading up front, a map no trial read was ignored rather than read on demand,
+  and the note beside H7 says which case holds.
 
 ### 13e.5 Before the first trial
 
@@ -158,14 +174,17 @@ Done with this registration:
   them, and builds both from round 5's spec at its registered content
 - the report names both arms in plain words
 
-The report still gains, with a self-test for each:
+Done after it, before any round-5e trial, each with a self-test:
 
-- round 5c's `reference` and `skills` and round 5d's `hand` and `short` read
-  with their scores, judgings, security readings and tool lock, as 13d.5 reads
-  round 5c's `none`
-- the contrasts of H7 and H9, unpaired, and H8, paired
-- the use-of-the-map rows of 13e.4, read from the transcripts
-- the round-6 screen of 13d.9 with round 5e's arms among the candidates
+- the report reads a round-5e run under round 5d's rules and against this
+  registration, with the contrasts of H7 and H9, unpaired, and H8, paired
+- the use-of-the-map rows of 13e.4, read from the transcripts, with the note
+  beside H7
+- the round-6 screen of 13d.9, with round 5e's arms among the candidates
+
+Still needed: round 5c's five arms and round 5d's `hand` and `short` brought
+into round 5e's root by `reuse.py` from round 5d's root, scored and read as
+they were, with their tool lock.
 
 ### 13e.6 When it runs
 

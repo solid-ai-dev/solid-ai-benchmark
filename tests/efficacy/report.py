@@ -16,11 +16,13 @@ compute.
 
 import argparse
 import datetime
+import fnmatch
 import glob
 import io
 import json
 import math
 import os
+import posixpath
 import random
 import re
 import shutil
@@ -37,10 +39,11 @@ import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import GENERATED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
-                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, SCORABLE,
-                     TEMPLATES_ENV, VOIDING, TrialError, canonical, git,
-                     reach, read_transcripts, scoring_area, split_name,
-                     templates_root, trial_name)
+                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, ROUND5E_ARMS,
+                     SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING, TrialError,
+                     canonical, git, reach, read_transcripts, scoring_area,
+                     split_name, templates_root, transcript_files,
+                     trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +57,7 @@ REPOSITORY = os.path.dirname(os.path.dirname(HERE))
 # turn and runs again as round 5c, which changes only where a workspace sits.
 ROUND5_REGISTRATION = "docs/rounds/round-5c.md"
 ROUND5D_REGISTRATION = "docs/rounds/round-5d.md"
+ROUND5E_REGISTRATION = "docs/rounds/round-5e.md"
 
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
@@ -95,7 +99,17 @@ CONTRASTS = (("short", "none"), ("hybrid", "none"), ("hand", "none"),
              # Round 5d: each templates arm against a person's file, and the
              # 40-line file against the same generation without its budget.
              ("inline", "hand"), ("hybrid", "hand"), ("reference", "hand"),
-             ("skills", "hand"), ("short", "inline"))
+             ("skills", "hand"), ("short", "inline"),
+
+             # Round 5e: each map arm against none, against the arm it
+             # answers (H7, H9), against the other reused arms, and the skill
+             # against the file (H8).
+             ("lazyref", "none"), ("lazyskills", "none"),
+             ("lazyref", "reference"), ("lazyskills", "skills"),
+             ("lazyskills", "lazyref"),
+             ("lazyref", "skills"), ("lazyskills", "reference"),
+             ("lazyref", "hand"), ("lazyskills", "hand"),
+             ("lazyref", "short"), ("lazyskills", "short"))
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -651,7 +665,7 @@ def is_round5(trials):
     """Whether the run holds a round-5 arm, so that round's registration,
     its K and its margins, governs it."""
     return (any(arm_of(name) in ROUND5_ARMS for name in trials)
-            or is_round5d(trials))
+            or is_round5d(trials) or is_round5e(trials))
 
 
 def is_round5d(trials):
@@ -660,15 +674,34 @@ def is_round5d(trials):
     return any(arm_of(name) in ROUND5D_ARMS for name in trials)
 
 
+def is_round5e(trials):
+    """Whether the run holds a round-5e arm, so that round's registration
+    governs it, under round 5d's verdict rules."""
+    return any(arm_of(name) in ROUND5E_ARMS for name in trials)
+
+
+def later_rules_of(trials):
+    """Whether round 5d's verdict rules govern the run: they do from round
+    5d on, so round 5e reads under them too."""
+    return is_round5d(trials) or is_round5e(trials)
+
+
 # The arms round 5 registers. A block is complete only when every one of
 # them has its trial, so a run that lost a trial or an arm is part-run.
 ROUND5_RUN = ("none", "inline", "hybrid", "reference", "skills")
 
 
+def round_arms(trials):
+    """The arms the run's round registers as fresh trials."""
+    if is_round5e(trials):
+        return ROUND5E_ARMS
+    return ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
+
+
 def owed_blocks(trials):
     """The blocks of round 5's K that still miss a registered arm's trial,
     in order."""
-    run = ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
+    run = round_arms(trials)
     return [block for block in range(1, ROUND5_K + 1)
             if any(trial_name(arm, block) not in trials for arm in run)]
 
@@ -690,7 +723,7 @@ def blocks_named(blocks):
 
 def margins_of(trials):
     """The margins a run's contrasts are held against."""
-    return ROUND5D_MARGINS if is_round5d(trials) else ROUND5_MARGINS
+    return ROUND5D_MARGINS if later_rules_of(trials) else ROUND5_MARGINS
 
 
 def active_contrasts(trials):
@@ -716,24 +749,37 @@ def reused_arms(trials):
     return [(arm, counts[arm]) for arm in ARMS if arm in counts]
 
 
-def crossing(active, reused):
-    """The contrasts pairing a reused arm with one run in this round."""
-    earlier = {arm for arm, _ in reused}
+def arm_origins(trials):
+    """Where each arm's trials ran: the root they were reused from, or None
+    for an arm run in this round. A reused trial that names no root is
+    told apart from a fresh one by the name its origin carries."""
+    origins = {}
+    for name in ordered(trials):
+        source = (trials[name].get("scores") or {}).get("reused_from") or {}
+        origins.setdefault(arm_of(name), source.get("root")
+                           or source.get("name") or None)
+    return origins
+
+
+def crossing(active, origins):
+    """The contrasts whose arms ran in different rounds: one reused and one
+    run here, or both reused from different roots."""
     return [pair for pair in active
-            if len(set(pair) & earlier) == 1]
+            if origins.get(pair[0]) != origins.get(pair[1])]
 
 
 def crossed_labels(trials):
-    """Every contrast label pairing a reused arm with one run in this round."""
+    """Every contrast label whose arms ran in different rounds."""
     return {"%s-%s" % pair
             for pair in crossing(active_contrasts(trials),
-                                 reused_arms(trials))}
+                                 arm_origins(trials))}
 
 
 def collect(trials, metrics=METRICS, later_rules=None):
     """Metric values by metric, arm and trial index, read by round 5d's
     rules for a round-5d run or where `later_rules` asks for them."""
-    working_only = is_round5d(trials) if later_rules is None else later_rules
+    working_only = (later_rules_of(trials) if later_rules is None
+                    else later_rules)
     table = {}
     for key, label, direction, accessor in metrics:
         if key in SUPERSEDED_IN_ROUND5 or (working_only
@@ -1069,7 +1115,7 @@ def round_contrasts(trials, table, seed):
     """`table`'s contrasts read the way the round registered: its margins,
     its crossings, and round 5d's rules for a round-5d run."""
     return contrasts(table, seed, crossed_labels(trials), margins_of(trials),
-                     is_round5d(trials))
+                     later_rules_of(trials))
 
 
 def withdrawals(trials, path=WITHDRAWN):
@@ -1148,7 +1194,7 @@ def cross_check(trials, other, seed, later_rules=None):
     """How far the other vendor's judge agrees with the rounds' judge on the
     trials it read, per judge row, and the contrasts it reads itself, by
     round 5d's rules for a round-5d run or where `later_rules` asks."""
-    strict = is_round5d(trials) if later_rules is None else later_rules
+    strict = later_rules_of(trials) if later_rules is None else later_rules
     rows = {}
     for key in JUDGE_ROWS:
         dimension = key[len("judge_"):]
@@ -1374,6 +1420,14 @@ def python_problem(trials):
                         for minor, name in sorted(found.items())))
 
 
+def registration_of(trials):
+    """The registration a run is read against: the latest round whose arm
+    it holds."""
+    if is_round5e(trials):
+        return ROUND5E_REGISTRATION
+    return ROUND5D_REGISTRATION if is_round5d(trials) else ROUND5_REGISTRATION
+
+
 def registration_problem(root, registration, repository=REPOSITORY):
     """Why the round's registration does not predate its first trial, or
     None when it landed on the main branch before that trial and is
@@ -1574,7 +1628,7 @@ def unrecorded_voids(root, sequence, recorded):
 
 
 def write_report(root, trials, table, results, seed, out_dir,
-                 withdrawn=None, cross=None, iso=None):
+                 withdrawn=None, cross=None, iso=None, uses=None):
     """The dated round report, written to `out_dir`.
 
     The directory has no default so a shakedown of the writer renders into
@@ -1695,12 +1749,16 @@ def write_report(root, trials, table, results, seed, out_dir,
                                 blocks=k))
     lines.append("")
 
-    if is_round5(trials) and not is_round5d(trials):
+    if is_round5(trials) and not later_rules_of(trials):
         lines.extend(round5_section(trials, table, results))
         lines.append("")
     if is_round5d(trials):
         lines.extend(round5d_section(trials, table, results, seed,
                                      margins_of(trials)))
+        lines.append("")
+    if is_round5e(trials):
+        lines.extend(round5e_section(root, trials, table, results, seed,
+                                     margins_of(trials), uses))
         lines.append("")
 
     lines.append("## Raw numbers, per trial")
@@ -1792,7 +1850,7 @@ def write_report(root, trials, table, results, seed, out_dir,
         appendix: appendix_lines(trials, table, results, k, seed, generation,
                                  report, record, iso),
         report: plain_report_lines(root, trials, table, results, radar,
-                                   appendix, k, iso)}
+                                   appendix, k, iso, uses)}
     for document, text in documents.items():
         with io.open(os.path.join(out_dir, document), "w", encoding="utf-8",
                      newline="\n") as handle:
@@ -2010,6 +2068,14 @@ PLAIN_QUESTIONS = {
     "skills-hand": "Does the skills approach do as well as a person's file?",
     "short-hand": "Does a 40-line file from the templates do as well as a "
                   "person's file of the same length?",
+    "lazyref-reference": "Does a template read when the work touches its "
+                         "topics do as well as the same template read "
+                         "before the work starts?",
+    "lazyskills-lazyref": "Does loading a template as a skill do as well as "
+                          "reading it as a file, at the same moments?",
+    "lazyskills-skills": "Do templates loaded whole as skills, at a named "
+                         "moment, do as well as task skills offered by "
+                         "description?",
 }
 PLAIN_ANSWERS = {"supported": "yes", "refuted": "no",
                  "inconclusive": "not settled: the runs could not tell "
@@ -2183,7 +2249,7 @@ def sureness_lines(trials, k):
 
 
 def plain_report_lines(root, trials, table, results, radar, appendix, k,
-                       iso=None):
+                       iso=None, uses=None):
     """The report a reader opens: the radars, each approach in plain words,
     the round's questions answered, and how sure the answers are. `iso` is
     the ISO reading where the round draws that radar."""
@@ -2217,14 +2283,25 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
                                      context_lines(arm), iso))
         lines.append("")
     present = {arm_of(name) for name in trials}
-    if is_round5d(trials):
+    if later_rules_of(trials):
+        # The latest round's questions are the run's: a round-5e root
+        # holds round 5d's arms too, reused, and answers its own.
+        hypotheses = (ROUND5E_HYPOTHESES if is_round5e(trials)
+                      else ROUND5D_HYPOTHESES)
         lines.extend(["## The questions this round asked", ""])
-        for _, label, wanted in ROUND5D_HYPOTHESES:
+        for _, label, wanted in hypotheses:
             if not set(label.split("-")) <= present:
                 continue
             state, _ = round5d_hypothesis(results, label, wanted)
             lines.append("- %s **%s.**" % (PLAIN_QUESTIONS[label],
                                            sentence_case(PLAIN_ANSWERS[state])))
+
+            # H7's answer is about on-demand reading only where the trials
+            # read on demand, so what the map's use says goes beside it.
+            if label == "lazyref-reference" and uses is not None:
+                note = h7_note(map_use_rows(trials, uses))
+                if note:
+                    lines.append("  - %s" % sentence_case(note))
         lines.append("")
     elif is_round5(trials):
         lines.extend(["## The questions this round asked", ""])
@@ -2574,6 +2651,15 @@ ROUND5D_HYPOTHESES = (
      "held"),
 )
 
+# Round 5e's hypotheses, as registered: each asks for no loss, under round
+# 5d's rules. H7 and H9 cross rounds and read unpaired; H8 is paired.
+ROUND5E_HYPOTHESES = (
+    ("H7, on demand against up front", "lazyref-reference", "held"),
+    ("H8, a skill against a file", "lazyskills-lazyref", "held"),
+    ("H9, one skill per template against one skill per task",
+     "lazyskills-skills", "held"),
+)
+
 # Each leave-two-out reading takes fewer resamples than the report's
 # intervals, so an unpaired contrast's 435 readings stay cheap.
 LEAVE_TWO_OUT_RESAMPLES = 2000
@@ -2742,6 +2828,1505 @@ def round5d_section(trials, table, results, seed, margins,
         lines.append("  - profile: %s" % "; ".join(
             "%s %s" % (axis, word) for axis, word in profile(results, label)))
     return lines
+
+
+# The tools whose call writes a file of the trial's own, and the shell tools
+# whose command may: one is a write where its text redirects, copies, moves
+# or creates. A read of the map's templates before the first of them came
+# before any work.
+WRITES = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+SHELLS = ("Bash", "PowerShell")
+
+# A shell command is read one simple command at a time: the text between
+# pipes, semicolons, `&&`, `||` and line breaks. The command is its first
+# word, after any variable assignments and with any directory and `.exe`
+# taken off, so a word that is an argument never counts as a command.
+SEGMENT = re.compile(r"\|\||&&|[|;\n]")
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+WRITE_COMMANDS = ("tee", "touch", "mkdir", "cp", "mv", "new-item",
+                  "set-content", "add-content", "out-file", "copy-item",
+                  "move-item")
+READ_COMMANDS = ("cat", "type", "head", "tail", "sed", "less", "more", "bat",
+                 "grep", "rg", "awk", "get-content", "gc", "select-string")
+TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
+                           + r"(templates/[\w./-]+\.md)")
+
+# A shell operand under the vendored copy that may carry a wildcard, which
+# is resolved against the map's templates rather than read as no file.
+TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
+                              + r"(templates/[\w./*?\[\]-]+)")
+
+# A redirection that writes no file: to the null device, or of one stream
+# into another. Taken out of a command before it is read for a write.
+NULL_REDIRECT = re.compile(
+    r"\d?>{1,2}\s*(['\"]?)(&\d|/dev/null|\$null|NUL\b)\1", re.IGNORECASE)
+
+# Quoted text is an argument, not an operator or a command, so it is taken
+# out before a command is read for a write.
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+# A backslash before a line break continues the command on the next line,
+# so the two lines are one command.
+CONTINUATION = re.compile(r"\\\r?\n")
+
+
+# A here-document's body is data, not commands, and is taken out whole;
+# the rest of its opening line, a redirection perhaps, stays.
+HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*)\n.*?\n\s*\3\s*(?=\n|$)",
+                     re.DOTALL)
+
+# The reading commands whose first operand is a pattern or a program, not
+# a file to read, unless a flag names the pattern or the program instead.
+PATTERN_FIRST = ("grep", "rg", "awk", "sed", "select-string")
+PATTERN_FLAGS = ("-e", "--regexp", "-f", "--file", "-pattern")
+
+# A word that opens a loop's or a branch's body, or a subshell, is no
+# command: the command is the word after it.
+BODY_OPENERS = ("do", "then", "else", "{", "(")
+
+# The commands that change the directory the simple commands after them in
+# the same shell call run in, so a relative path they name is resolved
+# against it.
+CHANGE_DIR = ("cd", "pushd", "set-location", "sl")
+
+# A path that starts somewhere other than the current directory: at a
+# root, a drive or the home directory.
+ABSOLUTE = re.compile(r"^(/|[A-Za-z]:|~)")
+
+
+def words_of(text):
+    """A simple command's words, a quoted argument staying one word for
+    all the spaces in it."""
+    quoted = []
+
+    def stash(match):
+        quoted.append(match.group(0))
+        return "\x00%d\x00" % (len(quoted) - 1)
+    return [re.sub(r"\x00(\d+)\x00",
+                   lambda match: quoted[int(match.group(1))], word)
+            for word in QUOTED.sub(stash, text).split()]
+
+
+def glob_matches(pattern, path):
+    """Whether a shell wildcard pattern matches a path, a wildcard standing
+    for no slash: the pattern and the path match part by part."""
+    parts = pattern.split("/")
+    pieces = path.split("/")
+    return len(parts) == len(pieces) and all(
+        fnmatch.fnmatchcase(piece, part) for part, piece in zip(parts, pieces))
+
+
+def simple_commands(command, keep_quotes=False):
+    """A shell command's simple commands, each as (command word, text), the
+    null redirections and here-document bodies taken out and, unless asked
+    to keep them, the quoted arguments too. A separator inside quotes
+    separates nothing."""
+    quoted = []
+
+    def stash(match):
+        quoted.append(match.group(0))
+        return "\x00%d\x00" % (len(quoted) - 1)
+    masked = QUOTED.sub(stash, NULL_REDIRECT.sub(" ", HEREDOC.sub(
+        r"\1", command)))
+    found = []
+    for segment in SEGMENT.split(masked):
+        segment = re.sub(r"\x00(\d+)\x00", lambda match: (
+            quoted[int(match.group(1))] if keep_quotes else " "), segment)
+        words = [word for word in segment.split()
+                 if not ASSIGNMENT.match(word)]
+        while words and words[0].lower() in BODY_OPENERS:
+            words.pop(0)
+        if not words:
+            continue
+        word = words[0].lstrip("(").replace("\\", "/").rsplit("/", 1)[-1]
+        word = word.lower()
+        if word.endswith(".exe"):
+            word = word[:-len(".exe")]
+        found.append((word, segment))
+    return found
+
+
+# The flags that turn a reading or fetching command into a writing one:
+# an edit in place, or a download to a file.
+WRITING_FLAGS = {"sed": ("-i", "--in-place"),
+                 "curl": ("-o", "-O", "--output", "--remote-name"),
+                 "wget": ("-O", "--output-document")}
+
+# The null device as a download's destination: no file is written.
+NULL_DEVICE = re.compile(r"^(/dev/null|\$null|NUL)$", re.IGNORECASE)
+
+
+def writes_by_flag(word, tokens):
+    """Whether a reading or fetching command's flags make it a writing
+    one: an edit in place, or a download to a file rather than to the
+    null device. The flag's value is attached with `=` or is the next
+    token."""
+    names = WRITING_FLAGS.get(word, ())
+    for at, token in enumerate(tokens):
+        if not token.startswith("-"):
+            continue
+        if word == "sed" and token.startswith("-i"):
+            return True
+        name, _, value = token.partition("=")
+        if name not in names:
+            continue
+        if not value and at + 1 < len(tokens) \
+                and not tokens[at + 1].startswith("-"):
+            value = tokens[at + 1]
+        if not NULL_DEVICE.match(unquoted(value)):
+            return True
+    return False
+
+# A program run with its code in the command, as a quoted argument or a
+# here-document, writes where the code does: a shell's code is read as a
+# shell command of its own, an interpreter's for a call that opens a file
+# to write. A script run from a file of the trial's own is not read: the
+# trial wrote that file first, and that write was counted.
+SHELL_PROGRAMS = ("bash", "sh", "zsh", "pwsh", "powershell", "cmd")
+INTERPRETERS = ("python", "python3", "py", "node", "ruby", "perl")
+WRITING_CODE = re.compile(
+    r"write_text\(|write_bytes\(|open\([^)]*,\s*['\"][wax]"
+    r"|open\([^)]*mode\s*=\s*['\"][wax]|writeFile|appendFile"
+    r"|createWriteStream|File\.(write|open\([^)]*['\"][wa])"
+    r"|set-content|out-file|add-content", re.IGNORECASE)
+
+
+def heredoc_bodies(command):
+    """Each here-document of a shell command, as (its delimiter, its
+    body)."""
+    return [(match.group(3), match.group(0)[len(match.group(1)):])
+            for match in HEREDOC.finditer(command)]
+
+
+def program_code(text, bodies):
+    """The code a program run carries: its quoted arguments, and the body
+    of a here-document the run reads."""
+    code = QUOTED.findall(text)
+    code.extend(body for delimiter, body in bodies
+                if "<<" in text and delimiter in text)
+    return "\n".join(code)
+
+
+def unquoted(piece):
+    """A quoted argument without its outer quotes, one pair only."""
+    if len(piece) >= 2 and piece[0] == piece[-1] and piece[0] in "'\"":
+        return piece[1:-1]
+    return piece
+
+
+def program_writes(word, text, bodies):
+    """Whether a program run writes a file in the code it carries."""
+    code = program_code(text, bodies)
+    if not code:
+        return False
+    if word in SHELL_PROGRAMS:
+        return any(first_writing_command(unquoted(piece)) is not None
+                   for piece in code.split("\n"))
+    return WRITING_CODE.search(code) is not None
+
+
+def first_writing_command(command):
+    """The index of the first simple command that writes a file of the
+    trial's own, one that redirects into a file, copies, moves or creates
+    one, edits in place or downloads to a file, or runs code that does;
+    None where none does."""
+    bodies = heredoc_bodies(command)
+    kept = simple_commands(command, keep_quotes=True)
+    for index, (word, text) in enumerate(simple_commands(command)):
+        if word in WRITE_COMMANDS or ">" in text or writes_by_flag(
+                word, words_of(kept[index][1])[1:]):
+            return index
+        if word in SHELL_PROGRAMS + INTERPRETERS and program_writes(
+                word, kept[index][1], bodies):
+            return index
+    return None
+
+
+def brace_expanded(token):
+    """The words a shell makes of a brace list, a{b,c} as ab and ac; the
+    token itself where it has none."""
+    match = re.search(r"\{([^{}]*,[^{}]*)\}", token)
+    if not match:
+        return [token]
+    head, tail = token[:match.start()], token[match.end():]
+    return [word for part in match.group(1).split(",")
+            for word in brace_expanded(head + part + tail)]
+
+
+def shell_writes(command):
+    """Whether a shell command writes a file of the trial's own."""
+    return first_writing_command(command) is not None
+
+
+def shell_reads(command, known=()):
+    """The templates a shell command reads, as (index of its simple
+    command, template) in order: every one a reading command names under
+    the vendored copy, a wildcard operand standing for each template of the
+    map it matches."""
+    found = []
+    directory = ""
+    commands = simple_commands(command, keep_quotes=True)
+    bodies = heredoc_bodies(command)
+    writing = first_writing_command(command)
+
+    def noted(tokens, at):
+        """Every template the tokens name, charged to command `at`."""
+        found.extend((at, template) for template in named(tokens))
+
+    def named(tokens):
+        """Every template the tokens name, under the vendored copy or
+        relative to the directory moved into, in order."""
+        templates = []
+        for token in itertools.chain.from_iterable(map(brace_expanded,
+                                                       tokens)):
+            matched = TEMPLATE_OPERAND.findall(token)
+
+            # A path with no vendored copy in it may be relative to the
+            # directory an earlier command of the call moved into.
+            if not matched and directory and not token.startswith("-"):
+                matched = TEMPLATE_OPERAND.findall(posixpath.normpath(
+                    posixpath.join(directory, token.strip("'\""))))
+            for operand in matched:
+                if any(mark in operand for mark in "*?["):
+                    templates.extend(template for template in known
+                                     if glob_matches(operand, template))
+                elif operand.endswith(".md"):
+                    templates.append(operand)
+        return templates
+    for index, (word, text) in enumerate(commands):
+        words = [token for token in words_of(text)
+                 if not ASSIGNMENT.match(token)
+                 and token.lower() not in BODY_OPENERS][1:]
+        operands = [token for token in words if not token.startswith("-")]
+        if word in CHANGE_DIR:
+            target = operands[0].strip("'\"") if operands else ""
+            directory = "" if target in ("", "-") else posixpath.normpath(
+                target if ABSOLUTE.match(target)
+                else posixpath.join(directory, target))
+            continue
+
+        # A loop's files are read by the command of its body, up to `done`,
+        # that reads its variable, and are charged to that command; a body
+        # that only names them, or reads something else, reads none. A body
+        # that also writes has written by its second iteration, so only the
+        # first file's read is charged to the reading command: the rest are
+        # charged to the loop's end, after the write.
+        if word == "for":
+            variable = (re.compile(r"\$\{?%s\b" % re.escape(words[0]))
+                        if words else None)
+            files = words[words.index("in") + 1:] if "in" in words else []
+            end = next((at for at, (verb, _) in enumerate(
+                commands[index + 1:], index + 1) if verb == "done"),
+                len(commands))
+            body_writes = writing is not None and index < writing < end
+            for at, (verb, body) in enumerate(commands[index + 1:end],
+                                              index + 1):
+                if verb in READ_COMMANDS and variable \
+                        and variable.search(body):
+                    templates = named(files)
+                    if body_writes:
+                        found.extend((at, template)
+                                     for template in templates[:1])
+                        found.extend((end, template)
+                                     for template in templates[1:])
+                    else:
+                        found.extend((at, template)
+                                     for template in templates)
+            continue
+
+        # A shell run with its code in the command reads where the code
+        # does, and those reads are this one command's.
+        if word in SHELL_PROGRAMS:
+            for piece in program_code(text, bodies).split("\n"):
+                found.extend((index, template) for _, template
+                             in shell_reads(unquoted(piece), known))
+            continue
+        if word not in READ_COMMANDS:
+            continue
+
+        # A search's or a script's first operand is what to look for, not
+        # a file it reads, unless a flag names it, so it is left out of the
+        # files. A flag carries the pattern in itself, as --regexp=TODO,
+        # -pattern:TODO or -eTODO, or in the token after it.
+        if word in PATTERN_FIRST and operands:
+            flagged = next((at for at, token in enumerate(words[:-1])
+                            if token.lower() in PATTERN_FLAGS), None)
+            if flagged is not None:
+                words.pop(flagged + 1)
+            elif not any(map(pattern_attached, words)):
+                words.remove(operands[0])
+        noted(words, index)
+    return found
+
+
+def pattern_attached(token):
+    """Whether a flag carries a search's pattern in itself: --regexp=TODO,
+    -pattern:TODO or -eTODO."""
+    lower = token.lower()
+    for flag in PATTERN_FLAGS:
+        if lower.startswith(flag + "=") or lower.startswith(flag + ":"):
+            return True
+        if len(flag) == 2 and len(lower) > 2 and lower.startswith(flag) \
+                and not lower.startswith("--"):
+            return True
+    return False
+
+
+def mapped_templates(arm):
+    """What an arm's file points the agent at: the skills it carries, by
+    name, or the templates it vendors, by path; empty for an arm with
+    neither."""
+    entry = ARMS.get(arm) or {}
+    if entry.get("skills"):
+        folder = os.path.join(ARMS_DIR, entry["skills"])
+        return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
+    if entry.get("vendor"):
+        record = generation_records().get(arm) or {}
+        return list(record.get("resolved_files") or [])
+    return []
+
+
+# The tools that hand work to a subagent, whose transcript sits beside the
+# session's. What the subagent read or wrote is charged to the turn that
+# delegated it.
+DELEGATIONS = ("Agent", "Task")
+
+
+def tool_calls_by_turn(files, written_at=None):
+    """Every tool call in the transcripts as (turn, tool, input, line), a
+    turn being one message of the model and the line the call's place in
+    the transcripts: several lines may share a message id, so a new id is
+    what counts a turn. Given a dict as `written_at`, each line's uuid is
+    filed under its (turn, line)."""
+    calls = []
+    turn = 0
+    at = 0
+    last_message = object()
+    for file in files:
+        with io.open(file, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                at += 1
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                message = record.get("message") or {}
+                if record.get("type") == "assistant" \
+                        and message.get("id") != last_message:
+                    last_message = message.get("id")
+                    turn += 1
+                if written_at is not None and record.get("uuid"):
+                    written_at[record["uuid"]] = (turn, at)
+                if record.get("type") != "assistant":
+                    continue
+                content = message.get("content")
+                for block in content if isinstance(content, list) else []:
+                    if isinstance(block, dict) \
+                            and block.get("type") == "tool_use":
+                        given = block.get("input")
+                        calls.append((turn, block.get("name"),
+                                      given if isinstance(given, dict)
+                                      else {}, at))
+    return calls
+
+
+def delegation_anchor(file, written_at):
+    """The (turn, line) of the session's line a subagent's transcript
+    points back to from its first record, or None where it points at none
+    the session wrote."""
+    with io.open(file, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            parent = record.get("parentLastUuid") or record.get("parentUuid")
+            if parent in written_at:
+                return written_at[parent]
+            if record.get("type") == "assistant":
+                break
+    return None
+
+
+def map_use(files, arm, templates=None, delegated=()):
+    """How one trial used what its file points at, from its transcripts:
+    each template read from the vendored copy or loaded as a skill, as
+    (turn, template) in order, the turn of the trial's first write to a
+    file of its own, or None, and how many of the uses a subagent made.
+
+    A subagent's transcript, in `delegated`, is read after the session's,
+    its calls charged to the turn of the session's line it points back to,
+    the moment it was started; one pointing nowhere the session wrote is
+    charged to the session's first delegation.
+    """
+    entry = ARMS.get(arm) or {}
+    known = set(mapped_templates(arm) if templates is None else templates)
+    marker = VENDORED["into"] + "/"
+    named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
+
+    def mapped(templates):
+        """Those of the templates that are on the arm's map."""
+        return [template for template in templates
+                if not known or template in known]
+    written_at = {}
+    parsed = tool_calls_by_turn(files, written_at)
+    own = [(turn, name, given, False) for turn, name, given, _ in parsed]
+    delegations = [(line, turn) for turn, name, _, line in parsed
+                   if name in DELEGATIONS]
+    calls = list(own)
+    for file in delegated:
+        anchor = delegation_anchor(file, written_at)
+
+        # The line a subagent points back to is the delegating message or
+        # the one before it, a result of the same turn or of the one before
+        # perhaps, so the delegation is the first one from that line on.
+        if anchor is not None:
+            at = next((turn for line, turn in delegations
+                       if line >= anchor[1]), anchor[0])
+        else:
+            at = delegations[0][1] if delegations else None
+        calls.extend((at if at is not None else turn, name, given, True)
+                     for turn, name, given, _ in tool_calls_by_turn([file]))
+    calls.sort(key=lambda call: call[0])
+    uses = []
+    before = set()
+    first_write = None
+    by_subagent = 0
+    for turn, name, given, from_subagent in calls:
+        command = CONTINUATION.sub(" ", str(given.get("command") or "")
+                                   ).replace("\\", "/")
+        found = []
+        writes_at = None
+
+        # A shell command may read a template and write a file in one go,
+        # so it is read for both, and a read in a simple command before the
+        # writing one came before the write.
+        if name in SHELLS:
+            writes_at = first_writing_command(command)
+        if name in SHELLS and entry.get("vendor"):
+            for index, template in shell_reads(command, sorted(known)):
+                if template in known or not known:
+                    found.append(template)
+                    if first_write is None and (writes_at is None
+                                                or index < writes_at):
+                        before.add(template)
+        elif name == "Read" and entry.get("vendor"):
+            path = str(given.get("file_path") or "").replace("\\", "/")
+            found = mapped(named.findall(path))
+        elif name == "Skill" and entry.get("skills"):
+            skill = str(given.get("skill") or "").strip()
+            found = [skill] if skill in known else []
+        if name not in SHELLS and first_write is None:
+            before.update(found)
+        if first_write is None and (name in WRITES or writes_at is not None):
+            first_write = turn
+        uses.extend((turn, template) for template in found)
+        if from_subagent:
+            by_subagent += len(found)
+    return {"uses": uses, "first_write": first_write,
+            "before_write": sorted(before) if first_write is not None
+            else None, "by_subagent": by_subagent}
+
+
+def map_uses(root, trials):
+    """Every trial's map use, by name, for the arms whose file points at
+    the templates and whose transcripts the root still holds."""
+    home = os.path.join(root, "home")
+    uses = {}
+    for record in run_records(root):
+        if record.get("outcome") not in SCORABLE:
+            continue
+        name = name_of(record)
+        if name not in trials:
+            continue
+        arm = arm_of(name)
+        templates = mapped_templates(arm)
+        if not templates:
+            continue
+        workspace = record.get("workspace") or ""
+        files = transcript_files(home, workspace, started(record))
+        if files:
+            uses[name] = map_use(files, arm, templates,
+                                 subagent_files(home, workspace,
+                                                started(record)))
+    return uses
+
+
+def subagent_files(home, workspace, since=None):
+    """The transcripts of the subagents a session in `workspace` started,
+    filed under the session's folder, left out where written before
+    `since`."""
+    folder = os.path.dirname(transcript_files(home, workspace)[0]) \
+        if transcript_files(home, workspace) else None
+    if not folder:
+        return []
+    files = sorted(glob.glob(os.path.join(folder, "*", "subagents",
+                                          "*.jsonl")))
+    if since is None:
+        return files
+    return [file for file in files if os.path.getmtime(file) >= since]
+
+
+def mean_of(values):
+    """The mean of the values, or None of none."""
+    return statistics.fmean(values) if values else None
+
+
+def median_of(values):
+    """The median of the values, or None of none."""
+    return float(statistics.median(values)) if values else None
+
+
+def map_use_rows(trials, uses):
+    """Per arm: trials read, templates in its map, how many each trial read
+    or loaded, how many before its first write, the turn of the first, and
+    how many trials read every template before writing anything."""
+    rows = []
+    for arm in ARMS:
+        names = [name for name in ordered(trials)
+                 if arm_of(name) == arm and name in uses]
+        if not names:
+            continue
+        total = len(mapped_templates(arm))
+        counts, before, firsts = [], [], []
+        for name in names:
+            use = uses[name]
+            counts.append(len({template for _, template in use["uses"]}))
+
+            # A trial that never wrote has no "before", and says nothing
+            # about reading up front.
+            if use["first_write"] is not None:
+                before.append(len(use.get("before_write") or ()))
+            if use["uses"]:
+                firsts.append(use["uses"][0][0])
+        rows.append({"arm": arm, "trials": len(names), "total": total,
+                     "read": mean_of(counts), "before": mean_of(before),
+                     "wrote": len(before), "first": median_of(firsts),
+                     "unused": sum(1 for count in counts if not count),
+                     "read_and_wrote": sum(
+                         1 for name in names if uses[name]["uses"]
+                         and uses[name]["first_write"] is not None),
+                     "up_front": sum(1 for count in before
+                                     if total and count >= total)})
+    return rows
+
+
+def map_use_detail(trials, uses):
+    """Every trial's map use, one row each: the turn of its first write and
+    each template with the turn it was read or loaded at."""
+    lines = ["#### Per trial", "",
+             "A subagent's reads are charged to the turn that delegated "
+             "to it.", "",
+             "| Trial | First write at turn | By a subagent "
+             "| Templates, by turn |",
+             "| --- | --- | --- | --- |"]
+    for name in ordered(trials):
+        if name not in uses:
+            continue
+        use = uses[name]
+        reads = ", ".join("%d: %s" % (turn, template[len("templates/"):]
+                                      if template.startswith("templates/")
+                                      else template)
+                          for turn, template in use["uses"]) or "none"
+        lines.append("| %s | %s | %d | %s |" % (
+            name, "—" if use["first_write"] is None else use["first_write"],
+            use.get("by_subagent", 0), reads))
+    return lines
+
+
+def map_use_lines(trials, uses):
+    """The use-of-the-map table and the note beside H7."""
+    rows = map_use_rows(trials, uses)
+    lines = ["### Use of the map", "",
+             "From each trial's transcript: the templates it read from the "
+             "vendored copy or loaded as skills, counted once each, the "
+             "turn the first happened at, and how many came before the "
+             "trial's first write to a file of its own. A shell call is "
+             "read from its text, one simple command at a time, so the "
+             "counts approximate what a shell did: a read or a write its "
+             "text does not show, inside a program it ran say, is not "
+             "seen.", "",
+             "| Arm | Trials | Templates in the map | Read or loaded, mean "
+             "| Before the first write, mean | First at turn, median "
+             "| Read all before writing |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
+
+    def shown(value, places=1):
+        return "—" if value is None else ("%%.%df" % places) % value
+    for row in rows:
+        lines.append("| %s | %d | %d | %s | %s | %s | %d of %d |" % (
+            row["arm"], row["trials"], row["total"], shown(row["read"]),
+            shown(row["before"]), shown(row["first"], 0), row["up_front"],
+            row["wrote"]))
+    note = h7_note(rows)
+    if note:
+        lines.extend(["", "Beside H7: %s" % note])
+    lines.append("")
+    lines.extend(map_use_detail(trials, uses))
+    return lines
+
+
+def h7_note(rows):
+    """What `lazyref`'s use of its map says about H7, in one sentence: the
+    hypothesis reads on-demand reading only where the trials wrote, read
+    their map, and did not read all of it before writing. None where the
+    run holds no `lazyref` trial with a transcript."""
+    row = next((row for row in rows if row["arm"] == "lazyref"), None)
+    if row is None:
+        return None
+    if not row["wrote"]:
+        return ("no `lazyref` trial's first write could be placed, so the "
+                "map's use says nothing about whether the templates were "
+                "read up front or on demand.")
+
+    # Only a trial that both read and wrote shows where its reads fell;
+    # one that read and never wrote, or wrote and never read, shows nothing
+    # about reading on demand.
+    if not row["read_and_wrote"]:
+        return ("no `lazyref` trial that wrote read a template of its map, "
+                "so H7 compares a map ignored against templates read up "
+                "front, not on-demand reading.")
+    if row["up_front"]:
+        return ("`lazyref` read every template of its map before its first "
+                "write in %d of the %d trials that wrote. Those trials "
+                "measured reading up front, not on demand."
+                % (row["up_front"], row["wrote"]))
+    return ("no `lazyref` trial read every template of its map before its "
+            "first write, so H7 reads on-demand reading in the %d trials "
+            "that read and wrote%s."
+            % (row["read_and_wrote"], ", while %d of %d trials read none"
+               % (row["unused"], row["trials"]) if row["unused"] else ""))
+
+
+# Round 5d's screen for round 6: the candidates, read against the bare arm,
+# and how many of them go on.
+SCREEN_CANDIDATES = ("inline", "hybrid", "reference", "skills", "hand",
+                     "short") + ROUND5E_ARMS
+SCREEN_KEEPS = 4
+SCREEN_ROWS = ROUND5D_ROWS + ("reliability",)
+
+
+def round6_screen(trials, table, results):
+    """Each candidate against the bare arm: out where a deciding row reads
+    worse, the rest ranked by rows better and then by mean cost, the top
+    four going on to round 6 once every candidate is read and the run is
+    whole. A candidate the run holds no trial of is named as missing, and
+    nothing goes on until it is read too, nor while the run is short of
+    its K: a short run decides nothing."""
+    rows = []
+    missing = []
+
+    # Every declared contrast has a result, computed or not, so an arm's
+    # presence is read from the trials and not from the results.
+    present = {arm_of(name) for name in trials}
+    for arm in SCREEN_CANDIDATES:
+        label = "%s-%s" % (arm, BARE)
+        if arm not in present or BARE not in present:
+            missing.append(arm)
+            continue
+        readings = {key: row_reading(results.get(key, {}).get(label))
+                    for key in SCREEN_ROWS}
+
+        # A row not computed yet, or one crossing roots, is no reading: it
+        # is neither better nor worse, and the screen waits for it.
+        rows.append({"arm": arm,
+                     "unread": [key for key in SCREEN_ROWS
+                                if not row_read(results.get(key, {})
+                                                .get(label))],
+                     "worse": [key for key in SCREEN_ROWS
+                               if readings[key] == "worse"],
+                     "better": sum(1 for reading in readings.values()
+                                   if reading == "better"),
+                     "cost": arm_mean(table, "cost_usd", arm),
+                     "rank": None, "round6": False})
+    kept = [row for row in rows if not row["worse"]]
+    kept.sort(key=lambda row: (-row["better"], row["cost"]
+                               if row["cost"] is not None else float("inf")))
+    waiting = bool(screen_owed(trials)) or any(
+        row["unread"] for row in screen_unread(rows))
+    for rank, row in enumerate(kept, 1):
+        row["rank"] = rank
+        row["round6"] = rank <= SCREEN_KEEPS and not missing and not waiting
+    return rows, missing
+
+
+def screen_unread(rows):
+    """The screen's rows of a candidate still in with a deciding row not
+    read yet. A candidate out on a row read worse needs no more reading;
+    one whose builds all failed never gets its build-only rows."""
+    return [row for row in rows if row["unread"] and not row["worse"]]
+
+
+def row_read(contrast):
+    """Whether a contrast's row has been read at all: computed, from both
+    arms of one root."""
+    return contrast is not None and contrast.get("verdict") not in (
+        None, "not computed", CROSSING_VERDICT)
+
+
+def screen_owed(trials):
+    """The blocks of round 5's K the run still owes each arm the screen
+    reads, the bare arm and every candidate present, as (arm, blocks);
+    empty once every one of them has all K trials. A reused arm counts as
+    much as a fresh one here, since the screen reads them alike."""
+    present = {arm_of(name) for name in trials}
+    owed = []
+    for arm in (BARE,) + SCREEN_CANDIDATES:
+        if arm not in present:
+            continue
+        blocks = [block for block in range(1, ROUND5_K + 1)
+                  if trial_name(arm, block) not in trials]
+        if blocks:
+            owed.append((arm, blocks))
+    return owed
+
+
+def screen_lines(trials, table, results):
+    """The screen as a table, and the arms round 6 runs, or the candidates
+    still to be read before it names them."""
+    rows, missing = round6_screen(trials, table, results)
+    lines = ["### Round 6's arms, by the screen of 13d.9", "",
+             "Each candidate is read against `%s` by the rules of 13d.7. An "
+             "arm worse on a deciding row is out; the rest rank by how many "
+             "rows read better, then by mean cost. The screen decides which "
+             "arms run again, not which arm is better." % BARE, "",
+             "| Arm | Rows better | Rows worse | Mean cost | Screen |",
+             "| --- | --- | --- | --- | --- |"]
+    for row in rows:
+        if row["worse"]:
+            screen = "out: %s worse" % ", ".join(
+                SHORT.get(key, key) for key in row["worse"])
+        else:
+            screen = "rank %d%s" % (row["rank"],
+                                   ", round 6" if row["round6"] else "")
+        lines.append("| %s | %d | %d | %s | %s |" % (
+            row["arm"], row["better"], len(row["worse"]),
+            "—" if row["cost"] is None else "$%.2f" % row["cost"], screen))
+    chosen = [row["arm"] for row in sorted(
+        (row for row in rows if row["round6"]), key=lambda row: row["rank"])]
+    owed = screen_owed(trials)
+    if missing:
+        lines.extend(["", "The screen is partial: %s %s not in this root, so "
+                      "it names no arms for round 6 yet." % (
+                          spoken(["`%s`" % arm for arm in missing]),
+                          "is" if len(missing) == 1 else "are")])
+    elif owed:
+        lines.extend(["", "The screen is provisional: the run still owes %s, "
+                      "and a short run decides nothing, so it names no arms "
+                      "for round 6 yet." % spoken([
+                          "`%s` %s" % (arm, blocks_named(blocks))
+                          for arm, blocks in owed])])
+    elif screen_unread(rows):
+        lines.extend(["", "The screen is provisional: %s not computed yet, "
+                      "so it names no arms for round 6 yet." % spoken([
+                          "`%s`'s %s" % (row["arm"], spoken(
+                              [SHORT.get(key, key) for key in row["unread"]]))
+                          for row in screen_unread(rows)])])
+    else:
+        lines.extend(["", "Round 6 runs `%s`%s." % (
+            BARE, " and " + spoken(["`%s`" % arm for arm in chosen])
+            if chosen else " alone")])
+    return lines
+
+
+def round5e_section(root, trials, table, results, seed, margins, uses=None):
+    """Round 5e's answer: round 5d's reading of H7 to H9, how each trial
+    used its map, and the screen for round 6."""
+    lines = round5d_section(trials, table, results, seed, margins,
+                            ROUND5E_HYPOTHESES,
+                            "## Round 5e: the templates on demand")
+    lines.append("")
+    lines.extend(map_use_lines(
+        trials, map_uses(root, trials) if uses is None else uses))
+    lines.append("")
+    lines.extend(screen_lines(trials, table, results))
+    return lines
+
+
+def round5e_checks():
+    """Round 5e's rules: its arms are read under round 5d's rules and its
+    own registration, its contrasts are declared, H7 to H9 read as
+    registered, the map's use is counted from the transcript, and the
+    screen ranks round 6's candidates as 13d.9 says."""
+    checks = []
+    fresh = {"lazyref-1": {}, "lazyskills-1": {}}
+    earlier = {"hand-1": {}, "short-1": {}}
+    got = (is_round5e(fresh), is_round5d(fresh), later_rules_of(fresh),
+           round_arms(fresh) == ROUND5E_ARMS,
+           margins_of(fresh) is ROUND5D_MARGINS,
+           registration_of(fresh), registration_of(earlier),
+           owed_blocks(fresh) == list(range(2, ROUND5_K + 1)))
+    checks.append(("round 5e reads under round 5d's rules, against its own "
+                   "registration, owing its own arms' blocks",
+                   got == (True, False, True, True, True,
+                           ROUND5E_REGISTRATION, ROUND5D_REGISTRATION, True),
+                   got))
+
+    present = {"%s-1" % arm: {} for arm in
+               ("none", "reference", "skills", "hand", "short") + ROUND5E_ARMS}
+    active = active_contrasts(present)
+    wanted = [tuple(label.split("-")) for _, label, _ in ROUND5E_HYPOTHESES]
+    against = [(arm, other) for arm in ROUND5E_ARMS
+               for other in ("none", "reference", "skills", "hand", "short")]
+    got = (all(pair in active for pair in wanted + against),
+           all(label in PLAIN_QUESTIONS for _, label, _ in ROUND5E_HYPOTHESES))
+    checks.append(("round 5e's contrasts are declared: each map arm against "
+                   "none and every reused arm, and the skill against the "
+                   "file", got == (True, True), got))
+
+    # In round 5e's root, `none` and `reference` came from round 5c and
+    # `hand` from round 5d, all reused: `hand − none` crosses rounds, `none`
+    # against `reference` does not, and a fresh arm crosses every reused one.
+    def reused(root):
+        return {"scores": {"reused_from": {"root": root, "name": "x-1"}}}
+    mixed = {"none-1": reused("r5c"), "reference-1": reused("r5c"),
+             "hand-1": reused("r5d"), "lazyref-1": {"scores": {}}}
+    crossed = crossed_labels(mixed)
+    got = (sorted(crossed), arm_origins(mixed)["lazyref"])
+    checks.append(("a contrast crosses rounds where its arms ran in "
+                   "different roots, reused or not",
+                   "hand-none" in crossed and "lazyref-none" in crossed
+                   and "lazyref-hand" in crossed
+                   and "reference-none" not in crossed
+                   and "lazyref-reference" in crossed and got[1] is None,
+                   got))
+
+    def results_for(label, **overrides):
+        readings = {key: "held" for key in SCREEN_ROWS}
+        readings.update(overrides)
+        return {key: {label: {"verdict": reading}}
+                for key, reading in readings.items()}
+    label = "lazyref-reference"
+    got = [round5d_hypothesis(results_for(label), label, "held")[0],
+           round5d_hypothesis(results_for(label, task_success="better"),
+                              label, "held")[0],
+           round5d_hypothesis(results_for(label, judge_security="worse"),
+                              label, "held")[0],
+           round5d_hypothesis(results_for(label, reliability="worse"),
+                              label, "held")[0],
+           round5d_hypothesis(results_for(label, task_success="open"),
+                              label, "held")[0]]
+    checks.append(("H7 to H9 are supported when every row is held or better, "
+                   "refuted by any worse row, reliability's included",
+                   got == ["supported", "supported", "refuted", "refuted",
+                           "inconclusive"], got))
+
+    def read_names(command, known=()):
+        """The templates a shell command reads, by name alone."""
+        return [template for _, template in shell_reads(command, known)]
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-map-use-self-test")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+
+    def call(name, **given):
+        return {"type": "tool_use", "id": "t", "name": name, "input": given}
+
+    def line(kind, message_id, *blocks):
+        return json.dumps({"type": kind,
+                           "message": {"id": message_id,
+                                       "content": list(blocks)}}) + "\n"
+    into = VENDORED["into"]
+    planted = os.path.join(scratch, "planted.jsonl")
+    with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("user", "u1", {"type": "text", "text": "go"}))
+        handle.write(line("assistant", "a1", call(
+            "Read", file_path="C:\\pen\\%s\\templates\\core\\quality.md"
+            % into.replace("/", "\\"))))
+        handle.write(line("assistant", "a1", {"type": "text", "text": "ok"}))
+        handle.write(line("assistant", "a2", call(
+            "Read", file_path="/pen/%s/templates/core/quality.md" % into)))
+        handle.write(line("assistant", "a3", call(
+            "Bash", command="ls src 2>/dev/null; pytest -q 2>&1 | tail -3")))
+        handle.write(line("assistant", "a4", call(
+            "Bash", command="echo x > x.py")))
+        handle.write(line("assistant", "a5", call("Write", file_path="y.py")))
+        handle.write(line("assistant", "a6", call(
+            "Bash", command="cat %s/templates/backend/http.md | head" % into)))
+        handle.write(line("assistant", "a7", call(
+            "Read", file_path="/pen/%s/templates/core/oop.md" % into)))
+        handle.write(line("assistant", "a8", call("Read",
+                                                  file_path="/pen/x.py")))
+    chain = ["templates/core/quality.md", "templates/backend/http.md"]
+    reading = map_use([planted], "lazyref", chain)
+    skills = os.path.join(scratch, "skills.jsonl")
+    with io.open(skills, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "s1", call("Skill",
+                                                  skill="base-quality")))
+        handle.write(line("assistant", "s2", call("Skill", skill="run")))
+        handle.write(line("assistant", "s3", call("Edit", file_path="x.py"),
+                          call("Skill", skill="backend-api")))
+    loading = map_use([skills], "lazyskills", ["base-quality", "backend-api"])
+    silent = os.path.join(scratch, "silent.jsonl")
+    with io.open(silent, "w", encoding="utf-8", newline="\n") as handle:
+        for index, name in enumerate(chain, 1):
+            handle.write(line("assistant", "n%d" % index, call(
+                "Read", file_path="/pen/%s/%s" % (into, name))))
+    never_wrote = map_use([silent], "lazyref", chain)
+    rows = map_use_rows(
+        {"lazyref-1": {}, "lazyref-2": {}, "lazyskills-1": {}},
+        {"lazyref-1": reading, "lazyref-2": never_wrote,
+         "lazyskills-1": loading})
+    summary = [(row["arm"], row["read"], row["before"], row["wrote"],
+                row["first"], row["up_front"]) for row in rows]
+    detail = "\n".join(map_use_detail({"lazyref-1": {}},
+                                      {"lazyref-1": reading}))
+    shutil.rmtree(scratch, ignore_errors=True)
+    got = (reading, loading, never_wrote, summary)
+    checks.append(("the map's use counts each template read or skill loaded, "
+                   "with its turn, and those before the first write",
+                   reading == {"uses": [(1, "templates/core/quality.md"),
+                                        (2, "templates/core/quality.md"),
+                                        (6, "templates/backend/http.md")],
+                               "first_write": 4, "by_subagent": 0,
+                               "before_write": ["templates/core/quality.md"]}
+                   and loading == {"uses": [(1, "base-quality"),
+                                            (3, "backend-api")],
+                                   "first_write": 3, "by_subagent": 0,
+                                   "before_write": ["base-quality"]}
+                   and never_wrote["first_write"] is None
+                   and summary == [("lazyref", 2.0, 1.0, 1, 1.0, 0),
+                                   ("lazyskills", 2.0, 1.0, 1, 1.0, 0)],
+                   got))
+    checks.append(("a shell command that writes counts as the first write, "
+                   "a template off the map is not counted, and a trial that "
+                   "never wrote says nothing about reading up front",
+                   reading["first_write"] == 4
+                   and all(template != "templates/core/oop.md"
+                           for _, template in reading["uses"])
+                   and summary[0][3] == 1 and summary[0][5] == 0,
+                   (reading, summary)))
+    checks.append(("a shell read of a template counts, a redirection to "
+                   "the null device or into another stream is no write, an "
+                   "edit in place or a download is one, and a brace list "
+                   "expands",
+                   (6, "templates/backend/http.md") in reading["uses"]
+                   and not shell_writes("ls src 2>/dev/null")
+                   and not shell_writes("pytest 2>&1 | tail")
+                   and not shell_writes("Get-Content x.py > $null")
+                   and shell_writes("echo x > x.py")
+                   and shell_writes("cat a >> b.txt")
+                   and shell_writes("mkdir src")
+                   and shell_writes("sed -i 's/a/b/' app.py")
+                   and shell_writes("curl -o app.py https://x")
+                   and shell_writes("wget -O app.py https://x")
+                   and not shell_writes("sed -n 1p app.py")
+                   and not shell_writes("curl -s https://x")
+                   and read_names("cat %s/templates/{core,backend}/*.md" % into,
+                                  chain) == chain,
+                   reading["uses"]))
+    quality = "%s/templates/core/quality.md" % into
+    checks.append(("quoted text is no shell operator, and a path a shell "
+                   "command lists or tests is not read",
+                   not shell_writes("git log --format='%h -> %s'")
+                   and not shell_writes("echo 'mkdir src'")
+                   and shell_writes("echo 'x' > 'my file.py'")
+                   and read_names("ls %s" % quality) == []
+                   and read_names("test -f %s && echo yes" % quality) == []
+                   and read_names("cat %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("sed -n 1,40p %s | head" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("Get-Content %s" % quality)
+                   == ["templates/core/quality.md"],
+                   None))
+    http = "%s/templates/backend/http.md" % into
+    checks.append(("a shell command is read one simple command at a time: "
+                   "every operand of a reading command counts, and a verb "
+                   "in an argument is no command",
+                   read_names("cat %s %s" % (quality, http))
+                   == ["templates/core/quality.md",
+                       "templates/backend/http.md"]
+                   and read_names("cat '%s' | head" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("ls %s && cat %s" % (quality, http))
+                   == ["templates/backend/http.md"]
+                   and not shell_writes("rg -n mkdir src")
+                   and not shell_writes("echo mkdir src")
+                   and shell_writes("/usr/bin/cp a b")
+                   and shell_writes("FOO=1 mkdir x")
+                   and shell_writes("pytest -q | tee log.txt")
+                   and shell_writes("C:\\Windows\\System32\\xcopy.exe a b"
+                                    " > out.txt"),
+                   None))
+    silent_note = "\n".join(map_use_lines({"lazyref-2": {}},
+                                          {"lazyref-2": never_wrote}))
+    checks.append(("with no trial that wrote, the note beside H7 withholds "
+                   "the reading",
+                   "says nothing about whether" in silent_note
+                   and "on-demand reading" not in silent_note,
+                   silent_note[-300:]))
+    checks.append(("every trial's reads are listed with their turns",
+                   "| lazyref-1 | 4 | 0 | 1: core/quality.md, "
+                   "2: core/quality.md, 6: backend/http.md |" in detail,
+                   detail))
+
+    # A subagent read all of the map at the parent's turn 2, before the
+    # parent's first write at turn 3; a wildcard stands for every template
+    # of the map it matches; a map read by nobody is said to be ignored.
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-map-use-self-test")
+    os.makedirs(scratch)
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "p1", call("Bash", command="ls")))
+        handle.write(line("assistant", "p2", call(
+            "Agent", prompt="read the templates")))
+        handle.write(line("assistant", "p3", call("Write", file_path="a.py")))
+    child = os.path.join(scratch, "agent.jsonl")
+    with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "c1", call(
+            "Bash", command="cat %s/templates/core/*.md" % into)))
+        handle.write(line("assistant", "c2", call(
+            "Read", file_path="/pen/%s/templates/backend/http.md" % into)))
+    chain = ["templates/core/quality.md", "templates/core/git.md",
+             "templates/backend/http.md"]
+    with_subagent = map_use([parent], "lazyref", chain, [child])
+    delegated_rows = map_use_rows({"lazyref-1": {}},
+                                  {"lazyref-1": with_subagent})
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a subagent's reads count at the turn that delegated, and "
+                   "a wildcard stands for every template of the map it "
+                   "matches",
+                   with_subagent == {
+                       "uses": [(2, "templates/core/git.md"),
+                                (2, "templates/core/quality.md"),
+                                (2, "templates/backend/http.md")],
+                       "first_write": 3, "by_subagent": 3,
+                       "before_write": ["templates/backend/http.md",
+                                        "templates/core/git.md",
+                                        "templates/core/quality.md"]}
+                   and delegated_rows[0]["before"] == 3.0
+                   and read_names("cat %s/templates/core/q*.md" % into,
+                                   chain) == ["templates/core/quality.md"],
+                   with_subagent))
+    # Two delegations: each subagent is charged to the line it points back
+    # to, so the second one's read at turn 3 falls after the write at turn
+    # 2, and a quoted separator splits no command.
+    os.makedirs(scratch)
+
+    def stamped(kind, message_id, uuid, *blocks):
+        record = json.loads(line(kind, message_id, *blocks))
+        record["uuid"] = uuid
+        return json.dumps(record) + "\n"
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(stamped("assistant", "p1", "u1", call(
+            "Agent", prompt="read quality")))
+        handle.write(stamped("assistant", "p2", "u2", call(
+            "Write", file_path="a.py")))
+        handle.write(stamped("assistant", "p3", "u3", call(
+            "Agent", prompt="read http")))
+    children = []
+    for index, (uuid, template) in enumerate(
+            (("u1", "core/quality.md"), ("u3", "backend/http.md"))):
+        child = os.path.join(scratch, "agent-%d.jsonl" % index)
+        with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps({"type": "fork-context-ref",
+                                     "parentLastUuid": uuid}) + "\n")
+            handle.write(line("assistant", "c%d" % index, call(
+                "Read", file_path="/pen/%s/templates/%s" % (into, template))))
+        children.append(child)
+    twice = map_use([parent], "lazyref", chain, children)
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("each subagent is charged to the turn that started it, "
+                   "and a separator inside quotes splits no command",
+                   twice == {"uses": [(1, "templates/core/quality.md"),
+                                      (3, "templates/backend/http.md")],
+                             "first_write": 2, "by_subagent": 2,
+                             "before_write": ["templates/core/quality.md"]}
+                   and read_names('echo "x; cat %s"' % quality, chain) == []
+                   and read_names('cat "%s"; ls' % quality, chain)
+                   == ["templates/core/quality.md"]
+                   and not shell_writes('echo "a > b"'),
+                   twice))
+    one_go = os.path.join(scratch, "one-go.jsonl")
+    os.makedirs(scratch)
+    heredoc = "python - <<'PY'\nprint(2 > 1)\nPY"
+    with io.open(one_go, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "g1", call("Bash", command=heredoc)))
+        handle.write(line("assistant", "g2", call(
+            "Bash", command="cat %s/%s \\\n  %s/%s && mkdir -p src && cat %s/%s"
+            % (into, chain[0], into, chain[1], into, chain[2]))))
+    in_one_go = map_use([one_go], "lazyref", chain)
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a read before the writing command of one shell call "
+                   "comes before the write, a here-document body is no "
+                   "command, and a backslash continues a line",
+                   in_one_go["first_write"] == 2
+                   and in_one_go["before_write"] == sorted(chain[:2])
+                   and len(in_one_go["uses"]) == 3
+                   and not shell_writes(heredoc)
+                   and shell_writes("cat a <<'EOF'\nx\nEOF\necho y > z"),
+                   in_one_go))
+    # A skills arm's shell write counts; a redirection after a here-document
+    # opener stays; a subagent pointing at the line before the delegating
+    # message is charged to that message; a search's pattern is no file.
+    os.makedirs(scratch)
+    skilled = os.path.join(scratch, "skilled.jsonl")
+    with io.open(skilled, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "k1", call("Bash",
+                                                  command="echo x > app.py")))
+        handle.write(line("assistant", "k2", call("Skill",
+                                                  skill="base-quality")))
+        handle.write(line("assistant", "k3", call("Edit", file_path="a.py")))
+    shell_first = map_use([skilled], "lazyskills", ["base-quality"])
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(stamped("user", "q0", "u0", {"type": "text",
+                                                  "text": "go"}))
+        handle.write(stamped("assistant", "q1", "u1", call(
+            "Bash", command="ls")))
+        handle.write(stamped("user", "q1r", "u1r", {"type": "text",
+                                                    "text": "ok"}))
+        handle.write(stamped("assistant", "q2", "u2", call(
+            "Agent", prompt="read quality")))
+    child = os.path.join(scratch, "agent.jsonl")
+    with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps({"type": "fork-context-ref",
+                                 "parentLastUuid": "u1r"}) + "\n")
+        handle.write(line("assistant", "c1", call(
+            "Read", file_path="/pen/%s/%s" % (into, chain[0]))))
+    anchored = map_use([parent], "lazyref", chain, [child])
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a skills arm's shell write counts, a redirection after a "
+                   "here-document opener stays, a subagent is charged to the "
+                   "delegating message, and a search's pattern is no file",
+                   shell_first["first_write"] == 1
+                   and shell_first["before_write"] == []
+                   and shell_writes("cat <<'EOF' > app.py\nx\nEOF")
+                   and not shell_writes("cat <<'EOF'\nx > y\nEOF")
+                   and anchored["uses"] == [(2, chain[0])]
+                   and read_names("rg '%s' README.md" % quality) == []
+                   and read_names("grep -n x %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("sed -n 1,40p %s" % quality)
+                   == ["templates/core/quality.md"],
+                   (shell_first, anchored)))
+    # Two delegations in a row: the second subagent points back at the
+    # first one's result, written in the first one's turn, and is charged
+    # to the second delegation all the same. A quoted pattern with spaces
+    # is one operand; a path is resolved against the directory an earlier
+    # command of the call moved into.
+    os.makedirs(scratch)
+    parent = os.path.join(scratch, "parent.jsonl")
+    with io.open(parent, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(stamped("user", "r0", "v0", {"type": "text",
+                                                  "text": "go"}))
+        handle.write(stamped("assistant", "r1", "v1", call(
+            "Agent", prompt="read quality")))
+        handle.write(stamped("user", "r1r", "v1r", {"type": "text",
+                                                    "text": "done"}))
+        handle.write(stamped("assistant", "r2", "v2", call(
+            "Agent", prompt="read http")))
+        handle.write(stamped("assistant", "r3", "v3", call(
+            "Write", file_path="a.py")))
+    children = []
+    for index, (uuid, template) in enumerate(
+            (("v0", "core/quality.md"), ("v1r", "backend/http.md"))):
+        child = os.path.join(scratch, "agent-%d.jsonl" % index)
+        with io.open(child, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps({"type": "fork-context-ref",
+                                     "parentLastUuid": uuid}) + "\n")
+            handle.write(line("assistant", "d%d" % index, call(
+                "Read", file_path="/pen/%s/templates/%s" % (into, template))))
+        children.append(child)
+    in_a_row = map_use([parent], "lazyref", chain, children)
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("a subagent pointing at the previous delegation's result "
+                   "is charged to its own delegation, a quoted pattern is one "
+                   "operand, a path follows the call's directory change, a "
+                   "wildcard stands for no slash, a loop's files are read "
+                   "by the body's command that reads its variable, a flag "
+                   "names a search's pattern, and a quoted null device is "
+                   "no write",
+                   in_a_row["uses"] == [(1, chain[0]), (2, chain[2])]
+                   and read_names('grep "mention %s" README.md' % quality)
+                   == []
+                   and read_names("grep 'x y' %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("cd %s && cat templates/core/quality.md"
+                                  % into) == ["templates/core/quality.md"]
+                   and read_names("cd %s/templates; cat core/git.md "
+                                  "../templates/core/quality.md; cd ..; ls" % into)
+                   == ["templates/core/git.md", "templates/core/quality.md"]
+                   and read_names("cd src && cat core/quality.md") == []
+                   and read_names("cat %s/templates/*.md" % into, chain) == []
+                   and read_names("cat %s/templates/*/q*.md" % into, chain)
+                   == ["templates/core/quality.md"]
+                   and read_names('for f in %s/templates/*/*.md; do cat "$f"; '
+                                  'done' % into, chain) == chain
+                   and read_names('for f in %s/templates/*/*.md; do echo "$f"; '
+                                  'done; cat README.md' % into, chain) == []
+                   and read_names('for f in %s/templates/*/*.md; do cat '
+                                  'README.md; done' % into, chain) == []
+                   and shell_reads('for f in %s/templates/*/*.md; do echo s > '
+                                   'n.txt; cat "${f}"; done' % into, chain)
+                   == [(2, chain[0])] + [(3, template)
+                                         for template in chain[1:]]
+                   and first_writing_command(
+                       'for f in x; do echo s > n.txt; cat "$f"; done') == 1
+                   and read_names("Select-String -Path %s -Pattern TODO"
+                                  % quality) == ["templates/core/quality.md"]
+                   and read_names("grep -e TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and not shell_writes('cat %s 2>"/dev/null"' % quality)
+                   and not shell_writes("cat %s 2>'/dev/null'" % quality)
+                   and read_names("(cd %s && cat templates/core/git.md)"
+                                  % into) == ["templates/core/git.md"]
+                   and read_names("if test -f x; then cat %s; fi" % quality)
+                   == ["templates/core/quality.md"],
+                   in_a_row))
+    checks.append(("a loop whose body writes reads its first file before "
+                   "the write and the rest after it",
+                   shell_reads('for f in %s/templates/*/*.md; do cat "$f"; '
+                               'echo done >> notes.txt; done' % into, chain)
+                   == [(1, chain[0])] + [(3, template)
+                                         for template in chain[1:]]
+                   and shell_reads('for f in %s/templates/*/*.md; do cat '
+                                   '"$f" >> all.md; done' % into, chain)
+                   == [(1, chain[0])] + [(2, template)
+                                         for template in chain[1:]]
+                   and shell_reads('echo s > n.txt; for f in %s/templates/'
+                                   '*/*.md; do cat "$f"; done' % into, chain)
+                   == [(2, template) for template in chain]
+                   and shell_reads('for f in %s/templates/*/*.md; do cat '
+                                   '"$f"; done; echo s > n.txt' % into, chain)
+                   == [(1, template) for template in chain],
+                   shell_reads('for f in %s/templates/*/*.md; do cat "$f"; '
+                               'echo done >> notes.txt; done' % into,
+                               chain)))
+    checks.append(("a program run writes where the code it carries does, "
+                   "and a script run from a file is no write of its own",
+                   shell_writes("python -c \"open('x.py', 'w').write('a')\"")
+                   and shell_writes("python3 -c 'from pathlib import Path; "
+                                    "Path(\"x\").write_text(\"a\")'")
+                   and shell_writes("py - <<'EOF'\nimport json\n"
+                                    "with open('x.json', mode='w') as f:\n"
+                                    "    json.dump({}, f)\nEOF")
+                   and shell_writes("node -e \"require('fs').writeFileSync("
+                                    "'x.js', 'a')\"")
+                   and shell_writes("bash -c 'echo a > x.txt'")
+                   and shell_writes("pwsh -Command 'Set-Content x.txt a'")
+                   and shell_writes("bash <<'EOF'\nmkdir src\nEOF")
+                   and not shell_writes(
+                       "python -c 'print(open(\"x\").read())'")
+                   and not shell_writes("python -c 'print(1 > 0)'")
+                   and not shell_writes("bash -c 'echo \"a > b\"'")
+                   and not shell_writes("python build.py")
+                   and not shell_writes("py -m pytest -q")
+                   and not shell_writes("node x.js")
+                   and not shell_writes(
+                       "cat <<'EOF'\nopen(\"x\", \"w\")\nEOF")
+                   and first_writing_command(
+                       "cat %s; python -c \"open('x', 'w')\"" % quality) == 1,
+                   None))
+    checks.append(("a download to the null device is no write, an inline "
+                   "shell's reads are the command's, and a flag carries a "
+                   "search's pattern in itself",
+                   not shell_writes("curl -s -o /dev/null https://x")
+                   and not shell_writes("curl -s --output=/dev/null https://x")
+                   and not shell_writes("curl -s -o NUL https://x")
+                   and not shell_writes('curl -s -o "/dev/null" https://x')
+                   and not shell_writes("wget -O $null https://x")
+                   and shell_writes("curl -s -o out.html https://x")
+                   and shell_writes("curl -O https://x/app.py")
+                   and shell_writes("wget -O app.py https://x")
+                   and shell_reads('bash -c "cat %s/templates/*/*.md"' % into,
+                                   chain) == [(0, template) for template in chain]
+                   and shell_reads("pwsh -Command 'Get-Content %s'" % quality,
+                                   chain) == [(0, "templates/core/quality.md")]
+                   and shell_reads("bash <<'EOF'\ncat %s\nEOF" % quality,
+                                   chain) == [(0, "templates/core/quality.md")]
+                   and shell_reads("ls; sh -c 'cat %s'" % quality, chain)
+                   == [(1, "templates/core/quality.md")]
+                   and first_writing_command(
+                       "bash -c 'cat %s; echo a > b'" % quality) == 0
+                   and read_names("rg --regexp=TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("grep -eTODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("Select-String -Pattern:TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("grep --extended-regexp TODO %s" % quality)
+                   == ["templates/core/quality.md"]
+                   and read_names("grep -n TODO %s" % quality)
+                   == ["templates/core/quality.md"],
+                   None))
+    ignored = map_use_lines({"lazyref-1": {}}, {"lazyref-1": {
+        "uses": [], "first_write": 2, "by_subagent": 0}})
+    checks.append(("a map no trial read is said to be ignored, not read on "
+                   "demand",
+                   "compares a map ignored" in "\n".join(ignored)
+                   and "so H7 reads on-demand" not in "\n".join(ignored),
+                   ignored[-6:]))
+    apart = h7_note(map_use_rows(
+        {"lazyref-1": {}, "lazyref-2": {}},
+        {"lazyref-1": never_wrote,
+         "lazyref-2": {"uses": [], "first_write": 2, "by_subagent": 0}}))
+    checks.append(("a trial that read and never wrote beside one that wrote "
+                   "and never read shows no on-demand reading",
+                   "compares a map ignored" in apart
+                   and "so H7 reads on-demand" not in apart, apart))
+    planted_uses = {"lazyref-1": reading}
+    kept = aggregate(1, {}, {}, {}, {}, None, None, planted_uses)["map_use"]
+    checks.append(("the aggregate keeps each trial's map use",
+                   kept == {"lazyref-1": {
+                       "first_write": 4, "by_subagent": 0,
+                       "before_write": ["templates/core/quality.md"],
+                       "uses": [{"turn": 1,
+                                 "template": "templates/core/quality.md"},
+                                {"turn": 2,
+                                 "template": "templates/core/quality.md"},
+                                {"turn": 6,
+                                 "template": "templates/backend/http.md"}]}}
+                   and "map_use" not in aggregate(1, {}, {}, {}, {}, None,
+                                                  None),
+                   kept))
+    got = (mapped_templates("none"), len(mapped_templates("lazyskills")),
+           len(mapped_templates("lazyref")))
+    checks.append(("an arm's map is its skills or its vendored chain, and the "
+                   "bare arm has none", got == ([], 13, 13), got))
+
+    # Two arms better on two rows, the cheaper first; one out on task
+    # success; three held, by cost; the fifth in rank stays out of round 6.
+    costs = {"inline": 10.0, "hybrid": 8.0, "reference": 6.0, "skills": 5.0,
+             "hand": 9.0, "short": 20.0}
+    table = {"cost_usd": {"values": {arm: {1: cost, 2: cost}
+                                     for arm, cost in costs.items()}}}
+    results = {key: {} for key in SCREEN_ROWS}
+    for arm in costs:
+        for key in SCREEN_ROWS:
+            results[key]["%s-none" % arm] = {"verdict": "held"}
+    for key in ("task_success", "judge_security"):
+        results[key]["inline-none"]["verdict"] = "better"
+        results[key]["hybrid-none"]["verdict"] = "better"
+    results["task_success"]["reference-none"]["verdict"] = "worse"
+
+    # Every declared contrast has a result whether its arms ran or not, so
+    # the planted results carry the absent arms' labels too.
+    for arm in ROUND5E_ARMS:
+        for key in SCREEN_ROWS:
+            results[key]["%s-none" % arm] = {"verdict": "not computed"}
+    held = {"%s-1" % arm: {} for arm in list(costs) + [BARE]}
+    partial_rows, missing = round6_screen(held, table, results)
+    partial = {row["arm"]: (row["rank"], row["round6"], row["worse"])
+               for row in partial_rows}
+    checks.append(("the screen ranks what it holds and names no arm for "
+                   "round 6 while a candidate is missing",
+                   missing == list(ROUND5E_ARMS)
+                   and partial["hybrid"] == (1, False, [])
+                   and "names no arms for round 6 yet" in
+                   "\n".join(screen_lines(held, table, results))
+                   and "`lazyref` and `lazyskills` are not in this root"
+                   in "\n".join(screen_lines(held, table, results)),
+                   (partial, missing)))
+    for arm in ROUND5E_ARMS:
+        costs[arm] = 30.0
+        held["%s-1" % arm] = {}
+        table["cost_usd"]["values"][arm] = {1: 30.0, 2: 30.0}
+        for key in SCREEN_ROWS:
+            results[key]["%s-none" % arm] = {"verdict": "held"}
+    short_rows, _ = round6_screen(held, table, results)
+    short_text = "\n".join(screen_lines(held, table, results))
+    checks.append(("the screen names no arm for round 6 while the run is "
+                   "short of its K",
+                   not any(row["round6"] for row in short_rows)
+                   and "still owes `none` blocks 2 to 15" in short_text
+                   and "`lazyskills` blocks 2 to 15, and a short run"
+                   in short_text
+                   and "names no arms for round 6 yet" in short_text,
+                   short_text.splitlines()[-1]))
+    for arm in list(costs) + [BARE]:
+        for block in range(2, ROUND5_K + 1):
+            if (arm, block) != ("hand", 7):
+                held[trial_name(arm, block)] = {}
+    reused_short, _ = round6_screen(held, table, results)
+    checks.append(("a reused arm short of its K holds the screen as a fresh "
+                   "one does",
+                   not any(row["round6"] for row in reused_short)
+                   and screen_owed(held) == [("hand", [7])]
+                   and "still owes `hand` block 7"
+                   in "\n".join(
+                       screen_lines(held, table, results)),
+                   screen_owed(held)))
+    held[trial_name("hand", 7)] = {}
+    results["judge_security"]["hand-none"] = {"verdict": "not computed"}
+    unread_rows, _ = round6_screen(held, table, results)
+    unread_text = "\n".join(screen_lines(held, table, results))
+    checks.append(("a deciding row not computed yet holds the screen",
+                   not any(row["round6"] for row in unread_rows)
+                   and "`hand`'s %s not computed yet" % SHORT["judge_security"]
+                   in unread_text,
+                   unread_text.splitlines()[-1]))
+    results["judge_security"]["hand-none"] = {"verdict": "held"}
+    results["judge_security"]["reference-none"] = {"verdict": "not computed"}
+    full_rows, missing = round6_screen(held, table, results)
+    checks.append(("a candidate out on a row read worse holds the screen for "
+                   "no unread row",
+                   any(row["round6"] for row in full_rows)
+                   and next(row["unread"] for row in full_rows
+                            if row["arm"] == "reference")
+                   == ["judge_security"],
+                   [(row["arm"], row["round6"]) for row in full_rows]))
+    screen = {row["arm"]: (row["rank"], row["round6"], row["worse"])
+              for row in full_rows}
+    checks.append(("the screen drops an arm worse than none on a deciding "
+                   "row, ranks the rest by rows better and then by cost, "
+                   "and keeps four",
+                   not missing
+                   and screen == {"hybrid": (1, True, []),
+                                  "inline": (2, True, []),
+                                  "skills": (3, True, []),
+                                  "hand": (4, True, []),
+                                  "short": (5, False, []),
+                                  "lazyref": (6, False, []),
+                                  "lazyskills": (7, False, []),
+                                  "reference": (None, False,
+                                                ["task_success"])},
+                   screen))
+    text = "\n".join(screen_lines(held, table, results))
+    checks.append(("the screen names the arms round 6 runs",
+                   "Round 6 runs `none` and `hybrid`, `inline`, `skills` and "
+                   "`hand`." in text
+                   and "out: %s worse" % SHORT["task_success"] in text,
+                   text.splitlines()[-1]))
+
+    # The plain report answers the latest round's questions: with round
+    # 5e's arms present, H7 to H9, and not round 5d's.
+    design = {"none": 3, "reference": 3, "skills": 3, "hand": 3,
+              "lazyref": 3, "lazyskills": 3}
+    run = {trial_name(arm, index): {
+        "scores": ({"reused_from": {"root": "r5c", "name": "x"}}
+                   if arm in ("none", "reference", "skills")
+                   else {"reused_from": {"root": "r5d", "name": "x"}}
+                   if arm == "hand" else {}),
+        "change": None, "security": None,
+        "judge": {"answer": {"rubric": {"design": {"score": score}}}}}
+        for arm, score in design.items() for index in range(1, 4)}
+    plain = " ".join(rendered_plain(run, 20260912).split())
+    checks.append(("the plain report asks round 5e's questions, not round "
+                   "5d's",
+                   PLAIN_QUESTIONS["lazyref-reference"] in plain
+                   and PLAIN_QUESTIONS["lazyskills-lazyref"] in plain
+                   and PLAIN_QUESTIONS["hand-none"] not in plain,
+                   plain[plain.find("## The questions"):][:400]))
+    ignored_uses = {"lazyref-%d" % index: {"uses": [], "first_write": 2,
+                                           "by_subagent": 0}
+                    for index in range(1, 4)}
+    qualified = " ".join(rendered_plain(run, 20260912, ignored_uses).split())
+    checks.append(("the plain report qualifies H7's answer with what the "
+                   "map's use says",
+                   "compares a map ignored" in qualified
+                   and qualified.find("compares a map ignored")
+                   > qualified.find(PLAIN_QUESTIONS["lazyref-reference"]),
+                   qualified[qualified.find("## The questions"):][:500]))
+    return checks
 
 
 def round5d_checks(seed):
@@ -4355,16 +5940,26 @@ def iso_rules(trials):
     return not is_round5(trials)
 
 
-def aggregate(seed, trials, table, results, withdrawn, check, iso):
+def aggregate(seed, trials, table, results, withdrawn, check, iso,
+              uses=None):
     """What `aggregate.json` keeps beside the report: every row, contrast
-    and method the documents cite, and the ISO reading where the round
-    draws that radar, so each of its cells can be checked too."""
+    and method the documents cite, the ISO reading where the round draws
+    that radar, and each trial's use of its map where the round reads it,
+    so each of its cells can be checked too."""
     payload = {"seed": seed, "table": table, "results": results,
                "blocks": blocks_state(trials), "withdrawn": withdrawn,
                "cross_check": check}
     if iso:
         payload["iso"] = {"table": iso[0], "results": iso[1],
                           "withdrawn": list(iso[2])}
+    if uses is not None:
+        payload["map_use"] = {
+            name: {"first_write": use["first_write"],
+                   "before_write": use.get("before_write"),
+                   "by_subagent": use.get("by_subagent", 0),
+                   "uses": [{"turn": turn, "template": template}
+                            for turn, template in use["uses"]]}
+            for name, use in sorted(uses.items())}
     return payload
 
 
@@ -4481,7 +6076,7 @@ def finding_lines(trials, table, results, active):
     # footnote.
     reused = reused_arms(trials)
     if reused:
-        crossed = crossing(active, reused)
+        crossed = crossing(active, arm_origins(trials))
         across = ("Compared unpaired with this round's trials, as round 5d "
                   "registered" if is_round5d(trials) else
                   "Pairing them with this round's trials, across days")
@@ -5179,6 +6774,22 @@ def rendered(trials, seed, withdrawn):
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
     return before, table, text
+
+
+def rendered_plain(trials, seed, uses=None):
+    """The plain report a planted run renders, as text."""
+    table = collect(trials)
+    results = round_contrasts(trials, table, seed)
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-plain-render")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+    target = write_report(scratch, trials, table, results, seed,
+                          out_dir=scratch, uses=uses)
+    with io.open(target, encoding="utf-8") as handle:
+        text = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    return text
 
 
 def section_rows(text, heading, label):
@@ -6230,6 +7841,7 @@ def self_test(seed):
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
     checks.extend(round5d_checks(seed))
+    checks.extend(round5e_checks())
     checks.extend(iso_checks(seed))
     checks.extend(band_checks(seed))
     checks.extend(failed_build_checks())
@@ -6300,8 +7912,7 @@ def main(argv):
     if is_round5(trials):
         try:
             problem = registration_problem(
-                options.root, ROUND5D_REGISTRATION if is_round5d(trials)
-                else ROUND5_REGISTRATION)
+                options.root, registration_of(trials))
         except TrialError as error:
             problem = str(error)
         if problem:
@@ -6373,18 +7984,20 @@ def main(argv):
         disagree(results, check)
     iso = (iso_reading(trials, options.seed, withdrawn) if iso_rules(trials)
            else None)
+    uses = map_uses(options.root, trials) if is_round5e(trials) else None
     target = write_report(options.root, trials, table, results, options.seed,
-                          out_dir, withdrawn, check, iso)
+                          out_dir, withdrawn, check, iso, uses)
 
     with io.open(os.path.join(scoring_area(options.root), "aggregate.json"),
                  "w", encoding="utf-8") as handle:
         json.dump(aggregate(options.seed, trials, table, results, withdrawn,
-                            check, iso), handle, indent=2, sort_keys=True)
+                            check, iso, uses), handle, indent=2,
+                  sort_keys=True)
     print("Report: %s" % target)
 
     # An earlier round read by round 5d's rules is post-hoc: its own page,
     # beside the registered report, which it leaves as it was.
-    if options.posthoc_rules and not is_round5d(trials):
+    if options.posthoc_rules and not later_rules_of(trials):
         # The other judge is read by the same rules, so a contrast across
         # rounds is unpaired on both sides before their signs are compared.
         later = posthoc_rules_reading(

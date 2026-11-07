@@ -92,9 +92,12 @@ def reuse_trial(name, record, source, target):
     tarball = (record.get("frozen") or {}).get("tarball")
     if not tarball or not os.path.isfile(tarball):
         raise TrialError("%s has no frozen tarball at %s" % (name, tarball))
-    origin = {"root": os.path.abspath(source),
-              "name": os.path.splitext(os.path.basename(tarball))[0],
-              "tarball": tarball}
+    # A trial copied on from a root that itself reused it keeps its first
+    # origin: the root it ran in is what decides which trials it pairs with.
+    origin = record.get("reused_from") or {
+        "root": os.path.abspath(source),
+        "name": os.path.splitext(os.path.basename(tarball))[0],
+        "tarball": tarball}
 
     copied = dict(record)
     copied["reused_from"] = origin
@@ -319,6 +322,14 @@ def self_test():
         checks.append(("an arm the source never ran is refused", False))
     except TrialError:
         checks.append(("an arm the source never ran is refused", True))
+
+    # Copied on from the target, a trial still names the root it ran in.
+    _, onward = reuse(target, os.path.join(scratch, "onward"), ["inline"])
+    carried = {r["arm"] + "-" + str(r["trial"]): r
+               for r in loaded(onward)["trials"]}["inline-1"]
+    checks.append(("a trial copied on keeps the root it ran in as its origin",
+                   carried["reused_from"]["root"] == os.path.abspath(source)
+                   and carried["reused_from"]["name"] == "inline-1"))
 
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
