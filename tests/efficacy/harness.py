@@ -3508,9 +3508,14 @@ def spec_checks():
 
     # The spec edited after the run started: the next trial is refused before
     # its workspace is laid out, so nothing is built from the new content.
+    # The planted run registers the file as it stands, since round 5's
+    # registered content is no longer the file's: each refusal below must then
+    # come from the edit, named as such, not from the registration.
     scratch = tempfile.mkdtemp(prefix="efficacy-spec-")
     original = SPECS[name]
+    registration = ROUND5_SPEC
     try:
+        globals()["ROUND5_SPEC"] = (name, spec_digest(original))
         edited = os.path.join(scratch, "SPEC.md")
         with io.open(original, "rb") as source, io.open(edited, "wb") as out:
             out.write(source.read() + b"\nOne more line.\n")
@@ -3523,8 +3528,8 @@ def spec_checks():
         try:
             run_trial("none", 2, root, scratch, options)
             refused = False
-        except TrialError:
-            refused = True
+        except TrialError as error:
+            refused = "not the content" in str(error)
         except Exception:
             refused = False
         checks.append(("a spec edited mid-run refuses the next trial unbuilt",
@@ -3545,8 +3550,8 @@ def spec_checks():
         try:
             run_trial("none", 3, root, scratch, options)
             refused = False
-        except TrialError:
-            refused = True
+        except TrialError as error:
+            refused = "not the content" in str(error)
         except Exception:
             refused = False
         finally:
@@ -3555,6 +3560,7 @@ def spec_checks():
                        "frees its slot", refused and os.listdir(root) == []))
     finally:
         SPECS[name] = original
+        globals()["ROUND5_SPEC"] = registration
         shutil.rmtree(scratch, ignore_errors=True)
     return checks
 
