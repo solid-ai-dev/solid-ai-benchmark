@@ -112,6 +112,13 @@ ROUND5_REF = "9086e0ff"
 # specifications in one round without a trace in its verdicts.
 ROUND5_SPEC = ("normal",
                "48ee93ff968ef4a3175408c349afd6ce7223d0f3bd25b49ad4521f0fc307e55e")
+
+# Round 6's specification: round 5's plus the two non-functional lines a team
+# would write, data surviving a restart and errors naming the field, each
+# graded by the hidden suite. Round 5's arms keep their own content above and
+# are re-run only from the benchmark at their commit.
+ROUND6_SPEC = ("normal",
+               "a99e19ac006605d06af214552de1ce5a3f0f5c4b087f1a461acb8d3f3b869a5f")
 ROUND5_ROOTS = ["backend-api", "backend-auth", "backend-database",
                 "frontend-ux", "base-security", "base-data-governance"]
 
@@ -3483,8 +3490,10 @@ def spec_checks():
     round5 = ["none", "inline", "hybrid", "reference", "skills"]
     name, registered = ROUND5_SPEC
     checks = [
-        ("round 5's registered digest is SPEC.md's content",
-         spec_digest(SPECS[name]) == registered),
+        ("round 6's registered digest is SPEC.md's content, and round 5's "
+         "is another",
+         spec_digest(SPECS[name]) == ROUND6_SPEC[1]
+         and registered != ROUND6_SPEC[1] and len(registered) == 64),
         ("a round-5 run on the registered spec passes",
          spec_problem(round5, name, registered) is None),
         ("a round-5 run on other content is refused",

@@ -25,6 +25,10 @@ other decision is yours.
 - The rendered HTML must be valid.
 - `import tariff` must work without Flask installed and without touching
   the database. The pricing engine does not depend on the web application.
+- Data survives a restart: whatever was saved is still there when the
+  application is started again on the same database file.
+- Errors say what went wrong: an answer that refuses input names the field
+  it refuses, whether it re-renders the form or answers 400.
 
 ## 2. Money
 
