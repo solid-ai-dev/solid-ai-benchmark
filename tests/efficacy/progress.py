@@ -30,18 +30,25 @@ from report import ROUND5_RUN  # noqa: E402
 WIDTH = 30
 
 
-def records(root):
-    """Every build trial record in the root's run records, in time order."""
+def runs(root):
+    """Every run record in the root, in time order, whole."""
     found = []
     for file in sorted(glob.glob(os.path.join(root, "run-*.json"))):
         try:
             with io.open(file, encoding="utf-8") as handle:
-                run = json.load(handle)
+                found.append(json.load(handle))
         except (OSError, ValueError):
 
             # The harness rewrites a record after every trial, so a read can
             # land mid-write; the next redraw reads it whole.
             continue
+    return found
+
+
+def records(root, runs_read=None):
+    """Every build trial record in the root's run records, in time order."""
+    found = []
+    for run in runs(root) if runs_read is None else runs_read:
 
         # A trial in flight records no task of its own; the run it sits in
         # says which task it is.
@@ -51,16 +58,32 @@ def records(root):
     return found
 
 
-def arms_in(trials):
-    """Round 5's arms, then every other arm the run records name, each once
-    in the order it first appears."""
+def declared_arms(runs_read):
+    """The arms the build runs name from their start, each once in order:
+    an arm whose first trial is still to come gets its bar all the same."""
+    found = []
+    for run in runs_read:
+        if run.get("task", "build") != "build":
+            continue
+        for arm in run.get("arms") or ():
+            if arm not in found:
+                found.append(arm)
+    return found
+
+
+def arms_in(trials, declared=(), asked=()):
+    """Round 5's arms, then every other arm the run records name, by a
+    trial or from their start, then those asked for, each once in the order
+    it first appears."""
 
     # A root may hold a reused round beside the one in flight, and a round
     # may run arms of its own, as `hand` and `short`. The records say which,
-    # so each gets a bar from its first trial on; none is dropped as unknown.
+    # so each gets a bar from its first trial on, or from the run's start
+    # where the record names its arms; none is dropped as unknown. A run
+    # whose record predates that names them with --arms instead.
     found = list(ROUND5_RUN)
-    for record in trials:
-        arm = record.get("arm")
+    named = [record.get("arm") for record in trials]
+    for arm in named + list(declared) + list(asked):
         if arm and arm not in found:
             found.append(arm)
     return tuple(found)
@@ -112,12 +135,13 @@ def bar(done, total):
     return "[%s%s]" % ("#" * filled, "." * (WIDTH - filled))
 
 
-def render(root, arms=None, k=ROUND5_K, moment=None):
+def render(root, arms=None, k=ROUND5_K, moment=None, asked=()):
     """The progress screen for the run root, as lines: one bar per round-5
-    arm and per other arm the run records name."""
+    arm, per other arm the run records name, and per arm asked for."""
     moment = moment or now()
-    trials = records(root)
-    arms = arms or arms_in(trials)
+    runs_read = runs(root)
+    trials = records(root, runs_read)
+    arms = arms or arms_in(trials, declared_arms(runs_read), asked)
     counts = tally(trials, arms)
     total = len(arms) * k
     done = sum(len(arm["done"]) for arm in counts.values())
@@ -320,9 +344,9 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     return lines
 
 
-def watch(root, every):
+def watch(root, every, asked=()):
     while True:
-        lines = render(root)
+        lines = render(root, asked=asked)
 
         # The console's own clear, not an escape sequence: a Windows console
         # can take the sequence and still leave the text scrolled out of the
@@ -362,6 +386,17 @@ def self_test():
                  encoding="utf-8") as handle:
         handle.write('{"trials": [')
 
+    # A run that names its arms from the start, one of them with no trial
+    # yet; a change run naming arms declares none for the build view.
+    with io.open(os.path.join(scratch, "run-4.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"task": "build", "arms": ["hand", "short"], "k": 15,
+                   "trials": []}, handle)
+    with io.open(os.path.join(scratch, "run-5.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"task": "change", "arms": ["lazyref"], "trials": []},
+                  handle)
+
     # A change task in flight, recorded as the harness records one: the task
     # is the run's, not the trial's.
     in_flight = trial("skills", 1, "running", 5)
@@ -388,6 +423,7 @@ def self_test():
     empty = os.path.join(scratch, "empty")
     os.makedirs(empty)
     lines, old, bare = drawn(scratch), drawn(legacy), drawn(empty)
+    asked = render(scratch, moment=moment, asked=("lazyskills", "hand"))
 
     # A scoring under way: two arms scored, one read for security, the
     # scorer's tools, a scored trial's directory, the trial in hand, and the
@@ -457,7 +493,14 @@ def self_test():
     bare_arms = [line.split()[0] for line in bare[2:] if line.strip()]
     checks = [
         ("round 5's arms, the arms the records add, and the run get a line",
-         list(by_arm) == list(ROUND5_RUN) + ["hand", "all"]),
+         list(by_arm) == list(ROUND5_RUN) + ["hand", "short", "all"]),
+        ("an arm a build run names from its start gets a bar before its "
+         "first trial, a change run's arms do not, and an arm asked for "
+         "gets one too",
+         " 0/15 " in by_arm.get("short", "")
+         and "lazyref" not in by_arm
+         and [line.split()[0] for line in asked[2:] if line.strip()]
+         == list(ROUND5_RUN) + ["hand", "short", "lazyskills", "all"]),
         ("an arm outside round 5's shows its running trial",
          "running hand-1, 3 min" in by_arm.get("hand", "")),
         ("a root with no records yet draws round 5's arms alone",
@@ -476,7 +519,7 @@ def self_test():
         ("a change task in flight is not shown as a running build",
          "running" not in by_arm.get("skills", "")),
         ("the run's line counts every arm and estimates what is left",
-         " 2/90 " in by_arm.get("all", "")
+         " 2/105 " in by_arm.get("all", "")
          and "h left" in by_arm.get("all", "")),
         ("a root without offsets draws its counts and reads no time",
          " 2/90 " in old_by_arm.get("all", "")
@@ -535,6 +578,10 @@ def self_test():
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", help="the run root to watch")
+    parser.add_argument("--arms", default="",
+                        help="arms to draw besides those the records name, "
+                             "as words separated by commas; for a run whose "
+                             "record predates naming its arms")
     parser.add_argument("--every", type=int, default=30,
                         help="seconds between redraws (default 30)")
     parser.add_argument("--once", action="store_true",
@@ -551,11 +598,13 @@ def main(argv):
     if not options.root:
         print("--root is required")
         return 2
+    asked = tuple(arm.strip() for arm in options.arms.split(",")
+                  if arm.strip())
     if options.once:
-        print("\n".join(render(options.root)))
+        print("\n".join(render(options.root, asked=asked)))
         return 0
     try:
-        watch(options.root, options.every)
+        watch(options.root, options.every, asked)
     except KeyboardInterrupt:
         return 0
 

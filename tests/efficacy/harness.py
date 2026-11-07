@@ -1859,16 +1859,23 @@ def pending_trials(arms, k, start=None):
     return trials[names.index(start):]
 
 
-def write_run(run_file, started_at, records, task="build", prompt=PROMPT):
-    """Rewrite the run record with every trial so far."""
+def write_run(run_file, started_at, records, task="build", prompt=PROMPT,
+              arms=(), k=None):
+    """Rewrite the run record with every trial so far. The run's arms and
+    its K are written from the start, so a reader knows the whole run
+    before its first trial of each arm is in."""
 
     # Written to a sibling and swapped in, so a run killed mid-write leaves
     # the previous record whole rather than half of a new one.
     partial = run_file + ".partial"
+    header = {"started_at": started_at.isoformat(timespec="seconds"),
+              "task": task, "prompt": prompt}
+    if arms:
+        header["arms"] = list(arms)
+    if k is not None:
+        header["k"] = k
     with io.open(partial, "w", encoding="utf-8") as handle:
-        json.dump({"started_at": started_at.isoformat(timespec="seconds"),
-                   "task": task, "prompt": prompt, "trials": records},
-                  handle, indent=2)
+        json.dump(dict(header, trials=records), handle, indent=2)
     os.replace(partial, run_file)
 
 
@@ -2011,7 +2018,8 @@ def recover(root, home, table=None):
         if changed:
             write_run(run_file, datetime.datetime.fromisoformat(
                 run["started_at"]), records, run.get("task", "build"),
-                run.get("prompt", PROMPT))
+                run.get("prompt", PROMPT), run.get("arms") or (),
+                run.get("k"))
     return voided
 
 
@@ -3361,7 +3369,8 @@ def recover_checks():
     finished = {"arm": "none", "trial": 1, "outcome": "completed"}
     dead = dict(in_flight("short", 1), harness_pid=4242)
     run_file = os.path.join(root, "run-planted.json")
-    write_run(run_file, started, [finished, dead])
+    write_run(run_file, started, [finished, dead], arms=("short", "hand"),
+              k=3)
 
     # The plant is read before recovery, so a voided slot is recovery's doing
     # and not a workspace that was never there.
@@ -3389,6 +3398,10 @@ def recover_checks():
          and records[1]["outcome"] in VOIDING
          and os.path.isfile(records[1]["frozen"]["tarball"])),
         ("a second recovery finds nothing", recover(root, home, []) == []),
+        ("the record names the run's arms and its K from the start",
+         json.load(io.open(run_file, encoding="utf-8")).get("arms")
+         == ["short", "hand"]
+         and json.load(io.open(run_file, encoding="utf-8")).get("k") == 3),
     ]
     remove_tree(scratch)
     return checks
@@ -3744,7 +3757,8 @@ def main(argv):
                                     builds[name])
 
     def write():
-        write_run(run_file, started_at, records, options.task, prompt)
+        write_run(run_file, started_at, records, options.task, prompt,
+                  arms, options.k)
 
     def probe():
         refresh_credentials(home)
