@@ -2416,8 +2416,11 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
     lines.extend(["## What produced the results", ""])
     lines.extend(provenance_lines(trials, names, arms, k, seed, generation))
     if iso:
+        # The ISO tables show the ISO results, read unpaired across rounds
+        # on their own, so their method is read from them, not from the raw
+        # rows.
         lines.extend(["", "## The radar's axes, row by row", "",
-                      ISO_TABLE_READING, ""] + method_lines(results, k)
+                      ISO_TABLE_READING, ""] + method_lines(iso[1], k)
                      + [DEGENERATE_NOTE, ""])
         lines.extend(iso_axis_lines(trials, iso[0],
                                     [BARE] + by_cost(table, [
@@ -7373,6 +7376,15 @@ def iso_checks(seed):
                if axis == "Security")
     checks.append(("the move shown is the contrast's mean over the blocks "
                    "it paired", got == (100 / 3, 40.0, 10.0), got))
+    across = iso_contrasts(iso, seed, crossed=("hybrid-none",))
+    checks.append(("the ISO tables' method names the contrasts the ISO "
+                   "results read unpaired",
+                   unpaired_labels(across) == ["hybrid-none"]
+                   and "hybrid − none, are unpaired" in interval_method(
+                       across, FEWEST_DECIDING)
+                   and interval_method(results, FEWEST_DECIDING).endswith(
+                       "names its count."),
+                   interval_method(across, FEWEST_DECIDING)))
 
     # A withdrawn metric's target drops out of the radar and its tables, as
     # its row does from the contrasts.
