@@ -775,6 +775,55 @@ def crossed_labels(trials):
                                  arm_origins(trials))}
 
 
+def unpaired_labels(results):
+    """The contrast labels the results read unpaired, in the contrasts'
+    order."""
+    labels = []
+    for treatment, baseline in CONTRASTS:
+        label = "%s-%s" % (treatment, baseline)
+        if label not in labels and any(
+                isinstance(entry.get(label), dict)
+                and entry[label].get("unpaired")
+                for entry in results.values()):
+            labels.append(label)
+    return labels
+
+
+def unpaired_note(results):
+    """The contrasts read unpaired, named, and how their intervals were
+    made; empty where every contrast is paired."""
+    unpaired = unpaired_labels(results)
+    if not unpaired:
+        return ""
+    return ("The contrasts whose arms ran in different rounds, %s, are "
+            "unpaired: each arm's trials stand on their own, and the "
+            "interval is for the difference of two independent means."
+            % spoken(["%s − %s" % tuple(label.split("-"))
+                      for label in unpaired]))
+
+
+def interval_method(results, k):
+    """How the intervals were made, in a sentence or two: paired within a
+    block, and unpaired for the contrasts whose arms ran in different
+    rounds, each named. At a K too small to decide anything, the paired
+    sentence gives way to the descriptive note, so only the unpaired one
+    is given."""
+    if k < FEWEST_DECIDING:
+        return unpaired_note(results)
+    text = ("Each interval below is a 95 %% bootstrap interval over the "
+            "paired differences of its contrast, one per block that "
+            "measured both arms: K = %d at most, and a cell that had fewer "
+            "names its count." % k)
+    return " ".join(part for part in (text, unpaired_note(results)) if part)
+
+
+def method_lines(results, k):
+    """The interval method as lines, each followed by a blank; none where
+    there is nothing to say."""
+    text = interval_method(results, k)
+    return [text, ""] if text else []
+
+
 def collect(trials, metrics=METRICS, later_rules=None):
     """Metric values by metric, arm and trial index, read by round 5d's
     rules for a round-5d run or where `later_rules` asks for them."""
@@ -1666,12 +1715,8 @@ def write_report(root, trials, table, results, seed, out_dir,
                      "arrangement of paired differences reaches conventional "
                      "significance, which the registration states and this "
                      "report repeats rather than footnotes." % k)
-    else:
-        lines.append("Each interval below is a 95 %% bootstrap interval over "
-                     "the paired differences of its contrast, one per block "
-                     "that measured both arms: K = %d at most, and a cell "
-                     "that had fewer names its count." % k)
-    lines.append("")
+        lines.append("")
+    lines.extend(method_lines(results, k))
 
     lost = lost_trials(root)
     scans = reaches(root)
@@ -2371,8 +2416,12 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
     lines.extend(["## What produced the results", ""])
     lines.extend(provenance_lines(trials, names, arms, k, seed, generation))
     if iso:
+        # The ISO tables show the ISO results, read unpaired across rounds
+        # on their own, so their method is read from them, not from the raw
+        # rows.
         lines.extend(["", "## The radar's axes, row by row", "",
-                      ISO_TABLE_READING, "", DEGENERATE_NOTE, ""])
+                      ISO_TABLE_READING, ""] + method_lines(iso[1], k)
+                     + [DEGENERATE_NOTE, ""])
         lines.extend(iso_axis_lines(trials, iso[0],
                                     [BARE] + by_cost(table, [
                                         pair[0] for pair in against]),
@@ -2382,7 +2431,7 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
                       "Each table is one axis of the radar: every "
                       "measurement it groups, each approach's mean, and each "
                       "approach against `%s`. %s" % (BARE, CONTRAST_LEGEND),
-                      "", DEGENERATE_NOTE, ""])
+                      ""] + method_lines(results, k) + [DEGENERATE_NOTE, ""])
         for axis, keys in radar_axes(results):
             lines.extend(["### %s" % axis, ""])
             lines.extend(contrast_table(table, results, keys, active=against,
@@ -4615,6 +4664,16 @@ def round5d_checks(seed):
                    and "Compared unpaired with this round's trials, as "
                    "round 5d registered: short − none and hand − none."
                    in " ".join(text.split()), section[-600:]))
+    appendix_text = rendered_appendix(run, seed)
+    checks.append(("a round-5d run names its unpaired contrasts beside the "
+                   "interval method, in the record and the appendix, and no "
+                   "cell is called a paired difference",
+                   all("The contrasts whose arms ran in different rounds, "
+                       "short − none and hand − none, are unpaired: each arm's "
+                       "trials stand on their own" in " ".join(part.split())
+                       for part in (text, appendix_text))
+                   and "paired difference, its" not in text + appendix_text,
+                   None))
     checks.append(("round 5d's radar is explained by size, not by votes",
                    "bound nearest zero" in " ".join(text.split())
                    and "the share of them better" not in text, None))
@@ -6286,8 +6345,8 @@ MARK_LEGEND = (
     "across rounds, or two judges that disagree. (not compared): too few "
     "complete pairs for an interval. No mark: no difference shown, on a row "
     "with no margin or past the margin it has.")
-CONTRAST_LEGEND = ("Each cell: the mean paired difference, its 95 % interval "
-                   "in brackets, and a mark. " + MARK_LEGEND)
+CONTRAST_LEGEND = ("Each cell: the mean difference, its 95 % interval in "
+                   "brackets, and a mark. " + MARK_LEGEND)
 
 
 def contrast_table(table, results, keys, verdicts=True, active=None,
@@ -6774,6 +6833,23 @@ def rendered(trials, seed, withdrawn):
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
     return before, table, text
+
+
+def rendered_appendix(trials, seed):
+    """The technical appendix a planted run renders, as text."""
+    table = collect(trials)
+    results = round_contrasts(trials, table, seed)
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-appendix-render")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+    target = write_report(scratch, trials, table, results, seed,
+                          out_dir=scratch)
+    with io.open(target[:-len(".md")] + "-appendix.md",
+                 encoding="utf-8") as handle:
+        text = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    return text
 
 
 def rendered_plain(trials, seed, uses=None):
@@ -7300,6 +7376,15 @@ def iso_checks(seed):
                if axis == "Security")
     checks.append(("the move shown is the contrast's mean over the blocks "
                    "it paired", got == (100 / 3, 40.0, 10.0), got))
+    across = iso_contrasts(iso, seed, crossed=("hybrid-none",))
+    checks.append(("the ISO tables' method names the contrasts the ISO "
+                   "results read unpaired",
+                   unpaired_labels(across) == ["hybrid-none"]
+                   and "hybrid − none, are unpaired" in interval_method(
+                       across, FEWEST_DECIDING)
+                   and interval_method(results, FEWEST_DECIDING).endswith(
+                       "names its count."),
+                   interval_method(across, FEWEST_DECIDING)))
 
     # A withdrawn metric's target drops out of the radar and its tables, as
     # its row does from the contrasts.
