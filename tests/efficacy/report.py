@@ -2054,17 +2054,26 @@ def plain_arm_lines(trials, table, results, arm, length, iso=None):
     better = [PLAIN_AXES.get(axis, axis.lower()) for axis, value in scores
               if value is not None and value > 0]
     # The runs that fell short are counted whatever the reliability axis
-    # reads, because one broken build among many can leave it neutral.
+    # reads, because one broken build among many can leave it neutral. A
+    # build that would not start has no hidden-suite rate unless the suite
+    # still ran, so it is among the low runs only where its rate is: the
+    # two counts overlap only as far as the trials do.
     low = low_runs(table, arm)
     errors, count = boot_failures(trials, arm)
+    among = low_boot_failures(trials, table, arm)
     shortfall = []
     if low:
         shortfall.append("%d of %d runs passed clearly fewer of the hidden "
                          "tests" % (len(low), count))
-    if errors:
-        shortfall.append("%d %s because the app would not start after a "
-                         "clean install" % (len(errors), "of them" if low
-                                            else "runs"))
+    if errors and low and among == len(errors):
+        shortfall.append("%d of them because the app would not start after "
+                         "a clean install" % len(errors))
+    elif errors and low and not among:
+        shortfall.append("%d other%s would not start after a clean install"
+                         % (len(errors), "" if len(errors) == 1 else "s"))
+    elif errors:
+        shortfall.append("%d of %d runs would not start after a clean "
+                         "install" % (len(errors), count))
     worse = []
     noted = False
     for axis, value in scores:
@@ -3381,6 +3390,21 @@ def low_runs(table, arm):
     values = table["task_success"]["values"].get(arm, {}).values()
     return sorted(value for value in values
                   if value is not None and value < bare - SUITE_DIP)
+
+
+def low_boot_failures(trials, table, arm):
+    """How many of the arm's trials whose app could not boot are also among
+    its low runs: those with a hidden-suite rate under the bare arm's mean
+    by more than the practical threshold."""
+    bare = arm_mean(table, "task_success", BARE)
+    if bare is None:
+        return 0
+    rates = table["task_success"]["values"].get(arm, {})
+    return sum(1 for name, trial in trials.items()
+               if arm_of(name) == arm and trial["scores"]
+               and path(trial, "scores", "boot", "value", "factory") is False
+               and rates.get(index_of(name)) is not None
+               and rates[index_of(name)] < bare - SUITE_DIP)
 
 
 def finding_row(table, results, arm, answered, length):
@@ -6081,6 +6105,33 @@ def documents_checks(seed):
                      "factory": False}}}}, "inline-2": {"scores": {}}},
                  {"task_success": {"values": {"none": {1: 1.0, 2: 1.0},
                                               "inline": {1: 0.0, 2: 1.0}}},
+                  "cost_usd": {"values": {"none": {1: 1.0}, "inline": {1: 1.0}}}},
+                 {key: {"inline-none": {"verdict": "no improvement shown"}}
+                  for _, keys in RADAR_AXES for key in keys}
+                 | {key: {"inline-none": {"verdict": "no improvement shown"}}
+                    for key in ANSWERED}, "inline", 391)), None),
+        ("a build that would not start and left no rate is counted apart "
+         "from the low runs",
+         any("1 of 2 runs passed clearly fewer of the hidden tests, 1 other "
+             "would not start after a clean install" in line
+             for line in plain_arm_lines(
+                 {"inline-1": {"scores": {"boot": {"value": {
+                     "factory": False}}}}, "inline-2": {"scores": {"boot": {
+                         "value": {"factory": True}}}}},
+                 {"task_success": {"values": {"none": {1: 1.0, 2: 1.0},
+                                              "inline": {1: None, 2: 0.0}}},
+                  "cost_usd": {"values": {"none": {1: 1.0}, "inline": {1: 1.0}}}},
+                 {key: {"inline-none": {"verdict": "no improvement shown"}}
+                  for _, keys in RADAR_AXES for key in keys}
+                 | {key: {"inline-none": {"verdict": "no improvement shown"}}
+                    for key in ANSWERED}, "inline", 391))
+         and any("2 of 2 runs would not start after a clean install" in line
+                 for line in plain_arm_lines(
+                 {"inline-1": {"scores": {"boot": {"value": {
+                     "factory": False}}}}, "inline-2": {"scores": {"boot": {
+                         "value": {"factory": False}}}}},
+                 {"task_success": {"values": {"none": {1: 1.0, 2: 1.0},
+                                              "inline": {1: None, 2: None}}},
                   "cost_usd": {"values": {"none": {1: 1.0}, "inline": {1: 1.0}}}},
                  {key: {"inline-none": {"verdict": "no improvement shown"}}
                   for _, keys in RADAR_AXES for key in keys}
