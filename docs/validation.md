@@ -8,14 +8,14 @@ support are in [requirements.md](requirements.md); the reasons are in
 ## The hidden suite
 
 <!-- measured: 2026-11-08 -->
-545 build checks across 19 modules and 74 change checks in
+544 build checks across 19 modules and 74 change checks in
 `braboj/tariff-hidden-suite`, validated before round 3's first trial and
 again on 2026-11-08, when round 6's two non-functional lines joined the
 spec: a persistence module and eight refusal checks, graded on the
 reference as it stood. A refusal's field name is read in the answer's own
 words, outside the form's labels, controls and navigation, by a reader the
-suite tests on its own; a fifteenth mutation answers a refused preview with
-the whole form and no error.
+suite tests in a module of its own that no trial is scored on; a fifteenth
+mutation answers a refused preview with the whole form and no error.
 <!-- /measured -->
 
 | Check | Result |
