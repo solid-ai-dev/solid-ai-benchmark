@@ -7,16 +7,19 @@ support are in [requirements.md](requirements.md); the reasons are in
 
 ## The hidden suite
 
-<!-- measured: 2026-09-24 -->
-534 build checks across 18 modules and 74 change checks in
-`braboj/tariff-hidden-suite`, validated before round 3's first trial.
+<!-- measured: 2026-11-07 -->
+544 build checks across 19 modules and 74 change checks in
+`braboj/tariff-hidden-suite`, validated before round 3's first trial and
+again on 2026-11-07, when round 6's two non-functional lines joined the
+spec: a persistence module and eight refusal checks, graded on the
+reference as it stood.
 <!-- /measured -->
 
 | Check | Result |
 | ----- | ------ |
 | A reference implementation written from the spec alone | Passes every build check |
 | The change task made on it from the change prompt alone | Passes every change check, and the build suite still |
-| Twelve spec violations, each planted alone | All twelve caught |
+| Fourteen spec violations, each planted alone | All fourteen caught |
 | The pre-round-3 reference, with no sign-in | Fails the sign-in module |
 
 ## Trial bounds

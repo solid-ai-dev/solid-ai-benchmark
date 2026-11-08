@@ -55,6 +55,8 @@ SPECS = {
         "round 4, weaker",
     "5347f551a4c8a351731a2e846bf90700ea84f066d6fa8a7126e4d1eba194798d":
         "round 4, thin",
+    "48ee93ff968ef4a3175408c349afd6ce7223d0f3bd25b49ad4521f0fc307e55e":
+        "rounds 5 to 5e",
 }
 
 # The paragraph round 5 added to both specifications. Taking it out again
@@ -63,6 +65,16 @@ SECRET_KEY_PARAGRAPH = (
     b"\nThe key that signs the session cookie is the value of the environment\n"
     b"variable `TARIFF_SECRET_KEY`, which is set and non-empty wherever the\n"
     b"application runs.\n")
+
+# The two lines round 6 added to the specification's constraints. Taking them
+# out again gives back the text rounds 5 to 5e ran, which the self-test
+# proves is registered.
+ROUND6_LINES = (
+    b"- Data survives a restart: whatever was saved is still there when the\n"
+    b"  application is started again on the same database file.\n"
+    b"- Errors say what went wrong: an answer that refuses input names the "
+    b"field\n"
+    b"  it refuses, whether it re-renders the form or answers 400.\n")
 
 # The model each CLI judges with. The rounds' judge comes from another
 # vendor than every builder, so it never scores its own vendor's code. The
@@ -1047,11 +1059,12 @@ def spec_checks(scratch):
     current = spec_text(SPEC)
     earlier = b"# tariff, as an earlier round specified it\n"
     thin = spec_text(THIN_SPEC)
-    round4 = current.replace(SECRET_KEY_PARAGRAPH, b"")
+    round5 = current.replace(ROUND6_LINES, b"")
+    round4 = round5.replace(SECRET_KEY_PARAGRAPH, b"")
     round4_thin = thin.replace(SECRET_KEY_PARAGRAPH, b"")
     planted = {"current": current, "thin": thin,
                "crlf": current.replace(b"\n", b"\r\n"),
-               "earlier": earlier,
+               "earlier": earlier, "round5": round5,
                "round4": round4, "round4-thin": round4_thin,
                "edited": current + b"\nAlso build a blog.\n",
                "missing": None}
@@ -1105,8 +1118,11 @@ def spec_checks(scratch):
 
         # A replaced specification stays registered, or every tree built
         # against it is refused as edited and can never be judged again.
+        ("rounds 5 to 5e's trees are judged against the spec they ran",
+         round5 != current and judged_against("round5", round5)
+         and built["round5"][0]["spec"]["round"] == "rounds 5 to 5e"),
         ("round 4's trees are judged against the spec they ran",
-         round4 != current and round4_thin != thin
+         round4 != round5 and round4_thin != thin
          and judged_against("round4", round4)
          and built["round4"][0]["spec"]["round"] == "round 4, weaker"
          and judged_against("round4-thin", round4_thin)
