@@ -78,6 +78,8 @@
 | FR-04-06 | The benchmark shall keep a lost trial's workspace under the run's `void/` directory, and never score it. | Harness |
 | FR-04-07 | The benchmark shall stop the run at a second loss of the same trial. | Harness |
 | FR-04-08 | The benchmark shall resume a run that stopped part way with `--from` at the trial named, keeping the order. | Harness |
+| FR-04-09 | The benchmark shall, after a lost trial, probe the generator at once and then on an interval, and re-run the trial when it answers; `--stop-on-block` stops the run instead. | Harness |
+| FR-04-10 | The benchmark shall ask the generator once before a trial whose ceiling outlasts the account's token, so the trial starts on a fresh token where the CLI renews it. | Harness |
 
 ### 05 Isolation
 

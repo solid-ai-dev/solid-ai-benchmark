@@ -124,8 +124,9 @@ How each ending is handled:
 | # | Rule | In practice | Requirement |
 | - | ---- | ----------- | ----------- |
 | 1 | A failure stands | Scored as it is, with missing metrics left missing, never re-run | FR-04-01 to FR-04-03 |
-| 2 | A loss is re-run once | In its own place; its partial workspace kept under `void/`, never scored | FR-04-04 to FR-04-06 |
-| 3 | Two losses stop the run | A stopped run resumes with `--from`, in the same order | FR-04-07, FR-04-08 |
+| 2 | A loss is re-run once | In its own place, once the generator answers a probe, made at once and then every 30 minutes; its partial workspace kept under `void/`, never scored | FR-04-04 to FR-04-06, FR-04-09 |
+| 3 | Two losses stop the run | A stopped run resumes with `--from`, in the same order; `--stop-on-block` stops at the first loss instead | FR-04-07, FR-04-08 |
+| 4 | A trial starts on a token that outlasts it | Where the account's token expires within the trial's ceiling, one call to the generator first, so the CLI renews it before the trial rather than during | FR-04-10 |
 
 ## 8.2 Isolation
 
