@@ -270,7 +270,7 @@
 | -------- | -------- | ------- |
 | Hidden suite | 534 build checks across 18 modules and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
 | Reference implementation | A build written from the spec alone, and the change task made on it from the change prompt alone. Private, beside the hidden suite. | QG-01-02 |
-| Mutation control | Fourteen spec violations, each planted alone in the reference implementation. | QG-01-02 |
+| Mutation control | Fifteen spec violations, each planted alone in the reference implementation. | QG-01-02 |
 | Control fixture | The judge's control trees, built by `control/control.py` from two pinned applications; see [validation](validation.md). | QG-01-03, QG-01-04 |
 | Self-tests | Each script's `--self-test`, which plants the case each rule guards against. | QG-01-05, QG-05-01, QG-05-02, QG-06-01, QG-06-02, QG-07-01 |
 | CI runners | `ubuntu-latest` and `windows-latest`, Python 3.12, stub agent CLIs that refuse to run. | QG-07-01, QG-08-02 |
