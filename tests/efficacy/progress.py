@@ -455,7 +455,12 @@ def judging_lines(root, arms, k, alive=live_scorer):
     found = judgings(judging)
     claim = read_claim(claim_path(area, "judge.py"))
     live = bool(claim and alive(claim))
-    if not live and not any(record.get("outcome") == "judged"
+
+    # A judging that ended with every reading failed still owes them, so a
+    # failed or invalid record shows the judging as a judged one does. A dry
+    # run's record does not: it judged nothing.
+    if not live and not any(record.get("outcome") in ("judged", "failed",
+                                                      "invalid")
                             for _, record, _ in found):
         return []
 
@@ -477,12 +482,16 @@ def judging_lines(root, arms, k, alive=live_scorer):
     # rejudge adds readings past what is owed, which would overfill the bar.
     # A failed or invalid record counts only while its trial is still short,
     # since the judge owes it again and a later run makes it good. A dry run's
-    # record is neither.
+    # record is neither. A trial whose build no longer installs is owed
+    # nothing, and the report reads none of its readings, so its records are
+    # left out on both sides of the bar.
     held, failures, fresh = {}, {}, 0
     for _, record, written in found:
         try:
             name = canonical(record.get("trial") or "")
         except TrialError:
+            continue
+        if name in failed:
             continue
         outcome = record.get("outcome")
         if outcome == "judged":
@@ -710,7 +719,8 @@ def self_test():
                   if line.strip()}
 
     # A judging under way on a root of its own. none-2's build did not
-    # install, so none owes 14 trials. none-1 failed once and was judged four
+    # install, so none owes 14 trials, and its readings from before count for
+    # nothing. none-1 failed once and was judged four
     # times since, one past the repeat; inline-1 holds one judging and one
     # failure; hybrid-1 holds only a dry run's record; a record caught
     # mid-write sits beside them. T9's bundle is in hand; T0's is left from
@@ -733,7 +743,8 @@ def self_test():
                         ("T3", "none-1", "judged"), ("T4", "none-1", "judged"),
                         ("T5", "none-1", "judged"), ("T6", "inline-1", "judged"),
                         ("T7", "inline-1", "failed"),
-                        ("T8", "hybrid-1", "dry-run")]
+                        ("T8", "hybrid-1", "dry-run"),
+                        ("T11", "none-2", "judged"), ("T12", "none-2", "failed")]
     for minutes, (label, name, outcome) in enumerate(planted_judgings, 2):
         written(os.path.join(judging, "%s.json" % label),
                 {"trial": name, "blind_id": label, "outcome": outcome},
@@ -774,6 +785,12 @@ def self_test():
     written(os.path.join(scoring_area(unjudged_root), "judge", "T1.json"),
             {"trial": "none-1", "blind_id": "T1", "outcome": "dry-run"}, 1)
     unjudged = judging_lines(unjudged_root, ROUND5_RUN, ROUND5_K)
+
+    # A judging that ended with its one reading failed.
+    failed_root = os.path.join(scratch, "all-failed")
+    written(os.path.join(scoring_area(failed_root), "judge", "T1.json"),
+            {"trial": "none-1", "blind_id": "T1", "outcome": "failed"}, 1)
+    all_failed = by_line(judging_lines(failed_root, ROUND5_RUN, ROUND5_K))
     judging_total = " 4/%d" % ((len(ROUND5_RUN) * ROUND5_K - 1) * 3)
     shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
@@ -886,6 +903,13 @@ def self_test():
          and judging_twice[1] == "Judged, 2 per trial"
          and any(line.startswith("none") and " 2/28" in line
                  for line in judging_twice)),
+        ("a judging that ended with every reading failed still shows them",
+         "1 failed" in all_failed.get("none", "")
+         and " 0/45" in all_failed.get("none", "")),
+        ("a trial whose build no longer installs has its readings and "
+         "failures left out",
+         " 3/42" in judging_live.get("none", "")
+         and "failed" not in judging_live.get("none", "")),
         ("a dry run's record and one caught mid-write count for nothing",
          " 0/45" in judging_live.get("hybrid", "")),
         ("a failure counts only while its trial is still owed a judging",
