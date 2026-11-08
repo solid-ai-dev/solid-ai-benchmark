@@ -72,6 +72,8 @@ when:
 | FR-04-06 | Self-test | `harness.py` "a voided workspace is kept under void/"<br>`harness.py` "a voided trial takes its whole pen and its tarball" |
 | FR-04-07 | Self-test | `harness.py` "a second block stops the run" |
 | FR-04-08 | Self-test | `harness.py` "--from short-2 starts there and keeps the order"<br>`harness.py` "--from an unknown trial refuses"<br>`harness.py` "no trial stays recorded as running" |
+| FR-04-09 | Self-test | `harness.py` "a blocked trial is probed at once, so an answer costs no wait"<br>`harness.py` "a blocked trial is probed and re-run by default, and --stop-on-block stops the run instead"<br>`harness.py` "probing stops when the generator answers"<br>`harness.py` "probing gives up at its limit" |
+| FR-04-10 | Self-test | `harness.py` "a trial whose ceiling outlasts its token asks the generator first"<br>`harness.py` "a token that outlasts the ceiling is left alone"<br>`harness.py` "a generator that does not answer the ask is reported, and the trial goes on to its own ending"<br>`harness.py` "without a credentials file nothing is asked"<br>`harness.py` "a dry run asks the generator for no token, so it calls no model" |
 
 ## 05 Reliability
 

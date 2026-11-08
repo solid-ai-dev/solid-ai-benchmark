@@ -1888,16 +1888,54 @@ def write_run(run_file, started_at, records, task="build", prompt=PROMPT,
 
 def wait_for_generator(probe, every_s, limit_s, sleep=time.sleep,
                        clock=time.monotonic):
-    """Probe on an interval until the generator answers; False on giving up."""
+    """Probe at once, then on an interval, until the generator answers;
+    False on giving up."""
+
+    # The first probe comes before any wait: a block that has already
+    # cleared, as one over a token another client had refreshed does the
+    # moment the trial's CLI ends, costs the run nothing but the probe.
     deadline = clock() + limit_s
-    while clock() < deadline:
-        sleep(every_s)
+    while True:
         try:
             probe()
             return True
         except (TrialError, subprocess.TimeoutExpired) as error:
             print("  still blocked: %s" % str(error)[:160])
-    return False
+        if clock() >= deadline:
+            return False
+        sleep(every_s)
+
+
+# A token the trial's CLI refreshes mid-trial can lose to another client of
+# the account refreshing first, which revokes the refresh token the CLI
+# holds: that ended a trial four minutes in. One cheap call before a trial
+# whose ceiling outlasts the token lets the CLI renew it, where it renews
+# near expiry, so the trial itself has nothing to refresh.
+def fresh_token(home, ceiling_s, probe, now=time.time):
+    """Ask the generator once where the home's token expires within
+    `ceiling_s`; return the lines to report, none where the token lasts."""
+    path = os.path.join(home, CREDENTIALS)
+    expiry = expires_at(path) / 1000.0
+    if not expiry:
+        return []
+    left = expiry - now()
+    if left >= ceiling_s:
+        return []
+    lines = ["credentials: the token expires in %d min, within the trial's "
+             "ceiling; asking the generator for a fresh one" % (left // 60)]
+    try:
+        probe()
+    except (TrialError, subprocess.TimeoutExpired) as error:
+        lines.append("credentials: the generator did not answer: %s"
+                     % str(error)[:120])
+        return lines
+    renewed = expires_at(path) / 1000.0
+    if renewed > expiry:
+        lines.append("credentials: the token now expires in %d min"
+                     % ((renewed - now()) // 60))
+    else:
+        lines.append("credentials: the CLI kept the token")
+    return lines
 
 
 def run_in_place(arm, trial, runner, wait, records, write):
@@ -2300,10 +2338,82 @@ def resume_checks():
     finally:
         sys.stdout = saved
     checks.append(("probing stops when the generator answers",
-                   answered and answered_at == 180))
+                   answered and answered_at == 120))
     checks.append(("probing gives up at its limit",
                    not gave_up and clock[0] == 180))
+    clock[0] = 0.0
+    saved, sys.stdout = sys.stdout, io.StringIO()
+    try:
+        at_once = wait_for_generator(lambda: None, 60, 600, sleep=sleep,
+                                     clock=lambda: clock[0])
+    finally:
+        sys.stdout = saved
+    checks.append(("a blocked trial is probed at once, so an answer costs "
+                   "no wait", at_once and clock[0] == 0))
+
+    # By default a block is waited out and the trial re-run; the flag that
+    # used to ask for that is still taken, and --stop-on-block refuses it.
+    checks.append(("a blocked trial is probed and re-run by default, and "
+                   "--stop-on-block stops the run instead",
+                   parse_args(["--root", "r"]).resume_after_block
+                   and parse_args(["--root", "r",
+                                   "--resume-after-block"]).resume_after_block
+                   and not parse_args(["--root", "r",
+                                       "--stop-on-block"]).resume_after_block))
     return checks
+
+
+def token_checks():
+    """A trial whose ceiling outlasts the account's token is preceded by one
+    call to the generator; one whose token lasts is not."""
+    scratch = os.path.join(tempfile.gettempdir(), "efficacy-token-self-test")
+    remove_tree(scratch)
+    home = os.path.join(scratch, "home")
+    path = os.path.join(home, CREDENTIALS)
+    os.makedirs(os.path.dirname(path))
+    moment = 1_700_000_000.0
+    probes = []
+
+    def write(expires_s):
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump({"claudeAiOauth": {"expiresAt": expires_s * 1000}},
+                      handle)
+
+    def renewing():
+        probes.append("renewing")
+        write(moment + 8 * 3600)
+
+    def keeping():
+        probes.append("keeping")
+
+    def refusing():
+        probes.append("refusing")
+        raise TrialError("planted")
+
+    write(moment + 600)
+    renewed = fresh_token(home, 7200, renewing, now=lambda: moment)
+    write(moment + 3 * 3600)
+    kept = fresh_token(home, 7200, keeping, now=lambda: moment)
+    write(moment + 600)
+    refused = fresh_token(home, 7200, refusing, now=lambda: moment)
+    write(moment + 600)
+    lasting = fresh_token(home, 300, keeping, now=lambda: moment)
+    os.remove(path)
+    absent = fresh_token(home, 7200, keeping, now=lambda: moment)
+    remove_tree(scratch)
+    return [
+        ("a trial whose ceiling outlasts its token asks the generator first",
+         probes[:1] == ["renewing"] and len(renewed) == 2
+         and "expires in 10 min" in renewed[0]
+         and "now expires in 480 min" in renewed[1]),
+        ("a token that outlasts the ceiling is left alone",
+         "keeping" not in probes[:2] and kept == [] and lasting == []
+         and probes == ["renewing", "refusing"]),
+        ("a generator that does not answer the ask is reported, and the "
+         "trial goes on to its own ending",
+         len(refused) == 2 and "did not answer" in refused[1]),
+        ("without a credentials file nothing is asked", absent == []),
+    ]
 
 
 def remove_tree(path):
@@ -2422,20 +2532,34 @@ def dry_run_checks():
     claude = os.path.join(stand_in,
                           "claude.cmd" if os.name == "nt" else "claude")
     # The stand-in answers each call with a new version, as a CLI updated
-    # between two trials would, so a version read once per run shows.
+    # between two trials would, so a version read once per run shows. It
+    # keeps every call's arguments, so a call that asks for a reply shows.
     with io.open(claude, "w", encoding="utf-8") as handle:
         handle.write(
             '@echo off\r\nset n=0\r\n'
             'if exist "%~dp0calls" set /p n=<"%~dp0calls"\r\n'
             'set /a n=n+1\r\n>"%~dp0calls" echo %n%\r\n'
+            '>>"%~dp0args" echo %*\r\n'
             'echo 0.0.%n% (stand-in)\r\n' if os.name == "nt" else
             '#!/bin/sh\ncalls="$(dirname "$0")/calls"\n'
             'n=$(($(cat "$calls" 2>/dev/null || echo 0) + 1))\n'
-            'echo $n > "$calls"\necho "0.0.$n (stand-in)"\n')
+            'echo $n > "$calls"\necho "$@" >> "$(dirname "$0")/args"\n'
+            'echo "0.0.$n (stand-in)"\n')
     os.chmod(claude, 0o755)
     saved = {key: os.environ.get(key) for key in ("PATH", "HOME", "USERPROFILE")}
     os.environ["PATH"] = stand_in + os.pathsep + saved["PATH"]
     os.environ["HOME"] = os.environ["USERPROFILE"] = os.path.join(scratch, "me")
+
+    # The account's token expires within every trial's ceiling, so a run
+    # proper would ask the generator for a fresh one before each trial. A
+    # dry run calls no model, so no call to the stand-in asks it for a
+    # reply: only its version is read.
+    account = os.path.join(scratch, "me", CREDENTIALS)
+    os.makedirs(os.path.dirname(account))
+    with io.open(account, "w", encoding="utf-8") as handle:
+        json.dump({"claudeAiOauth": {"expiresAt": (time.time() + 600) * 1000}},
+                  handle)
+    args = os.path.join(stand_in, "args")
 
     dry = dry_run_area(root)
     before = listing(root)
@@ -2455,6 +2579,12 @@ def dry_run_checks():
             with io.open(run, encoding="utf-8") as handle:
                 recorded.extend(trial.get("cli_version")
                                 for trial in json.load(handle)["trials"])
+        try:
+            with io.open(args, encoding="utf-8") as handle:
+                asked = [line for line in handle.read().splitlines()
+                         if " -p " in " %s " % line.strip()]
+        except OSError:
+            asked = None
     finally:
         for key, value in saved.items():
             if value is None:
@@ -2513,6 +2643,8 @@ def dry_run_checks():
                        untouched))
     checks.append(("the run that follows prepares in the same root",
                    followed))
+    checks.append(("a dry run asks the generator for no token, so it calls "
+                   "no model", asked == []))
     checks.append(("--spec thin gives the thin spec as SPEC.md",
                    given == thin and thin != normal))
     return checks
@@ -3572,7 +3704,8 @@ def self_test():
               + credential_link_checks() + credential_rotation_checks()
               + credential_watch_checks()
               + outcome_checks() + hang_checks()
-              + resume_checks() + change_checks() + dry_run_checks()
+              + resume_checks() + token_checks() + change_checks()
+              + dry_run_checks()
               + process_checks()
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()
               + vendor_checks() + denial_checks() + kill_checks()
@@ -3632,9 +3765,14 @@ def parse_args(argv):
     parser.add_argument("--from", dest="start",
                         help="start at this trial in the interleaved order, "
                              "as short-2")
-    parser.add_argument("--resume-after-block", action="store_true",
-                        help="after a blocked trial, probe until the "
-                             "generator answers and re-run it in its place")
+    parser.add_argument("--stop-on-block", dest="resume_after_block",
+                        action="store_false",
+                        help="stop the run at a blocked trial, instead of "
+                             "probing until the generator answers and "
+                             "re-running it in its place")
+    parser.add_argument("--resume-after-block", dest="resume_after_block",
+                        action="store_true", help=argparse.SUPPRESS)
+    parser.set_defaults(resume_after_block=True)
     parser.add_argument("--probe-every", type=float, default=30,
                         help="minutes between probes while blocked")
     parser.add_argument("--give-up-after", type=float, default=12,
@@ -3760,6 +3898,11 @@ def main(argv):
 
     def runner(arm, trial):
         refresh_credentials(home)
+
+        # A dry run calls no model, so it asks for no token either.
+        if not options.dry_run:
+            for line in fresh_token(home, options.timeout, probe):
+                print("  %s" % line, flush=True)
         if options.task == "build":
             with credential_watch(home):
                 return run_trial(arm, trial, work, home, options)
@@ -3782,7 +3925,7 @@ def main(argv):
 
     def wait():
         if not options.resume_after_block:
-            print("  --resume-after-block was not given")
+            print("  --stop-on-block was given")
             return False
         return wait_for_generator(probe, options.probe_every * 60,
                                   options.give_up_after * 3600)
