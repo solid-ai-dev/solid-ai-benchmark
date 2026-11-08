@@ -2532,20 +2532,34 @@ def dry_run_checks():
     claude = os.path.join(stand_in,
                           "claude.cmd" if os.name == "nt" else "claude")
     # The stand-in answers each call with a new version, as a CLI updated
-    # between two trials would, so a version read once per run shows.
+    # between two trials would, so a version read once per run shows. It
+    # keeps every call's arguments, so a call that asks for a reply shows.
     with io.open(claude, "w", encoding="utf-8") as handle:
         handle.write(
             '@echo off\r\nset n=0\r\n'
             'if exist "%~dp0calls" set /p n=<"%~dp0calls"\r\n'
             'set /a n=n+1\r\n>"%~dp0calls" echo %n%\r\n'
+            '>>"%~dp0args" echo %*\r\n'
             'echo 0.0.%n% (stand-in)\r\n' if os.name == "nt" else
             '#!/bin/sh\ncalls="$(dirname "$0")/calls"\n'
             'n=$(($(cat "$calls" 2>/dev/null || echo 0) + 1))\n'
-            'echo $n > "$calls"\necho "0.0.$n (stand-in)"\n')
+            'echo $n > "$calls"\necho "$@" >> "$(dirname "$0")/args"\n'
+            'echo "0.0.$n (stand-in)"\n')
     os.chmod(claude, 0o755)
     saved = {key: os.environ.get(key) for key in ("PATH", "HOME", "USERPROFILE")}
     os.environ["PATH"] = stand_in + os.pathsep + saved["PATH"]
     os.environ["HOME"] = os.environ["USERPROFILE"] = os.path.join(scratch, "me")
+
+    # The account's token expires within every trial's ceiling, so a run
+    # proper would ask the generator for a fresh one before each trial. A
+    # dry run calls no model, so no call to the stand-in asks it for a
+    # reply: only its version is read.
+    account = os.path.join(scratch, "me", CREDENTIALS)
+    os.makedirs(os.path.dirname(account))
+    with io.open(account, "w", encoding="utf-8") as handle:
+        json.dump({"claudeAiOauth": {"expiresAt": (time.time() + 600) * 1000}},
+                  handle)
+    args = os.path.join(stand_in, "args")
 
     dry = dry_run_area(root)
     before = listing(root)
@@ -2565,6 +2579,12 @@ def dry_run_checks():
             with io.open(run, encoding="utf-8") as handle:
                 recorded.extend(trial.get("cli_version")
                                 for trial in json.load(handle)["trials"])
+        try:
+            with io.open(args, encoding="utf-8") as handle:
+                asked = [line for line in handle.read().splitlines()
+                         if " -p " in " %s " % line.strip()]
+        except OSError:
+            asked = None
     finally:
         for key, value in saved.items():
             if value is None:
@@ -2623,6 +2643,8 @@ def dry_run_checks():
                        untouched))
     checks.append(("the run that follows prepares in the same root",
                    followed))
+    checks.append(("a dry run asks the generator for no token, so it calls "
+                   "no model", asked == []))
     checks.append(("--spec thin gives the thin spec as SPEC.md",
                    given == thin and thin != normal))
     return checks
@@ -3876,8 +3898,11 @@ def main(argv):
 
     def runner(arm, trial):
         refresh_credentials(home)
-        for line in fresh_token(home, options.timeout, probe):
-            print("  %s" % line, flush=True)
+
+        # A dry run calls no model, so it asks for no token either.
+        if not options.dry_run:
+            for line in fresh_token(home, options.timeout, probe):
+                print("  %s" % line, flush=True)
         if options.task == "build":
             with credential_watch(home):
                 return run_trial(arm, trial, work, home, options)
