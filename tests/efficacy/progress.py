@@ -210,11 +210,26 @@ def blocks_of(names, arm):
 
 
 def live_scorer(claim):
-    """Whether the scorer a marker names is still running."""
+    """Whether the tool a marker names is still running."""
     try:
-        return running_as(claim["pid"], "score.py")
+        return running_as(claim["pid"], claim.get("tool") or "score.py")
     except LiveRunError:
         return False
+
+
+def started_of(claim):
+    """When a marker's tool started, as a timestamp, or None where the
+    marker does not say."""
+    try:
+        return datetime.datetime.fromisoformat(claim["started"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def since(names, when):
+    """The names whose file was written at `when` or later."""
+    return {name: written for name, written in names.items()
+            if written >= when}
 
 
 def in_progress(work, written):
@@ -239,19 +254,50 @@ def in_progress(work, written):
     return max(changed) if changed else None
 
 
-def plain_scoring(argv):
-    """Whether a scorer's command line scores every build trial still
-    without a score, read with the scorer's own parser."""
+def tool_options(module, argv):
+    """A tool's command line read with its own parser, or None where the
+    parser refuses it."""
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return module.parse_args(list(argv or [])[1:])
+    except SystemExit:
+        return None
+
+
+def whole_scoring(argv):
+    """The scorer's options where its command line covers every build
+    trial, or None."""
 
     # Imported here: the scorer's module is only needed once one runs.
     import score
-    try:
-        with contextlib.redirect_stderr(io.StringIO()):
-            options = score.parse_args(list(argv or [])[1:])
-    except SystemExit:
-        return False
-    return (options.task == "build" and not options.rescore
-            and not options.trial and not options.run)
+    options = tool_options(score, argv)
+    if options is None or options.task != "build":
+        return None
+    return None if options.trial or options.run else options
+
+
+def plain_scoring(argv):
+    """Whether a scorer's command line scores every build trial still
+    without a score, read with the scorer's own parser."""
+    options = whole_scoring(argv)
+    return options is not None and not options.rescore
+
+
+def full_rescore(argv):
+    """Whether a scorer's command line scores every build trial again."""
+    options = whole_scoring(argv)
+    return options is not None and bool(options.rescore)
+
+
+def full_reread(argv):
+    """Whether a security reader's command line reads every scored trial
+    again."""
+
+    # Imported here, as the scorer's module is.
+    import security
+    options = tool_options(security, argv)
+    return (options is not None and bool(options.reread)
+            and not options.trial)
 
 
 def in_hand(area, scores, readings):
@@ -284,6 +330,18 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     readings = names_in(os.path.join(area, "security-scores"))
     claim = read_claim(claim_path(area, "score.py"))
     live = bool(claim and alive(claim))
+    begun = started_of(claim) if live else None
+
+    # A rescore replaces every score, and a reread every reading, so the
+    # ones written before it began are what it is still to replace: the bars
+    # count only what it has written, and fill as it goes.
+    if begun is not None and full_rescore(claim.get("argv")):
+        scores = since(scores, begun)
+        readings = since(readings, begun)
+    reader = read_claim(claim_path(area, "security.py"))
+    reread = started_of(reader) if reader and alive(reader) else None
+    if reread is not None and full_reread(reader.get("argv")):
+        readings = since(readings, reread)
     hand = in_hand(area, scores, readings) if live else None
     if hand:
         phase, changed, trial = hand
@@ -317,26 +375,21 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     if hand and not named:
         summary += working
     if live:
-        try:
-            begun = datetime.datetime.fromisoformat(claim["started"])
-        except (KeyError, TypeError, ValueError):
-            begun = None
 
         # The pace is this scorer's own, from the scores it wrote since it
-        # started. What is left is known only for a plain run, which scores
-        # every trial without a score; a rescore keeps the scores it has not
-        # yet replaced, and a run of named trials or of one record holds only
+        # started. What is left is known for a run over every trial, plain
+        # or rescoring; a run of named trials or of one record holds only
         # those. The estimate covers the scoring alone, so it is shown only
         # while a trial is being scored: the security readings that follow
         # run at a pace of their own, and a refused trial leaves the bar short
         # with no scoring left to do.
-        plain = plain_scoring(claim.get("argv"))
+        argv = claim.get("argv")
+        whole = plain_scoring(argv) or full_rescore(argv)
         if begun is not None:
-            fresh = sum(1 for written in scores.values()
-                        if written >= begun.timestamp())
-            elapsed = time.time() - begun.timestamp()
+            fresh = len(since(scores, begun))
+            elapsed = time.time() - begun
             summary += "  %.1f h in" % (elapsed / 3600)
-            if (fresh and plain and hand and hand[0] == "scoring"
+            if (fresh and whole and hand and hand[0] == "scoring"
                     and done < total):
                 left = elapsed / fresh * (total - done)
                 summary += ", about %.1f h of scoring left" % (left / 3600)
@@ -478,13 +531,41 @@ def self_test():
     dated(os.path.join(area, "scoring", "hybrid-1"), 58, folder=True)
     one_arm = scoring_lines(scratch, ("none",), 1, alive=lambda claim: True)
 
-    # A rescore keeps the scores it has not replaced, so what is left of it
-    # cannot be told from the area.
+    # A rescore of named trials keeps the scores it does not replace, so
+    # what is left of it cannot be told from the area.
     with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
         json.dump({"pid": 4242, "tool": "score.py",
-                   "argv": ["tests/efficacy/score.py", "--rescore"],
+                   "argv": ["tests/efficacy/score.py", "--rescore",
+                            "--trial", "none-1"],
                    "started": started_at.isoformat(timespec="seconds")}, handle)
     rescore_pace = scoring_now()
+
+    # A rescore of every trial: a score and a reading from before it began
+    # are the old ones it is still to replace.
+    dated(os.path.join(area, "scores", "skills-1.json"), -10)
+    dated(os.path.join(area, "security-scores", "inline-1.json"), -5)
+    with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "score.py",
+                   "argv": ["tests/efficacy/score.py", "--root", "r",
+                            "--rescore"],
+                   "started": started_at.isoformat(timespec="seconds")}, handle)
+    rescore_all = scoring_now()
+    whole_rescore = {line.split()[0]: line for line in rescore_all[2:]
+                     if line.strip()}
+
+    # A security reread of every scored trial, with the scorer gone: the
+    # reading from before it began is the old one.
+    os.remove(claim_path(area, "score.py"))
+    dated(os.path.join(area, "security-scores", "hybrid-1.json"), 58)
+    reread_at = datetime.datetime.now() - datetime.timedelta(minutes=30)
+    with io.open(claim_path(area, "security.py"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "security.py",
+                   "argv": ["tests/efficacy/security.py", "--root", "r",
+                            "--reread"],
+                   "started": reread_at.isoformat(timespec="seconds")}, handle)
+    reread_all = {line.split()[0]: line for line in scoring_now()[2:]
+                  if line.strip()}
     shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
     scored = {line.split()[0]: line for line in live[2:] if line.strip()}
@@ -548,9 +629,21 @@ def self_test():
          "scoring hybrid-1" in one_arm[-1]),
         ("the security pass shows no scoring estimate, bar short or not",
          not any("left" in line for line in securing)),
-        ("a rescore shows its time in and no time left",
+        ("a rescore of named trials shows its time in and no time left",
          any(" h in" in line for line in rescore_pace)
          and not any("h left" in line for line in rescore_pace)),
+        ("a rescore of every trial counts only the scores and readings "
+         "written since it began, and estimates what is left",
+         " 0/15" in whole_rescore.get("skills", "")
+         and " 4/75" in whole_rescore.get("all", "")
+         and "h of scoring left" in whole_rescore.get("all", "")
+         and "1 read for security" in whole_rescore.get("none", "")
+         and "read for security" not in whole_rescore.get("inline", "")),
+        ("a reread of every trial counts only the readings written since "
+         "it began",
+         "1 read for security" in reread_all.get("hybrid", "")
+         and "read for security" not in reread_all.get("none", "")
+         and " 5/75" in reread_all.get("all", "")),
         ("once every trial is scored, the security pass shows no time left",
          any(" h in" in line for line in all_scored)
          and not any("left" in line for line in all_scored)),
