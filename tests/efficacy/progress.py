@@ -1,8 +1,8 @@
 """Show a run's progress, one bar per arm, read from its run records, and
-its scoring's, read from the scoring area.
+its scoring's and judging's, read from the scoring area.
 
 Read-only: it opens the run root's `run-*.json` and lists the scoring area,
-so it can watch a live run or a live scoring from a console of its own
+so it can watch a live run, scoring or judging from a console of its own
 without touching a trial. It redraws every `--every` seconds until stopped,
 or once with `--once`.
 """
@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 from harness import (ROUND5_K, SCORABLE, VOIDING, LiveRunError,  # noqa: E402
-                     TrialError, claim_path, now, read_claim,
+                     TrialError, canonical, claim_path, now, read_claim,
                      result_of, running_as, scoring_area, split_name)
 from report import ROUND5_RUN  # noqa: E402
 
@@ -172,7 +172,8 @@ def render(root, arms=None, k=ROUND5_K, moment=None, asked=()):
         summary += "  %.1f h in, about %.0f h left" % (
             elapsed.total_seconds() / 3600, left.total_seconds() / 3600)
     lines.append(summary)
-    return lines + scoring_lines(root, arms, k)
+    return (lines + scoring_lines(root, arms, k)
+            + judging_lines(root, arms, k))
 
 
 def names_in(directory):
@@ -400,6 +401,131 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     return lines
 
 
+def judgings(judging):
+    """The judge's records under `judging`, as (label, record, when written);
+    a record caught mid-write is skipped."""
+    found = []
+    for file in sorted(glob.glob(os.path.join(judging, "T*.json"))):
+        try:
+            with io.open(file, encoding="utf-8") as handle:
+                record = json.load(handle)
+            written = os.path.getmtime(file)
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict):
+            found.append((os.path.basename(file)[:-len(".json")], record,
+                          written))
+    return found
+
+
+def judge_in_hand(judging, begun):
+    """The blind label the live judge is reading, as (when its bundle was
+    built, label), or None.
+
+    The judge builds a label's bundle and writes the label's record once the
+    judging ends, so the label in hand is the newest bundle built since the
+    judge began with no record yet. The bundle holds no trial name, and the
+    label is all the view shows of it.
+    """
+    bundles = os.path.join(judging, "bundles")
+    try:
+        entries = [entry for entry in os.listdir(bundles)
+                   if entry.startswith("T") and entry[1:].isdigit()]
+    except OSError:
+        return None
+    waiting = []
+    for entry in entries:
+        if os.path.exists(os.path.join(judging, "%s.json" % entry)):
+            continue
+        built = os.path.getmtime(os.path.join(bundles, entry))
+        if built >= begun:
+            waiting.append((built, entry))
+    return max(waiting) if waiting else None
+
+
+def judging_lines(root, arms, k, alive=live_scorer):
+    """The judging's lines: one bar per arm of judgings done, out of the
+    judgings owed to its trials whose build installed, with the failures
+    still owed and the label in hand; none before judging starts."""
+
+    # Imported here, as the scorer's module is.
+    import judge
+    area = scoring_area(root)
+    judging = os.path.join(area, "judge")
+    found = judgings(judging)
+    claim = read_claim(claim_path(area, "judge.py"))
+    live = bool(claim and alive(claim))
+    if not live and not any(record.get("outcome") == "judged"
+                            for _, record, _ in found):
+        return []
+
+    # The judgings owed per trial are the live judge's `--repeat`, or the
+    # judge's own default once none runs.
+    argv = claim.get("argv") if live else None
+    options = tool_options(judge, argv or ["judge.py"])
+    repeat = options.repeat if options and options.repeat > 0 else 3
+
+    # A score caught mid-write leaves the failed builds unknown for one
+    # redraw, which then owes their judgings; the next redraw reads it whole.
+    try:
+        failed = judge.failed_builds(root)
+    except (OSError, ValueError, KeyError):
+        failed = set()
+    begun = started_of(claim) if live else None
+
+    # A trial's judged records count up to the repeat and no further: a
+    # rejudge adds readings past what is owed, which would overfill the bar.
+    # A failed or invalid record counts only while its trial is still short,
+    # since the judge owes it again and a later run makes it good. A dry run's
+    # record is neither.
+    held, failures, fresh = {}, {}, 0
+    for _, record, written in found:
+        try:
+            name = canonical(record.get("trial") or "")
+        except TrialError:
+            continue
+        outcome = record.get("outcome")
+        if outcome == "judged":
+            held[name] = held.get(name, 0) + 1
+            if begun is not None and written >= begun:
+                fresh += 1
+        elif outcome in ("failed", "invalid"):
+            failures[name] = failures.get(name, 0) + 1
+    lines = ["", "Judged, %d per trial" % repeat]
+    total = done = 0
+    for name in arms:
+        owed = (k - sum(1 for trial in failed if arm_of(trial) == name)) * repeat
+        counted = sum(min(count, repeat) for trial, count in held.items()
+                      if arm_of(trial) == name)
+        short = sum(count for trial, count in failures.items()
+                    if arm_of(trial) == name and held.get(trial, 0) < repeat)
+        total += owed
+        done += counted
+        line = "%-10s %s %2d/%d" % (name, bar(counted, owed), counted, owed)
+        if short:
+            line += "  %d failed" % short
+        lines.append(line)
+    summary = "%-10s %s %2d/%d" % ("all", bar(done, total), done, total)
+
+    # The label in hand and the pace are the live judge's own, and only for a
+    # judging of every trial: a judge of named trials owes only those, and a
+    # dry run judges nothing.
+    whole = (options is not None and not options.trial
+             and not options.dry_run)
+    if live and whole and begun is not None:
+        hand = judge_in_hand(judging, begun)
+        if hand:
+            summary += "  judging %s, %d min;" % (
+                hand[1], (time.time() - hand[0]) // 60)
+        elapsed = time.time() - begun
+        summary += "%s%.1f h in" % (" " if hand else "  ", elapsed / 3600)
+        if fresh and done < total:
+            left = elapsed / fresh * (total - done)
+            summary += ", about %.1f h left" % (left / 3600)
+    lines.extend(["", summary])
+    return lines
+
+
 def watch(root, every, asked=()):
     while True:
         lines = render(root, asked=asked)
@@ -582,6 +708,73 @@ def self_test():
                    "started": reread_at.isoformat(timespec="seconds")}, handle)
     reread_all = {line.split()[0]: line for line in scoring_now()[2:]
                   if line.strip()}
+
+    # A judging under way on a root of its own. none-2's build did not
+    # install, so none owes 14 trials. none-1 failed once and was judged four
+    # times since, one past the repeat; inline-1 holds one judging and one
+    # failure; hybrid-1 holds only a dry run's record; a record caught
+    # mid-write sits beside them. T9's bundle is in hand; T0's is left from
+    # before the judge began.
+    judged_root = os.path.join(scratch, "judged")
+    judged_area = scoring_area(judged_root)
+    judging = os.path.join(judged_area, "judge")
+    begun_at = datetime.datetime.now() - datetime.timedelta(hours=1)
+    begun_clock = time.mktime(begun_at.timetuple())
+
+    def written(path, record, minutes):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+        os.utime(path, (begun_clock + minutes * 60,) * 2)
+
+    written(os.path.join(judged_area, "scores", "none-2.json"),
+            {"name": "none-2", "install": {"value": False}}, 1)
+    planted_judgings = [("T1", "none-1", "failed"), ("T2", "none-1", "judged"),
+                        ("T3", "none-1", "judged"), ("T4", "none-1", "judged"),
+                        ("T5", "none-1", "judged"), ("T6", "inline-1", "judged"),
+                        ("T7", "inline-1", "failed"),
+                        ("T8", "hybrid-1", "dry-run")]
+    for minutes, (label, name, outcome) in enumerate(planted_judgings, 2):
+        written(os.path.join(judging, "%s.json" % label),
+                {"trial": name, "blind_id": label, "outcome": outcome},
+                minutes)
+    with io.open(os.path.join(judging, "T10.json"), "w",
+                 encoding="utf-8") as handle:
+        handle.write('{"trial": ')
+    dated(os.path.join(judging, "bundles", "T0"),
+          (begun_clock - 600 - clock) / 60, folder=True)
+    dated(os.path.join(judging, "bundles", "T8"),
+          (begun_clock + 9 * 60 - clock) / 60, folder=True)
+    dated(os.path.join(judging, "bundles", "T9"),
+          (time.time() - 240 - clock) / 60, folder=True)
+
+    def judging_now(argv_tail=(), alive=True):
+        with io.open(claim_path(judged_area, "judge.py"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"pid": 4242, "tool": "judge.py",
+                       "argv": ["tests/efficacy/judge.py", "--root", "r"]
+                       + list(argv_tail),
+                       "started": begun_at.isoformat(timespec="seconds")},
+                      handle)
+        return judging_lines(judged_root, ROUND5_RUN, ROUND5_K,
+                             alive=lambda claim: alive)
+
+    def by_line(drawn_lines):
+        return {line.split()[0]: line for line in drawn_lines[2:]
+                if line.strip()}
+
+    judging_live = by_line(judging_now())
+    judging_twice = judging_now(["--repeat", "2"])
+    judging_named = judging_now(["--trial", "none-1"])
+    judging_dry = judging_now(["--dry-run"])
+    judging_ended = judging_now(alive=False)
+    judging_header = judging_now()[1]
+    os.remove(claim_path(judged_area, "judge.py"))
+    unjudged_root = os.path.join(scratch, "unjudged")
+    written(os.path.join(scoring_area(unjudged_root), "judge", "T1.json"),
+            {"trial": "none-1", "blind_id": "T1", "outcome": "dry-run"}, 1)
+    unjudged = judging_lines(unjudged_root, ROUND5_RUN, ROUND5_K)
+    judging_total = " 4/%d" % ((len(ROUND5_RUN) * ROUND5_K - 1) * 3)
     shutil.rmtree(area, ignore_errors=True)
     shutil.rmtree(scratch, ignore_errors=True)
     scored = {line.split()[0]: line for line in live[2:] if line.strip()}
@@ -679,6 +872,38 @@ def self_test():
          and "h of scoring left" in scored.get("all", "")),
         ("a scorer that has ended names no trial and no pace",
          not any("scoring " in line or " h in" in line for line in stale)),
+        ("before judging starts, no judging lines are drawn, a dry run's "
+         "records or not",
+         not any("Judged" in line for line in lines + old + live)
+         and unjudged == []),
+        ("each arm's judgings count toward its bar, owed per trial whose "
+         "build installed",
+         " 3/42" in judging_live.get("none", "")
+         and " 1/45" in judging_live.get("inline", "")
+         and " 0/45" in judging_live.get("skills", "")),
+        ("the judgings owed per trial are named, from the judge's repeat",
+         judging_header == "Judged, 3 per trial"
+         and judging_twice[1] == "Judged, 2 per trial"
+         and any(line.startswith("none") and " 2/28" in line
+                 for line in judging_twice)),
+        ("a dry run's record and one caught mid-write count for nothing",
+         " 0/45" in judging_live.get("hybrid", "")),
+        ("a failure counts only while its trial is still owed a judging",
+         "1 failed" in judging_live.get("inline", "")
+         and "failed" not in judging_live.get("none", "")),
+        ("the label in hand is named with its minutes, no trial beside it",
+         "judging T9, 4 min;" in judging_live.get("all", "")
+         and not any("judging " in line
+                     for arm, line in judging_live.items() if arm != "all")),
+        ("the judge's line counts every arm and estimates what is left",
+         judging_total in judging_live.get("all", "")
+         and " 1.0 h in, about " in judging_live.get("all", "")
+         and "h left" in judging_live.get("all", "")),
+        ("a judge of named trials, a dry run, or one ended names no label "
+         "and no pace",
+         not any("judging " in line or " h in" in line
+                 for line in judging_named + judging_dry + judging_ended)
+         and judging_total in judging_ended[-1]),
     ]
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
