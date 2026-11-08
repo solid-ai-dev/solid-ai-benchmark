@@ -334,7 +334,11 @@ def scoring_lines(root, arms, k, alive=live_scorer):
 
     # A rescore replaces every score, and a reread every reading, so the
     # ones written before it began are what it is still to replace: the bars
-    # count only what it has written, and fill as it goes.
+    # count only what it has written, and fill as it goes. The trial in hand
+    # is still read against every result, old ones included: a directory
+    # left from the scoring before, older than its old result, is not being
+    # worked on.
+    hand = in_hand(area, scores, readings) if live else None
     if begun is not None and full_rescore(claim.get("argv")):
         scores = since(scores, begun)
         readings = since(readings, begun)
@@ -342,7 +346,6 @@ def scoring_lines(root, arms, k, alive=live_scorer):
     reread = started_of(reader) if reader and alive(reader) else None
     if reread is not None and full_reread(reader.get("argv")):
         readings = since(readings, reread)
-    hand = in_hand(area, scores, readings) if live else None
     if hand:
         phase, changed, trial = hand
         minutes = (time.time() - changed) // 60
@@ -553,6 +556,19 @@ def self_test():
     whole_rescore = {line.split()[0]: line for line in rescore_all[2:]
                      if line.strip()}
 
+    # The same rescore just begun, with every directory older than its old
+    # result: nothing is in hand yet, old results or not.
+    for name, minutes in (("hybrid-1", 54), ("skills-1", -11)):
+        dated(os.path.join(area, "scoring", name), minutes, folder=True)
+    dated(os.path.join(area, "security", "inline-1"), -6, folder=True)
+    with io.open(claim_path(area, "score.py"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": 4242, "tool": "score.py",
+                   "argv": ["tests/efficacy/score.py", "--root", "r",
+                            "--rescore"],
+                   "started": datetime.datetime.now().isoformat(
+                       timespec="seconds")}, handle)
+    just_begun = scoring_now()
+
     # A security reread of every scored trial, with the scorer gone: the
     # reading from before it began is the old one.
     os.remove(claim_path(area, "score.py"))
@@ -639,6 +655,10 @@ def self_test():
          and "h of scoring left" in whole_rescore.get("all", "")
          and "1 read for security" in whole_rescore.get("none", "")
          and "read for security" not in whole_rescore.get("inline", "")),
+        ("a rescore just begun names no trial in hand over the old results",
+         not any("scoring " in line or "reading " in line
+                 for line in just_begun)
+         and " 0/75" in just_begun[-1]),
         ("a reread of every trial counts only the readings written since "
          "it began",
          "1 read for security" in reread_all.get("hybrid", "")
