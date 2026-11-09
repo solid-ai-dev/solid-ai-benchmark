@@ -176,9 +176,14 @@ MODELS = {
                % (VENDORED["into"], VENDORED["path"], VENDORED["path"])),
 }
 
-# The `reference` arm's whole file: the chain named, nothing copied in.
+# The `reference` arm's whole file: the brief, then the chain named, no rule
+# copied in. Every arm's root states the same project facts, so the arms
+# differ in how they hand over the rules and in nothing the project says of
+# itself.
 REFERENCE = """\
 # tariff
+
+{brief}
 
 Before starting work, read each template below and apply every rule it
 holds that fits this project. They are vendored at `{into}/`,
@@ -198,9 +203,8 @@ FACTS = {
     "{{owner}}": "Imbra Ltd",
     "{{repository}}": "this repository",
     "{{the commands to build, test and run the project}}":
-        "Python 3.12, Flask 3, Jinja, HTMX and SQLite, managed with uv; "
-        "check with ruff, mypy strict and pytest. It runs locally; there is "
-        "no deployment target.",
+        "Python 3.12, Flask 3, Jinja, HTMX and SQLite; the brief names no "
+        "tooling. It runs locally; there is no deployment target.",
     "{{approver}}": "not stated in the brief",
     "{{tracker}}": "not stated in the brief",
     "{{release}}": "not stated in the brief; the application runs locally",
@@ -338,11 +342,13 @@ def build_prompt(tree, arm, files):
                           read_chain(tree, files))
 
 
-def reference_text(files):
-    """The `reference` arm's file for a chain, the same for the same chain."""
+def reference_text(files, brief):
+    """The `reference` arm's file for a chain and a brief, the same for the
+    same two."""
     listed = "\n".join("- `%s/%s`" % (VENDORED["into"], name)
                        for name in files)
-    return REFERENCE.format(into=VENDORED["into"], files=listed)
+    return REFERENCE.format(brief=brief.strip(), into=VENDORED["into"],
+                            files=listed)
 
 
 # The templates' manifest: one entry per template, with the file it lives in
@@ -399,9 +405,12 @@ def moments(tree, files):
 # The map arms' root file. The two differ in one column and one verb: what
 # the agent does when a moment arrives, read a vendored file or load a skill.
 # Everything before the table says the same thing in both, so the arms
-# measure the mechanism and not the wording.
+# measure the mechanism and not the wording. The brief comes first, as in
+# every arm's root.
 MAP = """\
 # tariff
+
+{brief}
 
 {paragraph}
 
@@ -431,9 +440,9 @@ MAP_LOAD = {
 }
 
 
-def map_text(rows, load):
-    """A map arm's root file: the same moments, in the same order, for
-    either way of loading."""
+def map_text(rows, load, brief):
+    """A map arm's root file for a brief: the same moments, in the same
+    order, for either way of loading."""
     words = MAP_LOAD[load]
     into = VENDORED["into"]
     table = "\n".join(
@@ -443,7 +452,8 @@ def map_text(rows, load):
     paragraph = textwrap.fill(
         MAP_PARAGRAPH.format(when=words["when"],
                              act=words["act"].format(into=into)), width=79)
-    return MAP.format(paragraph=paragraph, column=words["column"], rows=table)
+    return MAP.format(brief=brief.strip(), paragraph=paragraph,
+                      column=words["column"], rows=table)
 
 
 def template_skills(tree, rows):
@@ -581,9 +591,22 @@ def self_test():
         return 1
     print("the leak scan reports a planted token and passes clean text")
 
+    # The brief and the emitter's facts name the stack the spec fixes and no
+    # tooling: a tool the project chose would reach only the arms that copy
+    # it, and the arms would then differ in what they were told.
+    tooling = ("mypy", "ruff", "pytest", "uv,", " uv ", "uv;")
+    told = [read_brief()] + list(FACTS.values())
+    named = [tool for tool in tooling for fact in told if tool in fact]
+    if named or "Python 3.12" not in told[0]:
+        print("FAIL: the brief or the facts name tooling, or drop the "
+              "stack: %r" % named)
+        return 1
+    print("the brief and the facts name the stack and no tooling")
+
     files = ["templates/core/quality.md", "templates/backend/api.md"]
-    text = reference_text(files)
-    if text != reference_text(files) or not all(
+    planted_brief = "`tariff` - a planted brief - Python 3.12 / Flask 3\n"
+    text = reference_text(files, planted_brief)
+    if text != reference_text(files, planted_brief) or not all(
             "`%s/%s`" % (VENDORED["into"], f) in text for f in files):
         print("FAIL: the reference text is not the chain under the vendored "
               "path, the same every time")
@@ -615,8 +638,18 @@ def self_test():
                     "  - id: backend-api\n    file: templates/backend/api.md\n"
                     "    description: API-first, contracts, versioning\n")
         rows = moments(tree, chain)
-        reading = map_text(rows, "read")
-        loading = map_text(rows, "skill")
+        reading = map_text(rows, "read", planted_brief)
+        loading = map_text(rows, "skill", planted_brief)
+
+        # Every root the generator builds from fixed text states the same
+        # project facts as the model arms are given: the brief, verbatim,
+        # under the title and before any rule.
+        opening = "# tariff\n\n%s\n" % planted_brief.strip()
+        if not all(root.startswith(opening)
+                   for root in (text, reading, loading)):
+            print("FAIL: a fixed-text root does not open with the brief")
+            return 1
+        print("every fixed-text root opens with the brief, verbatim")
         first = [line.split(" | ")[0] for line in reading.splitlines()
                  if line.startswith("| ") and not line.startswith("| ---")]
         second = [line.split(" | ")[0] for line in loading.splitlines()
@@ -752,13 +785,13 @@ def main(argv):
         record["resolved_files"] = files
         skills = {}
         if entry["kind"] == "fixed":
-            document = reference_text(files)
+            document = reference_text(files, read_brief())
         elif entry["kind"] == "emit":
             document, skills = emit_arm(tree, ROUND5_ROOTS)
             record["declined"] = ROUND5_DECLINED
         elif entry["kind"] == "map":
             rows = moments(tree, files)
-            document = map_text(rows, entry["load"])
+            document = map_text(rows, entry["load"], read_brief())
             if entry["load"] == "skill":
                 skills = template_skills(tree, rows)
             record["load"] = entry["load"]

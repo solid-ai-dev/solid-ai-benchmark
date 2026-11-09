@@ -194,7 +194,8 @@
 | FR-13-03 | The benchmark shall archive every reading, judging, map and lock, with a hash per file, and fail the verify on a changed one. | Archive |
 | FR-13-04 | The benchmark shall refuse to write a report under `docs/audits/` once a reading changed since the archive was verified. | Archive, Report |
 | FR-13-05 | The benchmark shall restore an archive so it reads as the original root does, its records pointing at the restored files. | Archive |
-| FR-13-06 | The benchmark shall build a map arm's root from the chain and the templates' manifest alone, the same moments in the same order for both map arms, and each `lazyskills` skill holding one template verbatim. | Arm generator |
+| FR-13-06 | The benchmark shall build a map arm's root from the brief, the chain and the templates' manifest alone, the same moments in the same order for both map arms, and each `lazyskills` skill holding one template verbatim. | Arm generator |
+| FR-13-07 | The benchmark shall give every arm's root the same project facts: the brief, which names the stack the spec fixes and no tooling. | Arm generator |
 
 ### 14 One run at a time
 
