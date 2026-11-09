@@ -1,8 +1,7 @@
 `tariff` — Imbra Ltd — a pricing and invoicing web application:
 a product catalog, discount rules of several kinds, tax jurisdictions,
 customers, and invoices assembled from them — Python 3.12 / Flask 3 /
-Jinja / HTMX / SQLite — uv, ruff, mypy strict, pytest — runs locally, no
-deployment target
+Jinja / HTMX / SQLite — runs locally, no deployment target
 
 Personal data: customers are people, stored with their name, email and
 postal address and named on the invoices billed to them. The business is

@@ -144,8 +144,9 @@ The brief is what an adopter would type:
 
 - the domain in one line, naming discount rules, tax jurisdictions and
   customers
-- the stack: Python 3.12, Flask 3, Jinja, HTMX, SQLite, uv, ruff, mypy
-  strict, pytest
+- the stack the spec fixes: Python 3.12, Flask 3, Jinja, HTMX, SQLite; no
+  tooling, which is the project's own choice and would reach only the arms
+  that copy it
 - personal data: customers are people with a name, email and address; the
   GDPR applies, so a customer may ask for erasure or a copy of their data;
   one administrator signs in
