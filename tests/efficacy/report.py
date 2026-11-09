@@ -5630,6 +5630,8 @@ BROKEN_AXIS = "Reliability"
 # a whole point, and never under 5 points, so an axis the pilot's trials
 # could not shake, or did not measure, still needs a visible move.
 # Reliability's 7 is one build of 15, the margin round 5d gave it too.
+ISO_RINGS = (0.2, 0.4, 0.6, 0.8)
+
 ISO_MARGINS = {
     "Functionality": 5, "Performance": 5, "Compatibility": 5, "Usability": 5,
     "Reliability": 7, "Security": 5, "Maintainability": 5, "Flexibility": 5,
@@ -5870,10 +5872,16 @@ def iso_radar_svg(panels, theme):
                    'font-size="14" font-weight="600" fill="%s">%s</text>'
                    % (cx, cy - radius - 74, colors["secondary"],
                       escape(cost)))
-        for share in (0.25, 0.5, 0.75):
+        # A ring every 20 %, each labelled beside the top axis, so a share
+        # reads off the chart in round numbers.
+        for share in ISO_RINGS:
             out.append('<polygon points="%s" fill="none" stroke="%s" '
                        'stroke-width="1"/>' % (ring(cx, cy, share),
                                                colors["grid"]))
+            x, y = point(cx, cy, share, 0)
+            out.append('<text x="%.1f" y="%.1f" dominant-baseline="middle" '
+                       'font-size="10" fill="%s">%d %%</text>'
+                       % (x + 4, y, colors["secondary"], round(share * 100)))
         for index in range(count):
             x, y = point(cx, cy, 1.0, index)
             out.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" '
@@ -7562,6 +7570,20 @@ def iso_checks(seed):
                    "target ring, the markers by shape, in both themes",
                    "error" not in trees and drawn["light"] != drawn["dark"]
                    and all(shape == expected for shape in got.values()),
+                   got))
+
+    # Each panel's grid rings sit every 20 %, each with its label.
+    grid = ISO_COLOURS["light"].get("grid", RADAR_THEMES["light"]["grid"])
+    light_tree = trees.get("light", ElementTree.Element("svg"))
+    rings = [polygon for polygon in light_tree.iter(space + "polygon")
+             if polygon.get("stroke") == grid
+             and not polygon.get("stroke-dasharray")]
+    ring_labels = [text.text for text in light_tree.iter(space + "text")
+                   if text.text and text.text.endswith(" %")]
+    got = (len(rings), ring_labels)
+    checks.append(("the ISO radar's rings sit every 20 %, each labelled",
+                   got == (4 * len(panels),
+                           ["20 %", "40 %", "60 %", "80 %"] * len(panels)),
                    got))
 
     # An axis not measured gets no vertex, so the shapes have one point per
