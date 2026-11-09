@@ -10,8 +10,8 @@
 
 ## Quality
 
-- `ruff check`, `ruff format --check` and `mypy --strict` are clean.
-- Tests under `pytest` cover the pricing rules, the routes and the exports,
+- The type checker at its strictest, the linter and the formatter are clean.
+- Tests cover the pricing rules, the routes and the exports,
   every boundary the spec names, and 80% of lines.
 - Keep functions short and nesting shallow. Name things after the domain.
 
