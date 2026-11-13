@@ -242,11 +242,15 @@ def arm_clause(arm):
     return "\n".join(lines) + "\n"
 
 
-# Tools a Python project might choose. Neither the brief nor the templates
-# name one, so a generated file that does invented it, and an arm told a
-# tool gets checks the other arms were never told to run.
-TOOLING = re.compile(r"\b(mypy|pyright|ruff|flake8|pylint|pytest|uv|pip|"
-                     r"poetry)\b", re.IGNORECASE)
+# The tools a Python project most often chooses. Neither the brief nor the
+# templates name one, so a generated file that does invented it, and an arm
+# told a tool gets checks the other arms were never told to run. The list is
+# a guard against the common case, not a proof: a rarer tool is caught by
+# reading the generated file, which is committed and reviewed. It can afford
+# to be broad, since a false positive costs one more generation.
+TOOLING = re.compile(r"\b(mypy|pyright|ruff|flake8|pylint|black|isort|"
+                     r"pytest|tox|nox|bandit|uv|pip|pipenv|poetry|hatch)\b",
+                     re.IGNORECASE)
 
 
 def named_tooling(texts):
@@ -627,6 +631,8 @@ def self_test():
             != ["mypy", "pytest", "uv"]
             or named_tooling(["Use Ruff for linting and Pyright for types."])
             != ["pyright", "ruff"]
+            or named_tooling(["Run black --check . and isort --check ."])
+            != ["black", "isort"]
             or named_tooling(["Type-check at the strictest setting; "
                               "lint and format clean."])
             or "name no tool and no command" not in INSTRUCTION):
