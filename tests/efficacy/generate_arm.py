@@ -144,6 +144,11 @@ applies to the project the brief describes, and leave out every rule that
 does not. Where the brief does not settle something, choose what the rules
 already imply and move on; do not ask.
 
+The brief names no tools, and the project has chosen none. Where a rule asks
+for a type checker, a linter, a formatter, a test runner or a package
+manager, or a template shows a command as a placeholder, say what the check
+must do and name no tool and no command: that choice is the project's.
+
 Output the finished `CLAUDE.md` and nothing else: no preamble, no
 explanation, no code fence around the whole document.
 
@@ -235,6 +240,19 @@ def arm_clause(arm):
         lines.extend(["", "## The budget", "",
                       BUDGET.format(lines=count, width=width)])
     return "\n".join(lines) + "\n"
+
+
+# Tools a Python project might choose. Neither the brief nor the templates
+# name one, so a generated file that does invented it, and an arm told a
+# tool gets checks the other arms were never told to run.
+TOOLING = re.compile(r"\b(mypy|pyright|ruff|flake8|pylint|pytest|uv|pip|"
+                     r"poetry)\b")
+
+
+def named_tooling(texts):
+    """The tool names the texts carry, sorted; empty where they name none."""
+    return sorted({match for text in texts
+                   for match in TOOLING.findall(text)})
 
 
 def over_budget(document, budget):
@@ -594,14 +612,26 @@ def self_test():
     # The brief and the emitter's facts name the stack the spec fixes and no
     # tooling: a tool the project chose would reach only the arms that copy
     # it, and the arms would then differ in what they were told.
-    tooling = ("mypy", "ruff", "pytest", "uv,", " uv ", "uv;")
     told = [read_brief()] + list(FACTS.values())
-    named = [tool for tool in tooling for fact in told if tool in fact]
+    named = named_tooling(told)
     if named or "Python 3.12" not in told[0]:
         print("FAIL: the brief or the facts name tooling, or drop the "
               "stack: %r" % named)
         return 1
     print("the brief and the facts name the stack and no tooling")
+
+    # A model arm may still fill a template's command placeholder with a
+    # tool of its own choosing; such a file is refused.
+    if (named_tooling(["Run `mypy --strict .` and `uv run pytest`."])
+            != ["mypy", "pytest", "uv"]
+            or named_tooling(["Type-check at the strictest setting; "
+                              "lint and format clean."])
+            or "name no tool and no command" not in INSTRUCTION):
+        print("FAIL: a generated file naming a tool is not caught, a clean "
+              "one is, or the prompt does not forbid naming tools")
+        return 1
+    print("a generated file naming a tool is refused, and the prompt forbids "
+          "one")
 
     files = ["templates/core/quality.md", "templates/backend/api.md"]
     planted_brief = "`tariff` - a planted brief - Python 3.12 / Flask 3\n"
@@ -829,6 +859,14 @@ def main(argv):
         record["outcome"] = "refused: specification leaked"
         print("refused: the generated files carry data only the "
               "specification supplies: %r" % leak["hits"])
+        return write_record(options.root, record, started_at) or 1
+
+    tools = named_tooling(texts)
+    record["named_tooling"] = tools
+    if tools:
+        record["outcome"] = "refused: names tooling"
+        print("refused: the generated files name tools the brief does not: "
+              "%s" % ", ".join(tools))
         return write_record(options.root, record, started_at) or 1
 
     # A dry run of any arm stops here: it writes nothing under `arms/`,

@@ -196,6 +196,7 @@
 | FR-13-05 | The benchmark shall restore an archive so it reads as the original root does, its records pointing at the restored files. | Archive |
 | FR-13-06 | The benchmark shall build a map arm's root from the brief, the chain and the templates' manifest alone, the same moments in the same order for both map arms, and each `lazyskills` skill holding one template verbatim. | Arm generator |
 | FR-13-07 | The benchmark shall give every arm's root the same project facts: the brief, which names the stack the spec fixes and no tooling. | Arm generator |
+| FR-13-08 | The benchmark shall tell a model arm's generation to name no tool, and refuse a generated file that names one. | Arm generator |
 
 ### 14 One run at a time
 
