@@ -246,12 +246,13 @@ def arm_clause(arm):
 # name one, so a generated file that does invented it, and an arm told a
 # tool gets checks the other arms were never told to run.
 TOOLING = re.compile(r"\b(mypy|pyright|ruff|flake8|pylint|pytest|uv|pip|"
-                     r"poetry)\b")
+                     r"poetry)\b", re.IGNORECASE)
 
 
 def named_tooling(texts):
-    """The tool names the texts carry, sorted; empty where they name none."""
-    return sorted({match for text in texts
+    """The tool names the texts carry, lower-cased and sorted; empty where
+    they name none."""
+    return sorted({match.lower() for text in texts
                    for match in TOOLING.findall(text)})
 
 
@@ -624,6 +625,8 @@ def self_test():
     # tool of its own choosing; such a file is refused.
     if (named_tooling(["Run `mypy --strict .` and `uv run pytest`."])
             != ["mypy", "pytest", "uv"]
+            or named_tooling(["Use Ruff for linting and Pyright for types."])
+            != ["pyright", "ruff"]
             or named_tooling(["Type-check at the strictest setting; "
                               "lint and format clean."])
             or "name no tool and no command" not in INSTRUCTION):
