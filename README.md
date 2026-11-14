@@ -58,3 +58,7 @@ Moved here with its history from `Imbra-Ltd/imbra-ai-templates`
 
 Results are reported in the templates repository, under `docs/audits/`,
 and [listed here by round](docs/rounds/README.md#reports).
+
+## License
+
+[MIT](LICENSE), as the templates.
