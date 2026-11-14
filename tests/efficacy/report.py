@@ -4575,12 +4575,15 @@ def round5e_checks():
                    got))
     audits = os.path.join(tempfile.gettempdir(), *AUDITS)
     got = (posthoc_iso_problem(True, audits) is not None,
+           posthoc_iso_problem(True, os.path.join(audits, "iso-draft"))
+           is not None,
            posthoc_iso_problem(True, tempfile.gettempdir()),
            posthoc_iso_problem(False, audits),
            aggregate_name(True), aggregate_name(False))
-    checks.append(("a pilot round read by the ISO radar is only a draft, and "
-                   "keeps its aggregate beside the registered one",
-                   got == (True, None, None, "aggregate-iso.json",
+    checks.append(("a pilot round read by the ISO radar is only a draft, "
+                   "never in or under docs/audits/, and keeps its aggregate "
+                   "beside the registered one",
+                   got == (True, True, None, None, "aggregate-iso.json",
                            "aggregate.json"), got))
 
     # The plain report answers the latest round's questions: with round
@@ -8274,8 +8277,12 @@ def posthoc_iso_problem(posthoc_iso, out_dir):
     """Why a pilot round read by the ISO radar may not be written to
     `out_dir`, or None where it may."""
     # Its rules were chosen after its results were seen, so it may describe
-    # the round but never stand as the round's record.
-    if posthoc_iso and is_record(out_dir):
+    # the round but never stand as the round's record, nor sit anywhere
+    # among the records where it could be read as one.
+    parts = os.path.normcase(os.path.abspath(out_dir)).split(os.sep)
+    among = any(parts[index:index + len(AUDITS)] == list(AUDITS)
+                for index in range(len(parts)))
+    if posthoc_iso and among:
         return ("--iso reads a pilot round by rules it did not register, so "
                 "it writes only a draft; name --out-dir outside docs/audits/")
     return None
