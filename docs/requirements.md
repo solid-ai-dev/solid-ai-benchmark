@@ -186,7 +186,7 @@
 | FR-12-15 | The benchmark shall screen round 6's candidates against `none` as round 5d registers: out on a deciding row worse, the rest ranked by rows better and then by mean cost, the top four kept. | Report |
 | FR-12-16 | From round 6 the benchmark shall give each approach its verdict from the ISO radar's axes: Yes where an axis is better and none worse, Worse where any is worse, No where none moved; and the summary's axis table shall be the ISO radar's. | Report |
 | FR-12-17 | The benchmark shall screen round 6's candidates on the ISO radar's axes: out on an axis worse, the rest ranked by axes better and then by mean cost, the top four kept; an axis no target measures shall neither hold nor move it. | Report |
-| FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/audits/`, and keep its aggregate beside the registered one. | Report |
+| FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/audits/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
 
 ### 13 Records and archive
 

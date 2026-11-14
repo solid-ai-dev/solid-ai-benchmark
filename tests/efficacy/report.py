@@ -4585,6 +4585,11 @@ def round5e_checks():
                    "beside the registered one",
                    got == (True, True, None, None, "aggregate-iso.json",
                            "aggregate.json"), got))
+    got = (iso_cross_problem(True, "C:/other-root") is not None,
+           iso_cross_problem(True, None), iso_cross_problem(False, "x"))
+    checks.append(("a run read by the ISO radar refuses a cross-check, whose "
+                   "withheld rows its markers would still count",
+                   got == (True, None, None), got))
 
     # The plain report answers the latest round's questions: with round
     # 5e's arms present, H7 to H9, and not round 5d's.
@@ -8288,6 +8293,18 @@ def posthoc_iso_problem(posthoc_iso, out_dir):
     return None
 
 
+def iso_cross_problem(iso_read, cross):
+    """Why a run read by the ISO radar may not take a cross-check, or
+    None where it may."""
+    # The ISO radar's markers, which decide its verdicts, read the round's
+    # own judge alone; a second judge's disagreements would withhold rows
+    # the markers still count. Every round the ISO radar reads has one judge.
+    if iso_read and cross:
+        return ("the ISO radar's verdicts read the round's own judge alone, "
+                "so a run read by it takes no --cross-check")
+    return None
+
+
 def aggregate_name(posthoc_iso):
     """The file in the scoring area that keeps the reading's aggregate."""
     # The registered reading's aggregate is the one its record cites, so a
@@ -8320,7 +8337,9 @@ def main(argv):
             return 2
 
     posthoc_iso = options.iso and not iso_rules(trials)
-    problem = posthoc_iso_problem(posthoc_iso, out_dir)
+    problem = (posthoc_iso_problem(posthoc_iso, out_dir)
+               or iso_cross_problem(iso_rules(trials) or posthoc_iso,
+                                    options.cross_check))
     if problem:
         print("refused: %s" % problem)
         return 2
