@@ -7,8 +7,7 @@ description: Writing or restructuring documentation, a decision record or a diag
 
 ## Standard documents
 
-- Carry these three in every project (MUST); their layout is the project's
-  own, and `templates/core/agents.md` offers a default for the agent files
+- Carry these three in every project (MUST); their layout is the project's own
 
 | File | Purpose |
 | --- | --- |

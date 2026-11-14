@@ -2,11 +2,11 @@
   "arm": "short",
   "kind": "model",
   "output_model": "inline",
-  "ref": "9086e0ff",
+  "ref": "9abed019",
   "source": {
     "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
-    "ref": "9086e0ff",
-    "commit": "9086e0ffc454fbff1d234601822257ce5e40a004"
+    "ref": "9abed019",
+    "commit": "9abed01916b941d9ed2f8daa8ff8c3b28f0718fd"
   },
   "roots": [
     "backend-api",
@@ -16,8 +16,8 @@
     "base-security",
     "base-data-governance"
   ],
-  "started_at": "2026-10-31T13:22:29",
-  "commit": "9086e0ffc454fbff1d234601822257ce5e40a004",
+  "started_at": "2026-11-13T22:48:14",
+  "commit": "9abed01916b941d9ed2f8daa8ff8c3b28f0718fd",
   "resolved_files": [
     "templates/core/quality.md",
     "templates/core/git.md",
@@ -33,9 +33,9 @@
     "templates/data/data-modeling.md",
     "templates/data/data-governance.md"
   ],
-  "prompt_chars": 83803,
+  "prompt_chars": 84526,
   "prompt_leak": null,
-  "prompt_file": "C:/efficacy/gen-short\\arm-short-prompt.txt",
+  "prompt_file": "C:\\efficacy\\gen6c-short\\arm-short-prompt.txt",
   "auth_probe": "ready",
   "command": [
     "C:\\Users\\bgeorgiev\\.local\\bin\\claude.EXE",
@@ -51,7 +51,7 @@
     "--setting-sources",
     "",
     "--settings",
-    "C:/efficacy/gen-short\\home\\settings.json",
+    "C:\\efficacy\\gen6c-short\\home\\settings.json",
     "--strict-mcp-config",
     "--disallowed-tools",
     "WebSearch",
@@ -59,20 +59,20 @@
   ],
   "model": "claude-sonnet-5",
   "effort": "high",
-  "elapsed_s": 200.3,
+  "elapsed_s": 363.9,
   "exit_status": 0,
   "result": {
-    "duration_api_ms": 193738,
+    "duration_api_ms": 359431,
     "stop_reason": "end_turn",
-    "session_id": "d648277b-ed48-47a3-8e32-165e689f9c29",
-    "total_cost_usd": 0.5512856,
+    "session_id": "520b02a2-8a41-4d23-ae76-f47f6efeb14b",
+    "total_cost_usd": 0.5654821999999999,
     "usage": {
-      "input_tokens": 14,
-      "cache_creation_input_tokens": 60568,
-      "cache_read_input_tokens": 495278,
-      "output_tokens": 20993,
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 38747,
+      "cache_read_input_tokens": 25101,
+      "output_tokens": 40547,
       "output_tokens_details": {
-        "thinking_tokens": 17757
+        "thinking_tokens": 39853
       },
       "server_tool_use": {
         "web_search_requests": 0,
@@ -80,19 +80,19 @@
       },
       "service_tier": "standard",
       "cache_creation": {
-        "ephemeral_1h_input_tokens": 60568,
+        "ephemeral_1h_input_tokens": 38747,
         "ephemeral_5m_input_tokens": 0
       },
       "inference_geo": "global",
       "iterations": [
         {
           "input_tokens": 2,
-          "output_tokens": 1058,
-          "cache_read_input_tokens": 84624,
-          "cache_creation_input_tokens": 1044,
+          "output_tokens": 40547,
+          "cache_read_input_tokens": 25101,
+          "cache_creation_input_tokens": 38747,
           "cache_creation": {
             "ephemeral_5m_input_tokens": 0,
-            "ephemeral_1h_input_tokens": 1044
+            "ephemeral_1h_input_tokens": 38747
           },
           "type": "message"
         }
@@ -102,17 +102,17 @@
     },
     "modelUsage": {
       "claude-sonnet-5": {
-        "inputTokens": 14,
-        "outputTokens": 20993,
-        "cacheReadInputTokens": 495278,
-        "cacheCreationInputTokens": 60568,
+        "inputTokens": 2,
+        "outputTokens": 40547,
+        "cacheReadInputTokens": 25101,
+        "cacheCreationInputTokens": 38747,
         "webSearchRequests": 0,
-        "costUSD": 0.5512856,
+        "costUSD": 0.5654821999999999,
         "contextWindow": 1000000,
         "maxOutputTokens": 64000,
-        "thinkingTokens": 17757,
+        "thinkingTokens": 39853,
         "cacheCreationEphemeral5mInputTokens": 0,
-        "cacheCreationEphemeral1hInputTokens": 60568,
+        "cacheCreationEphemeral1hInputTokens": 38747,
         "canonicalModel": "claude-sonnet-5",
         "provider": "firstParty",
         "costBasis": "list"
@@ -148,27 +148,29 @@
     },
     "safety_stops": 0,
     "is_error": false,
-    "num_turns": 7,
+    "num_turns": 1,
     "subtype": "success",
     "api_error_status": null,
-    "result": "# tariff\nPricing and invoicing web app for Imbra Ltd: catalog, discounts, tax\njurisdictions, customers, invoices. Python 3.12, Flask 3, Jinja, HTMX,\nSQLite, uv. One administrator; runs locally only, no deployment target.\nThe pricing engine is a library another program may import directly.\n- Model: inline\n## 1. Project\nSee README.md for the directory map; place code beside its layer.\n```bash\nuv run flask run                                    # start the app\nuv run ruff check . && uv run ruff format --check . # lint\nuv run mypy --strict . && uv run pytest             # types + tests\n```\n## 2. Code conventions\n- Work on a branch; never commit to `main`. Commit `uv.lock`, never\n  `.env`, secrets, or build output.\n- Off-limits without approval: auth/session code, migrations, `.env*`.\n- Parameterize every SQL query; never interpolate input into SQL.\n- Store money as integer minor units or `Decimal`, never `float`.\n- Hash the administrator's password with bcrypt, scrypt, or Argon2.\n- Regenerate the session ID on login; expire idle sessions; set\n  `HttpOnly`, `Secure`, `SameSite=Lax` cookies.\n- Give every state-changing HTMX/form request a CSRF token.\n- Encode all template output for context; never bypass autoescaping.\n- Run schema changes through a migration with up/down steps; never\n  edit the SQLite file by hand.\n- Never log a customer's name, email, address, or any secret value.\n- Classify customer PII (name, email, postal address); export or erase\n  it on request: hard delete or anonymize, never soft-delete alone.\n- Cover pricing, discount, and tax logic with edge-case unit tests.\n## 3. Review process\nReview in order: security, correctness, clarity, conventions.\n- [ ] No secret or PII value in a committed file or log.\n- [ ] Every SQL query parameterized; every migration has up/down.\n- [ ] Money uses integer minor units or `Decimal`, never `float`.\n## 4. Session protocol\n- Approver: the repository owner. Tracking: open, no tracker named.\n- Release: a tagged commit on `main` after lint, types, tests pass.\n- End of session, run in order: `ruff check .`, `mypy --strict .`,\n  `pytest`; report any that did not run as not run, never as passed.",
-    "ttft_ms": 128419,
+    "result": "# tariff\n\nPricing/invoicing web app for Imbra Ltd, local only.\n- Model: inline\n\n## 1. Project\n### 1.1 Overview\nCatalog, discounts, tax rules, customers, invoices. Python 3.12, Flask 3,\nJinja, HTMX, SQLite; local only, no network egress. One admin signs in via\nbrowser; another program also imports the pricing engine as a library.\n### 1.2 Project structure\nSee the structure map in `README.md`; the pricing-engine library stays\nfree of Flask/Jinja/HTTP imports.\n### 1.3 Commands\nBefore every commit, run a strict type check, a linter, a formatter\ncheck and the test suite; each must report a clean pass.\n\n## 2. Code conventions\n### 2.1 Git\n- Work on a branch; never commit to `main` directly.\n- Off-limits, propose with a rollback plan first: login/session code,\n  GDPR erasure/export code, DB migrations, `.env*` and secrets.\n### 2.2 Security and data\n- Parameterize every SQLite query; never interpolate input into SQL.\n- Hash the admin password (bcrypt/scrypt/Argon2); lock out repeated failures.\n- CSRF-protect every state-changing request; cookies: HttpOnly, Secure, SameSite=Lax.\n- Rely on Jinja's autoescaping; never bypass it with raw user data.\n- Never log a customer's name, email or address; use an opaque ID.\n- Erase/anonymize and export a customer's data on request, machine-readable.\n- Store money as integer minor units or Decimal; migrate schema with up/down steps.\n\n## 3. Review process\nReview order: security, correctness, clarity, conventions; block only on\na demonstrated defect or policy deviation.\n- Approver and work tracker: open, not yet named by the project.\n- Release: a tagged commit of `main`; there is no deployment step.\n\n## 4. Session protocol\nRead the diff before changing anything. At session end, read and\nexecute, in order, the review rules' MUST and SHOULD checklists.",
+    "ttft_ms": 356457,
     "type": "result",
-    "duration_ms": 197972,
-    "uuid": "b711c13a-688b-4a75-a566-6125baae94ef",
-    "ttft_stream_ms": 1871,
-    "time_to_request_ms": 419,
-    "first_content_frame_ms": 1871,
+    "duration_ms": 360065,
+    "uuid": "37a9ed76-45d9-43a6-bb2e-d81ccd4ff0a8",
+    "ttft_stream_ms": 2012,
+    "time_to_request_ms": 633,
+    "first_content_frame_ms": 2012,
     "queued_turn_count": 0,
-    "result_index": 0
+    "result_index": 0,
+    "credential_expires_at": "2026-12-11T13:29:52.387Z"
   },
   "budget": [
     40,
     88
   ],
   "output_leak": null,
+  "named_tooling": [],
   "outcome": "generated",
-  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\short\\CLAUDE.md",
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark-regen\\tests\\efficacy\\arms\\short\\CLAUDE.md",
   "output_lines": 40,
-  "output_words": 352
+  "output_words": 283
 }
