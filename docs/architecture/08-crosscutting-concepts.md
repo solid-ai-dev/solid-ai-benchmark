@@ -621,13 +621,19 @@ sub-scores per axis. The decision is ADR-023.
 - What it did better and worse than `none`, by radar axis.
 - Reliability: how many runs fell short, and how many would not start.
 - Cost: dollars per run.
-- Its verdict from the deciding measures, the hidden tests, both probe sets
-  and the judge's five primaries: **Yes** where one is better and none
-  worse, **Worse** where any is worse, **No** where none moved.
+- Its verdict. In the pilot rounds it reads the deciding measures, the
+  hidden tests, both probe sets and the judge's five primaries. From round 6
+  it reads the ISO radar's axes (FR-12-16). Either way: **Yes** where one is
+  better and none worse, **Worse** where any is worse, **No** where none
+  moved.
 
-The radar and the words describe the verdicts and decide nothing. Every
-claim rests on a row of the appendix or the record. What the report opens
-with is ADR-013.
+In the pilot rounds the radar and the words describe the verdicts and
+decide nothing. From round 6 the verdict reads the radar's own markers, so
+the two cannot disagree; an axis no target measures is not read. Round 6's
+arms are screened on the same axes (FR-12-17). A pilot round read by the
+ISO radar is a post-hoc draft (FR-12-18). Every claim rests on a row of the
+appendix or the record. What the report opens with is ADR-013; the verdict
+on the axes is ADR-024.
 
 ### 8.7.4 Checks declared after a run
 
