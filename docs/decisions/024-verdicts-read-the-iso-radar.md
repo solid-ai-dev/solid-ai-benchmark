@@ -76,3 +76,4 @@ Every change to this decision, oldest first. `#N` is in this repository.
 | 2026-11-14 | From round 6 verdicts and the screen read the ISO radar's axes | Round 5e read by the ISO radar showed the radar and the verdict disagreeing; the owner chose the axes | #165 |
 | 2026-11-15 | Round 6's arms are the scripted ones, whichever screen reads round 5e | A file a model writes changes on every generation; the owner kept only arms a script builds | #167 |
 | 2026-11-15 | The report is written under this repository's `docs/reports/`, no longer the templates source's `docs/audits/` | The templates repository removes `docs/audits/` (solid-ai-templates#2448), and ADR-025 keeps the reports here | #170 |
+| 2026-11-15 | A named round reads the radar and gives each verdict once a task, build and change, each against `none` on the same task, the task's cost beside each | Round 6 reads cost and every ISO axis on each task type | #169, #178 |

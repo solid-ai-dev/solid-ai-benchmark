@@ -1857,7 +1857,7 @@ def unrecorded_voids(root, sequence, recorded):
 
 
 def write_report(root, trials, table, results, seed, out_dir,
-                 withdrawn=None, cross=None, iso=None, uses=None):
+                 withdrawn=None, cross=None, iso=None, uses=None, tasks=None):
     """The dated round report, written to `out_dir`.
 
     The directory has no default so a shakedown of the writer renders into
@@ -1868,7 +1868,8 @@ def write_report(root, trials, table, results, seed, out_dir,
     `cross` is the other vendor's judge's reading, already applied to
     `results`.
     `iso` is the ISO reading, computed here when not given and the round
-    draws that radar.
+    draws that radar. `tasks` is a named round's reading of each task,
+    computed here when not given; the build task's is the radar's `iso`.
     """
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
@@ -1904,6 +1905,11 @@ def write_report(root, trials, table, results, seed, out_dir,
     scans = reaches(root)
     active = active_contrasts(trials)
     os.makedirs(out_dir, exist_ok=True)
+    if tasks is None:
+        tasks = task_readings(trials, seed, withdrawn or {},
+                              iso[3] if iso else None)
+    if tasks and tasks[0][0] == "build":
+        iso = tasks[0][4]
     if iso is None and iso_rules(trials):
         iso = iso_reading(trials, seed, withdrawn or {})
     if iso:
@@ -1912,16 +1918,17 @@ def write_report(root, trials, table, results, seed, out_dir,
     else:
         panels = radar_panels(table, results, active)
         draw = radar_svg
-    radar = {}
-    if panels:
-        for theme in RADAR_THEMES:
-            image = "%s-radar-%s.svg" % (stem, theme)
-            with io.open(os.path.join(out_dir, image), "w", encoding="utf-8",
-                         newline="\n") as handle:
-                handle.write(draw(panels, theme))
-            radar[theme] = image
+    radar = draw_radar(out_dir, "%s-radar" % stem, panels, draw)
+
+    # A named round's every task has a radar of its own, its cost the
+    # task's: the build's is the one above, the change task's beside it.
+    drawn = [(reading, radar if reading[0] == "build" else draw_radar(
+        out_dir, "%s-radar-%s" % (stem, reading[0]),
+        iso_panels(reading[3], reading[4][0], reading[4][1],
+                   active_contrasts(reading[2])), iso_radar_svg))
+             for reading in tasks]
     lines.extend(executive_section(trials, table, results, withdrawn or {},
-                                   lost, scans, radar, iso))
+                                   lost, scans, radar, iso, drawn))
     lines.append("")
 
     lines.extend(["## What produced these numbers", ""])
@@ -2068,14 +2075,28 @@ def write_report(root, trials, table, results, seed, out_dir,
     documents = {
         record: lines,
         appendix: appendix_lines(trials, table, results, k, seed, generation,
-                                 report, record, iso),
+                                 report, record, iso, drawn),
         report: plain_report_lines(root, trials, table, results, radar,
-                                   appendix, k, iso, uses)}
+                                   appendix, k, iso, uses, drawn)}
     for document, text in documents.items():
         with io.open(os.path.join(out_dir, document), "w", encoding="utf-8",
                      newline="\n") as handle:
             handle.write(report_text(text, width))
     return os.path.join(out_dir, report)
+
+
+def draw_radar(out_dir, stem, panels, draw):
+    """Each theme's radar of `panels` written to `out_dir` under `stem`; the
+    images by theme, none where there is no panel."""
+    radar = {}
+    if panels:
+        for theme in RADAR_THEMES:
+            image = "%s-%s.svg" % (stem, theme)
+            with io.open(os.path.join(out_dir, image), "w", encoding="utf-8",
+                         newline="\n") as handle:
+                handle.write(draw(panels, theme))
+            radar[theme] = image
+    return radar
 
 
 def posthoc_rules_reading(trials, seed, withdrawn=None, check=None):
@@ -2548,10 +2569,11 @@ def sureness_lines(trials, k):
 
 
 def plain_report_lines(root, trials, table, results, radar, appendix, k,
-                       iso=None, uses=None):
+                       iso=None, uses=None, tasks=()):
     """The report a reader opens: the radars, each approach in plain words,
     the round's questions answered, and how sure the answers are. `iso` is
-    the ISO reading where the round draws that radar."""
+    the ISO reading where the round draws that radar; `tasks`, a named
+    round's reading of each task with its images, each read on its own."""
     names = ordered(trials)
     active = active_contrasts(trials)
     arms = by_cost(table, [pair[0] for pair in active if pair[1] == BARE])
@@ -2568,22 +2590,26 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
                 times(runs, [BARE]), BARE, BARE), ""]
     if iso and is_round5(trials):
         lines.extend(posthoc_iso_lines(iso))
-    if radar:
-        for theme, image in sorted(radar.items()):
-            lines.append("![Radar per approach](%s#gh-%s-mode-only)"
-                         % (image, theme))
-        lines.append("")
-    lines.extend([ISO_PLAIN_READING if iso else
-                  "How to read it: the dashed ring is `%s`. A point outside "
-                  "the ring means the approach did better on that axis, "
-                  "inside it means worse. Each axis groups several "
-                  "measurements; the appendix lists them." % BARE, "",
-                  "## Each approach", "",
-                  PLAIN_ISO_VERDICT_RULE if iso else PLAIN_VERDICT_RULE, ""])
-    for arm in arms:
-        lines.extend(plain_arm_lines(trials, table, results, arm,
-                                     context_lines(arm), iso))
-        lines.append("")
+    if tasks:
+        lines.extend(plain_task_lines(tasks, results))
+    else:
+        if radar:
+            for theme, image in sorted(radar.items()):
+                lines.append("![Radar per approach](%s#gh-%s-mode-only)"
+                             % (image, theme))
+            lines.append("")
+        lines.extend([
+            ISO_PLAIN_READING if iso else
+            "How to read it: the dashed ring is `%s`. A point outside the "
+            "ring means the approach did better on that axis, inside it "
+            "means worse. Each axis groups several measurements; the "
+            "appendix lists them." % BARE, "",
+            "## Each approach", "",
+            PLAIN_ISO_VERDICT_RULE if iso else PLAIN_VERDICT_RULE, ""])
+        for arm in arms:
+            lines.extend(plain_arm_lines(trials, table, results, arm,
+                                         context_lines(arm), iso))
+            lines.append("")
     present = {arm_of(name) for name in trials}
     if later_rules_of(trials):
         # The latest round's questions are the run's: a round-5e root
@@ -2635,6 +2661,30 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
     return lines
 
 
+def plain_task_lines(tasks, results):
+    """A named round's radars in plain words, one task at a time: its
+    images, its cost per trial, and each approach on that task, read
+    against `none` on the same task."""
+    lines = []
+    for (_, label, view, table, iso), images in tasks:
+        arms = by_cost(table, [treatment for treatment, baseline
+                               in active_contrasts(view) if baseline == BARE])
+        lines.extend(["## The %s" % label, ""])
+        for theme, image in sorted(images.items()):
+            lines.append("![Radar per approach, %s](%s#gh-%s-mode-only)"
+                         % (label, image, theme))
+        lines.extend(["", ISO_PLAIN_READING, "",
+                      task_cost_line(table, arms, label), "",
+                      "Each approach on the %s, against `%s` on the same "
+                      "task. %s" % (label, BARE, PLAIN_ISO_VERDICT_RULE),
+                      ""])
+        for arm in arms:
+            lines.extend(plain_arm_lines(view, table, results, arm,
+                                         context_lines(arm), iso))
+            lines.append("")
+    return lines
+
+
 def rerun_lines(lost):
     """What happened to the runs that were stopped, in plain words: those run
     again, and those still missing."""
@@ -2656,10 +2706,11 @@ def rerun_lines(lost):
 
 
 def appendix_lines(trials, table, results, k, seed, generation, report,
-                   record, iso=None):
+                   record, iso=None, tasks=()):
     """The technical appendix: what produced the results, the radar's axes
     row by row, and the verdict vector. `iso` is the ISO reading where the
-    round draws that radar, whose axes come as tables of sub-scores."""
+    round draws that radar, whose axes come as tables of sub-scores; a
+    named round's `tasks` each get their own tables, named for the task."""
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
     active = active_contrasts(trials)
@@ -2672,7 +2723,15 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
         lines.extend([DESCRIPTIVE_NOTE % k, ""])
     lines.extend(["## What produced the results", ""])
     lines.extend(provenance_lines(trials, names, arms, k, seed, generation))
-    if iso:
+    for (_, label, view, view_table, reading), _ in tasks:
+        lines.extend(["", "## The %s's radar axes, row by row" % label, "",
+                      ISO_TABLE_READING, ""] + method_lines(reading[1], k)
+                     + [DEGENERATE_NOTE, ""])
+        lines.extend(iso_axis_lines(view, reading[0], [BARE] + by_cost(
+            view_table, [treatment for treatment, baseline
+                         in active_contrasts(view) if baseline == BARE]),
+            reading[1], reading[2], k, reading[3]))
+    if iso and not tasks:
         # The ISO tables show the ISO results, read unpaired across rounds
         # on their own, so their method is read from them, not from the raw
         # rows.
@@ -2683,7 +2742,7 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
                                     [BARE] + by_cost(table, [
                                         pair[0] for pair in against]),
                                     iso[1], iso[2], k, iso[3]))
-    else:
+    elif not tasks:
         lines.extend(["", "## The radar's axes, row by row", "",
                       "Each table is one axis of the radar: every "
                       "measurement it groups, each approach's mean, and each "
@@ -5596,6 +5655,109 @@ def change_reading_checks():
     return checks
 
 
+def task_radar_checks(seed):
+    """A named round draws the ISO radar and gives each arm's verdict once a
+    task, each against the bare arm on the same task, its cost the task's
+    own; a pilot round draws one radar over its trials as they are."""
+    def reading(value):
+        return {"value": value, "missing": None}
+
+    def tree(installs, cost, debug):
+        return {"install": reading(installs),
+                "boot": reading({"factory": True, "index_status": 200}),
+                "cost": reading({"cost_usd": cost})}, {
+                    "probes": {"debug": {"passed": debug}}}
+
+    trials = {}
+    for arm in (BARE, "inline"):
+        for block in range(1, 6):
+            build, security = tree(True, 2.0 if arm == BARE else 3.0, True)
+            change, changed = tree(arm == BARE, 0.5 if arm == BARE else 0.8,
+                                   arm == BARE)
+            change.update(name=trial_name(arm, block), change_suite=reading(
+                1.0 if arm == BARE else 0.5))
+            trials[trial_name(arm, block)] = {
+                "round": "C1", "scores": dict(build, name=trial_name(
+                    arm, block)), "judge": None, "judgings": [],
+                "security": security, "quality": None, "change": change,
+                "change_security": changed}
+    tasks = task_readings(trials, seed)
+    by_task = {task: reading for task, _, _, _, reading in tasks}
+    tables = {task: table for task, _, _, table, _ in tasks}
+    name = "inline-%s" % BARE
+    checks = [
+        ("a named round reads the ISO radar once a task, the build's first",
+         [task for task, _, _, _, _ in tasks] == ["build", "change"]),
+        ("each task's radar reads that task's trees against `none` on the "
+         "same task",
+         arm_mean(by_task["build"][0], "iso:Reliability", "inline") == 100.0
+         and arm_mean(by_task["change"][0], "iso:Reliability",
+                      "inline") < 100.0
+         and arm_mean(by_task["change"][0], "iso:Reliability", BARE) == 100.0
+         and iso_answer(by_task["build"], name) == "No"
+         and iso_answer(by_task["change"], name) == "Worse"),
+        ("the change task's radar reads its own security, not the build's",
+         target_met(task_trials(trials, "change")["inline-1"],
+                    "probe:debug", AT_LEAST, 1.0) is False
+         and target_met(task_trials(trials, "build")["inline-1"],
+                        "probe:debug", AT_LEAST, 1.0) is True),
+        ("a named round's build radar leaves the change targets to the "
+         "change task's",
+         target_met(task_trials(trials, "build")["inline-1"],
+                    "change_success", AT_LEAST, 0.9) is None
+         and target_met(task_trials(trials, "change")["inline-1"],
+                        "change_success", AT_LEAST, 0.9) is False),
+        ("each task's radar shows its own mean billed cost per trial",
+         "`none` $2.00; `inline` $3.00" in task_cost_line(
+             tables["build"], ["inline"], "build task")
+         and "`none` $0.50; `inline` $0.80" in task_cost_line(
+             tables["change"], ["inline"], "change task")),
+        ("a pilot round draws one radar, its trials as they are",
+         task_readings({key: dict(trial, round=None)
+                        for key, trial in trials.items()}, seed) == []),
+    ]
+
+    # Every task in the report, its radar, verdict and cost named for it.
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-tasks-")
+    images = {"light": "radar-light.svg"}
+    table = collect(trials)
+    summary = "\n".join(executive_section(
+        trials, table, contrasts(table, seed), radar=images,
+        iso=by_task["build"], tasks=[(reading, images) for reading in tasks]))
+    plain = "\n".join(plain_task_lines(
+        [(reading, images) for reading in tasks], {}))
+    drawn = draw_radar(scratch, "stem-radar-change", iso_panels(
+        tables["change"], by_task["change"][0], by_task["change"][1],
+        active_contrasts(task_trials(trials, "change"))), iso_radar_svg)
+    out = os.path.join(scratch, "out")
+    write_report(os.path.join(scratch, "run"), trials, table,
+                 contrasts(table, seed), seed, out)
+    written = sorted(os.listdir(out))
+    with io.open(os.path.join(out, next(file for file in written
+                                        if file.endswith("appendix.md"))),
+                 encoding="utf-8") as handle:
+        appendix = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    checks.append((
+        "a named round's report draws the change task's radar beside the "
+        "build's and tables each task's axes",
+        sum(1 for file in written if "-radar-change-" in file) == 2
+        and "## The build task's radar axes, row by row" in appendix
+        and "## The change task's radar axes, row by row" in appendix))
+    checks.append((
+        "the summary gives a radar, a verdict and a cost for each task, "
+        "each named",
+        "## The build task" in summary and "## The change task" in summary
+        and "| inline | Worse | $0.80 |" in summary
+        and "| inline | No | $3.00 |" in summary
+        and "Verdict vs `none`, change task" in summary
+        and "## Arms against `none`, build task" in summary
+        and "Mean billed cost per trial on the change task" in plain
+        and "Each approach on the change task" in plain
+        and sorted(drawn) == sorted(RADAR_THEMES)))
+    return checks
+
+
 def change_only_checks():
     """A named round's change task is read whether or not its build trial
     was scored or reached, on rows of its own; a pilot round's keeps
@@ -6986,7 +7148,7 @@ def iso_rules(trials):
 
 
 def aggregate(seed, trials, table, results, withdrawn, check, iso,
-              uses=None):
+              uses=None, tasks=()):
     """What `aggregate.json` keeps beside the report: every row, contrast
     and method the documents cite, the ISO reading where the round draws
     that radar, and each trial's use of its map where the round reads it,
@@ -6997,6 +7159,14 @@ def aggregate(seed, trials, table, results, withdrawn, check, iso,
     if iso:
         payload["iso"] = {"table": iso[0], "results": iso[1],
                           "withdrawn": list(iso[2])}
+
+    # A named round's every task, its ISO reading and the cost it shows.
+    if tasks:
+        payload["iso_tasks"] = {
+            task: {"table": reading[0], "results": reading[1],
+                   "withdrawn": list(reading[2]),
+                   "cost_usd": table_of["cost_usd"]}
+            for task, _, _, table_of, reading in tasks}
     if uses is not None:
         payload["map_use"] = {
             name: {"first_write": use["first_write"],
@@ -7017,6 +7187,98 @@ def iso_reading(trials, seed, withdrawn=(), axes=None):
     iso = iso_table(trials, withdrawn, axes)
     return (iso, iso_contrasts(iso, seed, crossed_labels(trials)), withdrawn,
             axes)
+
+
+# A named round reads the ISO radar once a task: its build trials on the
+# build, and each change task's tree on the change, each against the bare
+# arm on the same task, so neither task's readings stand in for the other's.
+# Each radar shows its own task's mean billed cost per trial, not scored.
+TASKS = (("build", "build task"), ("change", "change task"))
+
+
+def build_view(trial):
+    """A named round's trial as its build alone, its change task left to a
+    radar of its own."""
+    return drop_change(dict(trial))
+
+
+def change_view(trial):
+    """A trial as its change task's tree: the change score in place of the
+    build's, the build suite it ran in place of the hidden suite, and the
+    change task's own security and quality readings and judgings."""
+    change = trial.get("change") or {}
+    scores = dict(change)
+    if "build_suite" in change:
+        scores["hidden_suite"] = change["build_suite"]
+    judgings = list(trial.get("change_judgings") or [])
+    return {"scores": scores, "judge": judgings[0] if judgings else None,
+            "judgings": judgings, "change": change,
+            "security": trial.get("change_security"),
+            "quality": trial.get("change_quality"),
+            "change_quality": trial.get("change_quality"),
+            "round": trial.get("round"), "task": "change"}
+
+
+def task_trials(trials, task):
+    """A named round's trials as one task reads them: every build, or every
+    change task that has a change score."""
+    if task == "build":
+        return {name: build_view(trial) for name, trial in trials.items()
+                if not trial.get("change_only")}
+    return {name: change_view(trial) for name, trial in trials.items()
+            if trial.get("change") is not None}
+
+
+def task_readings(trials, seed, withdrawn=(), axes=None):
+    """A named round's ISO reading of each task, as (task, label, trials,
+    metric table, ISO reading); empty for a pilot round, which draws one
+    radar over its trials as they are."""
+    if named_round(trials) is None:
+        return []
+    readings = []
+    for task, label in TASKS:
+        view = task_trials(trials, task)
+        if view:
+            readings.append((task, label, view, collect(view),
+                             iso_reading(view, seed, withdrawn, axes)))
+    return readings
+
+
+def task_cost_line(table, arms, label):
+    """The mean billed cost per trial of each arm on one task, the bare arm
+    first; shown beside the task's radar, never scored."""
+    cells = []
+    for arm in [BARE] + [arm for arm in arms if arm != BARE]:
+        mean = arm_mean(table, "cost_usd", arm)
+        cells.append("`%s` %s" % (arm, NOT_MEASURED if mean is None
+                                  else "$%.2f" % mean))
+    return ("Mean billed cost per trial on the %s, shown and not scored: %s."
+            % (label, "; ".join(cells)))
+
+
+def task_lines(reading, images):
+    """One task's radar of a named round: its images, how to read it, the
+    mean billed cost per trial on the task, its axes as a table and each
+    arm's verdict against the bare arm on the same task."""
+    _, label, view, table, iso = reading
+    arms = by_cost(table, [treatment for treatment, baseline
+                           in active_contrasts(view) if baseline == BARE])
+    lines = ["## The %s" % label, ""]
+    for theme, image in sorted(images.items()):
+        lines.append("![ISO radar per arm, %s](%s#gh-%s-mode-only)"
+                     % (label, image, theme))
+    lines.extend(["", ISO_READING, "", task_cost_line(table, arms, label),
+                  ""])
+    lines.extend(iso_radar_table(iso, arms))
+    lines.extend(["", "| Arm | Verdict vs `%s`, %s | Mean billed cost per "
+                  "trial |" % (BARE, label), "| --- | --- | --- |"])
+    for arm in [BARE] + arms:
+        mean = arm_mean(table, "cost_usd", arm)
+        lines.append("| %s | %s | %s |" % (
+            arm, "—" if arm == BARE else iso_answer(iso, "%s-%s"
+                                                    % (arm, BARE)),
+            NOT_MEASURED if mean is None else "$%.2f" % mean))
+    return lines
 
 
 # How the plain report reads the ISO radar, under it.
@@ -7042,17 +7304,27 @@ ISO_TABLE_READING = (
 
 
 def executive_section(trials, table, results, withdrawn=None, lost=(),
-                      scans=(), radar=None, iso=None):
+                      scans=(), radar=None, iso=None, tasks=()):
     """The report's first sections: the summary, a radar per file arm read
     against no file where `radar` names its two images, light and dark;
     then the arms against no file: the finding table, one line per file on
     why it scored so, the reading, the contrasts between files scored, and
-    the caveats. `iso` is the ISO reading where the round draws that radar.
+    the caveats. `iso` is the ISO reading where the round draws that radar;
+    `tasks`, for a named round, holds each task's reading and its images,
+    and each task gets a radar and a verdict of its own.
 
     Like the score, it digests the verdict vector and decides nothing.
     """
     active = active_contrasts(trials)
     lines = ["## Executive summary", ""]
+    if tasks:
+        for reading, images in tasks:
+            lines.extend(task_lines(reading, images) + [""])
+        lines.extend(finding_lines(trials, table, results, active, iso,
+                                   tasks[0][0][1]))
+        lines.extend(["", caveats_line(trials, withdrawn or {}, lost,
+                                       scans)])
+        return lines
     if radar:
         for theme, image in sorted(radar.items()):
             lines.append("![Radar per arm](%s#gh-%s-mode-only)"
@@ -7070,13 +7342,14 @@ def executive_section(trials, table, results, withdrawn=None, lost=(),
     return lines
 
 
-def finding_lines(trials, table, results, active, iso=None):
+def finding_lines(trials, table, results, active, iso=None, task=None):
     """The finding table, its why-lines and its reading. With `iso`, each
-    verdict reads the ISO radar's axes."""
+    verdict reads the ISO radar's axes; `task` names the task they read."""
+    named = ", %s" % task if task else ""
     names = ["%s-%s" % (treatment, baseline)
              for treatment, baseline in active if baseline == BARE]
     if not names:
-        return ["## Arms against `%s`" % BARE, "",
+        return ["## Arms against `%s`%s" % (BARE, named), "",
                 "No file arm has a trial to read against `%s`, which has "
                 "none in this run yet." % BARE]
     arms = [name.split("-")[0] for name in names]
@@ -7087,12 +7360,12 @@ def finding_lines(trials, table, results, active, iso=None):
     # One row per arm, the bare arm first as the line every other is read
     # against, then the files from the cheapest to the dearest.
     ranked = by_cost(table, arms)
-    lines = ["## Arms against `%s`" % BARE, ""]
+    lines = ["## Arms against `%s`%s" % (BARE, named), ""]
     lines.extend(iso_radar_table(iso, ranked) if iso
                  else radar_table(results, ranked))
     lines.extend(["",
-                  "| Arm | File | Verdict vs `%s` | %s |"
-                  % (BARE, " | ".join(heading
+                  "| Arm | File | Verdict vs `%s`%s | %s |"
+                  % (BARE, named, " | ".join(heading
                                       for heading, _, _ in FINDING_COLUMNS)),
                   "| --- | --- | --- | %s |"
                   % " | ".join("---" for _ in FINDING_COLUMNS)])
@@ -9148,6 +9421,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in round_identity_checks())
     checks.extend((label, ok, ok) for label, ok in change_only_checks())
     checks.extend((label, ok, ok) for label, ok in change_reading_checks())
+    checks.extend((label, ok, ok) for label, ok in task_radar_checks(seed))
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -9347,15 +9621,22 @@ def main(argv):
     iso = (iso_reading(trials, options.seed, withdrawn,
                        iso_axes_of(trials, options.round6_targets))
            if iso_rules(trials) or posthoc_iso else None)
+
+    # A named round's radar is read once a task, the build's standing as
+    # the round's own.
+    tasks = task_readings(trials, options.seed, withdrawn,
+                          iso[3] if iso else None)
+    if tasks and tasks[0][0] == "build":
+        iso = tasks[0][4]
     uses = map_uses(options.root, trials) if is_round5e(trials) else None
     target = write_report(options.root, trials, table, results, options.seed,
-                          out_dir, withdrawn, check, iso, uses)
+                          out_dir, withdrawn, check, iso, uses, tasks)
 
     with io.open(os.path.join(scoring_area(options.root),
                               aggregate_name(posthoc_iso)),
                  "w", encoding="utf-8") as handle:
         json.dump(aggregate(options.seed, trials, table, results, withdrawn,
-                            check, iso, uses), handle, indent=2,
+                            check, iso, uses, tasks), handle, indent=2,
                   sort_keys=True)
     print("Report: %s" % target)
 

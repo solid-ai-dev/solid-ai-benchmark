@@ -256,6 +256,7 @@
 | FR-16-05 | The benchmark shall judge a change task's tree blind, apart from the build's, with labels and a map of its own, and not judge one that did not install. | Judge |
 | FR-16-06 | From round 6 the benchmark shall read a change task's interfaces on Interoperability and its data upgrade on Adaptability, each once, whatever its build did, its security and quality readings and judgings going only with its change score; a pilot round reads neither. | Report |
 | FR-16-07 | The benchmark shall archive a change task's security and quality readings and judgings, and reuse a change task with its arm's build trials, in a change run of its own naming its round's fixtures, with every reading and judging of its own. | Archive, Reuse |
+| FR-16-08 | From round 6 the benchmark shall draw the ISO radar and give each arm's verdict once a task: the build trials on the build, each change task's tree on the change, each against `none` on the same task, the change targets on the change task's radar alone; name the task in the summary, its tables and the plain report; and show each task's mean billed cost per trial beside its radar, never scored. A pilot round draws one radar over its trials as they are. | Report |
 
 ## Quality requirements
 

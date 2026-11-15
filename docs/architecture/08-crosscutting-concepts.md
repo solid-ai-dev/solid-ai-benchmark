@@ -677,6 +677,19 @@ FR-12-23, FR-16-06):
 A pilot round read by the ISO radar keeps the targets it had before round 6,
 and reads round 6's only when `--round6-targets` asks for them.
 
+**One radar a task** (FR-16-08). A named round draws the ISO radar and gives
+each arm's verdict twice, once a task, each against `none` on the same task:
+
+| Task | Reads | Cost beside it |
+| ---- | ----- | -------------- |
+| Build | Each build trial's tree; no change target | The build's mean billed cost per trial |
+| Change | Each change task's tree, scored in full, with the change targets | The change task's mean billed cost per trial |
+
+The summary, its tables, the plain report and the appendix name the task
+each reads. Neither task's readings stand in for the other's, so a build
+that broke says nothing of the change it never started. A pilot round
+draws one radar over its trials as they are.
+
 **Each approach in plain words** (FR-12-07):
 
 - What it did better and worse than `none`, by radar axis.
