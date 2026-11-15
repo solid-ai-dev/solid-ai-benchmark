@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import archive  # noqa: E402
 import lib  # noqa: E402
-from generate_arm import GENERATED, record_path  # noqa: E402
+from generate_arm import RECORDED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
                      ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, ROUND5E_ARMS,
                      SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING, TrialError,
@@ -1379,7 +1379,7 @@ def generation_records():
     """Each generated arm's record, committed beside the file it produced,
     by arm; an arm whose record is absent is left out."""
     records = {}
-    for arm in GENERATED:
+    for arm in RECORDED:
         path = record_path(arm)
         if os.path.exists(path):
             with io.open(path, encoding="utf-8") as handle:
@@ -2046,7 +2046,7 @@ def provenance_lines(trials, names, arms, k, seed, generation):
     lines.append("| Bootstrap | %d resamples, %d%%, seed %s |"
                  % (RESAMPLES, int(100 * CONFIDENCE), seed))
     for arm in arms:
-        if arm not in GENERATED:
+        if arm not in RECORDED:
             continue
         record = generation.get(arm)
         if record:
@@ -7526,13 +7526,27 @@ def executive_checks(seed):
          < text.find("Together:"), prose_of(text, "## Arms against `none`")),
     ])
 
+    # The pilot's written arms are built no more, but their records stay,
+    # so a pilot report still cites how each was made and what it vendored.
+    pilot = generation_records()
+    checks.append(("a pilot arm no script builds keeps its record for the "
+                   "report, and its vendored templates",
+                   {"hybrid", "short"} <= set(pilot)
+                   and mapped_templates("hybrid")
+                   == pilot["hybrid"].get("resolved_files")
+                   and len(mapped_templates("hybrid")) > 0,
+                   sorted(pilot)))
+
     # A run reusing an earlier round's trials: five arms, `hybrid` and
     # `reference` reused, the judge's design score constant per arm so each
     # contrast's verdict is known. Every declared contrast is printed, one
     # column per file arm, and the reused arms and the contrasts crossing
-    # rounds are named.
-    design = {"none": 3, "inline": 3, "hybrid": 3, "reference": 4,
-              "skills": 4}
+    # rounds are named. Of the two fresh files, the longer reads better, so
+    # the reading holds whichever of them the arm files make the longer.
+    longer, shorter = sorted(("inline", "skills"), key=context_lines,
+                             reverse=True)
+    design = {"none": 3, shorter: 3, "hybrid": 3, "reference": 4,
+              longer: 4}
     trials = {trial_name(arm, index): {
         "scores": ({"reused_from": {"name": "planted"}}
                    if arm in ("hybrid", "reference") else {}),
@@ -7567,8 +7581,8 @@ def executive_checks(seed):
          "Together: the long file added quality, the short one did not"
          in finding
          and all(row_start(arm, verdict) in finding for arm, verdict in
-                 (("hybrid", "Not measured"), ("inline", "No"),
-                  ("reference", "Not measured"), ("skills", "Yes"))),
+                 (("hybrid", "Not measured"), (shorter, "No"),
+                  ("reference", "Not measured"), (longer, "Yes"))),
          finding),
         ("a trial's repeats are meaned, and one judging means itself",
          judge_score({"judgings": [

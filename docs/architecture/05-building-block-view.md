@@ -15,7 +15,7 @@ dependency with its keyword.
 
 | Block | Responsibility | Reads | Writes |
 | ----- | -------------- | ----- | ------ |
-| `generate_arm.py` | Makes one arm's file once: fixed text, one non-interactive generation from `agents.md`, under a line budget where the arm has one, or the emitter. Scans prompt and output for leaks, and refuses a file over its budget | `brief.txt`, the templates source | `arms/<arm>/CLAUDE.md`, `generation.json` |
+| `generate_arm.py` | Builds one arm's file by script, with no model call: fixed text, the templates' emitter, its skills apart or inlined, or a map of the chain's topics. Scans the output for leaks and named tools; its self-test rebuilds every committed arm and fails on any difference | `brief.txt`, the templates source | `arms/<arm>/CLAUDE.md`, `generation.json` |
 | `harness.py` | Prepares each workspace, runs the agent in isolation, catches reach, freezes the result, keeps the run record current | The specs, the arm files, the change prompt | The run root |
 | `reuse.py` | Copies an earlier round's trials and readings into a new root, with their tool lock | An earlier root | The run root, the scoring area |
 | `progress.py` | Watches a run: one bar per arm, its voided tries, its cost and the trial running; then its scoring: one bar per arm, the security readings and the trial being scored; then its judging: one bar per arm of judgings out of those owed, the failures still owed and the blind label in hand. Redrawn every 30 s. Read-only | The run records, the scoring area | The console |

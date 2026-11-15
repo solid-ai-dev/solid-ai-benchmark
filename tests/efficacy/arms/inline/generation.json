@@ -1,7 +1,6 @@
 {
   "arm": "inline",
-  "kind": "model",
-  "output_model": "inline",
+  "kind": "emit",
   "ref": "9abed019",
   "source": {
     "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
@@ -16,7 +15,7 @@
     "base-security",
     "base-data-governance"
   ],
-  "started_at": "2026-11-13T20:55:33",
+  "started_at": "2026-11-15T11:26:55",
   "commit": "9abed01916b941d9ed2f8daa8ff8c3b28f0718fd",
   "resolved_files": [
     "templates/core/quality.md",
@@ -33,141 +32,17 @@
     "templates/data/data-modeling.md",
     "templates/data/data-governance.md"
   ],
-  "prompt_chars": 84056,
-  "prompt_leak": null,
-  "prompt_file": "C:\\efficacy\\gen6b-inline\\arm-inline-prompt.txt",
-  "auth_probe": "ready",
-  "command": [
-    "C:\\Users\\bgeorgiev\\.local\\bin\\claude.EXE",
-    "-p",
-    "--output-format",
-    "json",
-    "--model",
-    "claude-sonnet-5",
-    "--effort",
-    "high",
-    "--permission-mode",
-    "bypassPermissions",
-    "--setting-sources",
-    "",
-    "--settings",
-    "C:\\efficacy\\gen6b-inline\\home\\settings.json",
-    "--strict-mcp-config",
-    "--disallowed-tools",
-    "WebSearch",
-    "WebFetch"
+  "declined": [
+    "templates/security/security.md#Server-Side Request Forgery (SSRF)",
+    "templates/security/security.md#File uploads",
+    "templates/security/security.md#CORS",
+    "templates/backend/auth.md#API keys (service-to-service)"
   ],
-  "model": "claude-sonnet-5",
-  "effort": "high",
-  "elapsed_s": 430.0,
-  "exit_status": 0,
-  "result": {
-    "duration_api_ms": 427908,
-    "stop_reason": "end_turn",
-    "session_id": "4b6adbf2-f3cc-4144-8121-990b729f4e89",
-    "total_cost_usd": 0.5432242,
-    "usage": {
-      "input_tokens": 2,
-      "cache_creation_input_tokens": 38590,
-      "cache_read_input_tokens": 25101,
-      "output_tokens": 38384,
-      "output_tokens_details": {
-        "thinking_tokens": 29500
-      },
-      "server_tool_use": {
-        "web_search_requests": 0,
-        "web_fetch_requests": 0
-      },
-      "service_tier": "standard",
-      "cache_creation": {
-        "ephemeral_1h_input_tokens": 38590,
-        "ephemeral_5m_input_tokens": 0
-      },
-      "inference_geo": "global",
-      "iterations": [
-        {
-          "input_tokens": 2,
-          "output_tokens": 38384,
-          "cache_read_input_tokens": 25101,
-          "cache_creation_input_tokens": 38590,
-          "cache_creation": {
-            "ephemeral_5m_input_tokens": 0,
-            "ephemeral_1h_input_tokens": 38590
-          },
-          "type": "message"
-        }
-      ],
-      "speed": "standard",
-      "fallback_credit": null
-    },
-    "modelUsage": {
-      "claude-sonnet-5": {
-        "inputTokens": 2,
-        "outputTokens": 38384,
-        "cacheReadInputTokens": 25101,
-        "cacheCreationInputTokens": 38590,
-        "webSearchRequests": 0,
-        "costUSD": 0.5432242,
-        "contextWindow": 1000000,
-        "maxOutputTokens": 64000,
-        "thinkingTokens": 29500,
-        "cacheCreationEphemeral5mInputTokens": 0,
-        "cacheCreationEphemeral1hInputTokens": 38590,
-        "canonicalModel": "claude-sonnet-5",
-        "provider": "firstParty",
-        "costBasis": "list"
-      }
-    },
-    "permission_denials": [],
-    "terminal_reason": "completed",
-    "fast_mode_state": "off",
-    "fast_mode_disabled_reason": "sdk_opt_in_required",
-    "subagent_stats": {
-      "spawned": 0,
-      "requested": {
-        "background": 0,
-        "foreground": 0,
-        "unset": 0
-      },
-      "started_in_background": 0,
-      "max_depth": 0,
-      "spawned_by_subagents": 0,
-      "completed": 0,
-      "failed": 0,
-      "killed": {
-        "parent": 0,
-        "user": 0,
-        "system": 0
-      },
-      "refused": {
-        "depth_limit": 0,
-        "concurrency_limit": 0,
-        "budget": 0
-      },
-      "by_type": {}
-    },
-    "safety_stops": 0,
-    "is_error": false,
-    "num_turns": 1,
-    "subtype": "success",
-    "api_error_status": null,
-    "result": "# tariff\n\nPricing and invoicing web application \u2014 Imbra Ltd\nOwner: Imbra Ltd. Runs locally only; no repository URL, live URL or deployment target applies.\n- Model: inline\n\n## 1. Project\n\n### 1.1 Overview\n\n`tariff` assembles invoices from a product catalog, several kinds of discount\nrule, tax jurisdictions and customers. Stack: Python 3.12, Flask 3, Jinja,\nHTMX, SQLite. It runs locally, with no deployment target.\n\nTwo actors use it: an administrator working in a browser, and a separate\nprogram that imports the pricing engine directly as a library, without the\nweb application present. The store is a local SQLite file. Nothing in this\napplication reaches the network: no outbound HTTP call, no inbound API\nbeyond the local web UI, no CORS surface, no SSRF surface. Do not add one\nwithout revisiting this file.\n\nOne administrator signs in to use the web application; nobody else has an\naccount. Customers are people: the system stores each one's name, email and\npostal address, and names them on the invoices billed to them. Imbra Ltd is\nin the EU, so GDPR applies \u2014 see section 6.\n\n### 1.2 Project structure\n\nSee `README.md` for the directory map; do not duplicate it here.\n\nPlacement rule: keep the pricing engine in its own package, with no import\nof Flask, Jinja, HTMX or any other web-layer module. It must import and run\ncorrectly with the web application absent. The web application package may\nimport the pricing engine; the reverse must never happen.\n\n### 1.3 Commands\n\nThe project has not yet chosen a package manager, test runner, type\nchecker, linter or formatter. Until it does, each command below names what\nit must do, not how:\n\n- **Install**: resolve and install the project's pinned dependencies from\n  its lockfile.\n- **Migrate**: apply pending SQLite schema migrations through a committed\n  script before the application starts.\n- **Run**: start the Flask application locally, reading the port from an\n  environment variable, with a sensible default for local development.\n- **Test**: run the automated test suite (unit and integration) covering\n  both the pricing engine library and the web application.\n- **Type-check / Lint / Format**: run the project's static type checker,\n  linter and formatter, each in its strict and quiet mode, reporting zero\n  issues.\n\n## 2. Architecture boundaries\n\n- Keep the pricing engine a standalone Python library with no dependency on\n  Flask, Jinja, HTMX or any web-layer code (MUST); it must import and run\n  with the web application absent.\n- Treat the web application as one caller of the pricing engine, never a\n  second place that computes a price, discount or tax figure \u2014 call the\n  library; never re-implement its logic in a route handler or a template.\n- Keep the module graph acyclic: the web application depends on the\n  pricing engine; the pricing engine never imports the web application\n  (MUST).\n  **Check**: no module under the pricing-engine package imports anything\n  from the web-application package; the check must report zero violations.\n- Treat the pricing engine's public functions and classes as the contract\n  the other program \u2014 its second caller \u2014 depends on. Apply the\n  deprecation rule (section 3.2) before changing or removing any of them.\n- Give the pricing engine package its own version, independent of the web\n  application's; bump it deliberately, following semantic versioning,\n  whenever its public API changes.\n- Never let the pricing engine write to standard output or standard error,\n  and never let it configure logging beyond its own logger (MUST). Make\n  its logger injectable, falling back to its own module logger, so each\n  caller captures its output on its own terms.\n  **Check**: run the library alone in a fresh process and confirm it emits\n  nothing on stdout or stderr; a test runner's own log handler can hide a\n  default that would otherwise leak into both callers.\n\n## 3. Code conventions\n\n### 3.1 Git\n\n- Commit under one full name and one consistent email; never change\n  identity mid-project.\n- Work on a branch; never commit directly to `main`.\n- Never commit build output, dependency directories or secrets. Commit a\n  generated file only when the project tracks it on purpose.\n- Keep a `.gitignore` (MUST) covering dependencies, build output, secrets,\n  editor state, OS files and coverage output.\n- Commit lockfiles (MUST).\n- Inspect the working tree and the index before starting a task. Never\n  discard, reset, stash or overwrite a change the task did not make.\n  Stage only the changes the task made \u2014 a whole file only when it held\n  no prior change, otherwise only the task's hunks. Read the staged diff\n  before committing. Stop and ask when a task change and a prior change\n  share a hunk. Report a pre-existing change that blocks the task rather\n  than removing it.\n- Keep a pull request to one concern (SHOULD). Test locally before\n  committing. Review the diff against the base before merging, in the\n  order security, correctness, clarity, conventions. Merge only after the\n  review passes and CI is green.\n- Read the CI run for the push before describing a change as good. Treat\n  a pull request with no registered check as not passed. Never merge\n  while a check is failing, cancelled or not yet registered. Re-run a\n  verification a pull request claims once the base has moved since it was\n  written. Read a new or changed workflow's first run in its real\n  environment before trusting it.\n- Never force-push, including with `--force-with-lease` (MUST NOT). Bring\n  a branch up to date by merging the base into it, never by rebasing and\n  force-pushing.\n\n**Off-limits paths** (MUST NOT change without explicit approval; propose\nfirst, with a rollback strategy and the tests that would catch a\nregression):\n\n- Authentication and session code (the administrator's sign-in).\n- SQLite migrations.\n- `.env*` and secrets.\n- CI/CD workflow files, if and when the project adds any.\n- Payment code: not applicable \u2014 this application does not process\n  payments.\n\nA diff confined to prose is ordinary work; a comment a tool reads (a\nlinter disable, a coverage pragma) counts as executable content and is\noff-limits the same as a command or a permission. Name an off-limits path\nat the top of a change's summary whenever the diff touches one, proposal\nor not.\n**Check**: the change summary names every off-limits path the diff\ntouches; the check must report zero undeclared touches.\n\n### 3.2 Python\n\n- Keep one authoritative representation of each piece of pricing, discount\n  or tax knowledge (DRY). Build only what a stated requirement justifies\n  (YAGNI); record beside every deferral the concrete condition that\n  reopens it. Delete a path once evidence shows it unreachable.\n- Compute derived counts and statistics from the data; never hardcode\n  them. Remove unused modules, assets and data files promptly.\n- Name a function with a verb, a class or module with a noun, a boolean\n  with `is`, `has` or `can`. Rename a name that needs a comment to explain\n  it. Use the same name for the same concept in every module.\n- Keep cognitive complexity at or under 15 per function; nest at most\n  three levels; use guard clauses and early returns. Replace a boolean\n  flag that selects behaviour with an enum or two named functions.\n- Name every magic number and string as a constant \u2014 a discount\n  percentage, a tax rate, a threshold. Size a tuned threshold from its\n  measured distribution, naming the data source beside the constant;\n  take a limit a specification fixes (e.g. a tax jurisdiction's own\n  rounding rule) from that specification instead.\n- Keep coupling shallow: a change inside one module must not require\n  changes in unrelated modules. Talk only to direct dependencies. Reach a\n  heavy or platform-limited dependency through one module that owns its\n  import.\n- Validate input at boundaries and fail at once on invalid state. Read a\n  value from its source-of-truth field, and raise when it is missing;\n  never fall back to a value derived from a slug, name or hash. Add an\n  error type only where a caller could act differently. Never let a\n  caller-side filter stand in for a precondition.\n- Deprecate a public symbol, naming its replacement, before a later change\n  removes it. Deprecate every part of one call site together; never alias\n  the outer name alone.\n- Keep constants beside the functions that use them.\n- Encode every committed text file in UTF-8 with LF line endings (MUST);\n  keep identifiers ASCII (MUST). Set a program's output encoding\n  explicitly wherever another program reads its output \u2014 in particular,\n  the invoice export path. Commit a `.gitattributes` with `* text=auto`,\n  adding `eol=lf` for hard LF.\n  **Check**: every tracked text file is UTF-8 with LF endings and ASCII\n  identifiers; the check must report zero exceptions.\n- Prefer code that needs no comment. Never cite a ticket, PR or ADR number\n  in a comment or docstring \u2014 state the substance. Name a source (author,\n  year, method) where a tax or discount rule's logic is non-obvious.\n- Commit no debug output (`print()`) and no hardcoded breakpoint. Delete\n  commented-out code. Gate debug tooling behind a flag, off by default.\n- Write a probe script to measure data or behaviour rather than guess;\n  delete it before the commit that uses its findings; keep the findings\n  themselves in durable comments or decision records.\n- Grep for a construct a comment records as not working before reusing\n  it; read every hit as a suspected instance of the same defect.\n- Run a new constraint \u2014 a tightened bound, a narrowed exemption \u2014 against\n  the existing corpus before it merges.\n- When deleting, truncating or purging data (notably a GDPR erasure, see\n  section 6), act only on what the operation can prove is its target: an\n  exact customer ID, not a name match or a path guess. Find nothing, and\n  raise, where that proof is unavailable.\n- Confirm a migration, import or bulk-edit script is correct before\n  acting on its output in bulk; cross-check an independent source before\n  overwriting stored data that looks wrong.\n- Adopt the project's static type checker at its strictest setting and\n  keep it clean (MUST); annotate every public function's parameters and\n  return type (MUST). Adopt a linter and a formatter and keep both clean\n  (MUST). Run all three before every commit and in CI; each must print\n  nothing.\n- Finish a task when the requested behaviour works through the entry\n  point its caller reaches, and the checks that prove it pass. Report a\n  check that could not run as not run, never as a pass. Report a problem\n  found outside the task as its own task rather than folding it in.\n\n### 3.3 Web layer (Flask / Jinja / HTMX)\n\n- Read the port from an environment variable; never hardcode it. Keep\n  initialisation short.\n- Run one-off tasks (migrations, data fixes) with the application's own\n  code, config and dependencies; commit admin scripts to the repository\n  rather than running ad-hoc shell commands; prefer idempotent scripts;\n  never run one against the live database without a tested rollback plan.\n- Keep handlers thin: decode the request, call the pricing engine or a\n  service function, render the response. Never put business logic in a\n  handler. Validate all incoming request data before processing it.\n- Parse a typed query parameter explicitly, distinguishing absent\n  (default), present-and-valid (use it) and present-but-invalid (raise a\n  400) \u2014 never let a parsing helper silently turn a bad value into the\n  default.\n- Read header names case-insensitively. Avoid the `X-` prefix on a custom\n  header; use an application-specific prefix instead.\n- Never let a GET or HTMX `hx-get` request change state. Make every PUT\n  and DELETE (including an `hx-delete`) idempotent.\n- Represent dates and times as ISO 8601, currency codes as ISO 4217, and\n  country or tax-jurisdiction codes as ISO 3166-1 alpha-2, wherever the\n  application stores, computes or displays them.\n- Use a consistent error shape across every route and HTMX fragment. Never\n  expose a stack trace or an internal path to the browser; return a\n  generic message and log the detail server-side. Use proper 4xx/5xx\n  status codes, never 200, for an error. Set an explicit `Content-Type`\n  on every response.\n- Enforce authentication on every route (MUST); this application declares\n  no public endpoint. Apply the auth check before any business logic\n  runs. Never expose a write path without the authenticated\n  administrator's session.\n- Not applicable, since nothing here reaches the network: HTTPS/TLS\n  enforcement, HSTS and other reverse-proxy security headers, CORS,\n  multi-instance process lifecycle (graceful shutdown, SIGKILL recovery).\n\n### 3.4 Data model (SQLite)\n\n- Pick one naming convention for tables, columns, keys and indexes, and\n  record it here once chosen \u2014 open for the project to decide.\n- Give every table a primary key; prefer a surrogate key. Store each fact\n  in one place; duplicate only when measured read performance requires\n  it, with the rationale documented. Never pack several values into one\n  field (e.g. a composite discount-rule string) \u2014 use a related record.\n- Enforce every reference (customer \u2192 invoice, invoice \u2192 product, invoice\n  \u2192 tax jurisdiction) with SQLite's own foreign-key constraint, or an\n  explicit check that every reference resolves. Decide what deleting the\n  target of each reference does \u2014 see section 6 for the customer case.\n  Document the maximum depth and cycle-prevention strategy for any\n  self-referencing relationship, such as a stacked or nested discount\n  rule, if one exists.\n- Make every schema change through a versioned migration (MUST); never\n  edit the schema by hand. Prefer additive changes, compatible with old\n  writers. Give a destructive change (drop or rename a column) a plan:\n  add the new column, migrate the data, drop the old one, with both up\n  and down steps (MUST). Say so, and get approval, where a down step\n  cannot restore the data. Test a migration against realistic data before\n  applying it.\n- Use the most specific SQLite type for each field: a date/time type, not\n  a string, for dates. Store timestamps in UTC; convert to local time only\n  at the presentation layer. Store every monetary value \u2014 a price, a\n  discount, a tax amount, an invoice total \u2014 as an integer in minor units\n  or an exact decimal type; never as a float (MUST). Document a maximum\n  length for every text field: customer name, email, postal address,\n  product description.\n- Open one connection per request or worker thread; never a long-lived\n  global handle. Wrap a multi-step write (e.g. assembling an invoice from\n  its line items) in a transaction; commit only once every write\n  succeeds; keep the transaction short.\n- Bound every interactive query with a limit or pagination (e.g. a\n  customer or invoice listing); a filter alone is not a bound. Select only\n  the columns a code path uses. Fetch related rows for a set in one query\n  or batch, never one query per row in a loop.\n- Use a hard delete or an anonymizing update for a customer erasure (see\n  section 6), never a soft delete that still returns the row to ordinary\n  queries. Keep an append-only audit log table instead of a soft-delete\n  flag.\n- Reset state between test runs \u2014 truncate tables or roll back a\n  transaction wrapping each test. Never substitute a different database\n  engine in tests; SQLite's own behaviour is part of what is tested.\n  Never run a schema migration against a production database inside a\n  test suite.\n\n## 4. Quality \u2014 testing\n\nClassify a test by the boundary it crosses: unit (none), integration\n(process/component \u2014 e.g. a real temporary SQLite file), system (the\nwhole application against its requirements), regression (reusing\nexisting tests against a fixed defect), exploratory (unscripted).\n\n- Double only what a unit test would cross a boundary to reach: file I/O,\n  the system clock (discount and tax-jurisdiction rules can be\n  date-effective), randomness. Keep deterministic in-process\n  collaborators real.\n- Add a regression test for every fixed defect.\n- Cover every happy path the pricing, discount, tax and invoicing rules\n  define, plus negative inputs and edge cases (SHOULD), plus each\n  dependency's faults (an unavailable database file, a malformed row).\n- Meet the project's coverage threshold for new code before merging;\n  never let coverage regress between releases. Run every unit test from\n  CI with no human step. Name a test so its name alone states the unit,\n  the input and the expected outcome (SHOULD).\n- Keep pricing, discount and tax logic in pure functions; push SQLite\n  access to thin adapters at the edges (SHOULD). Inject dependencies\n  rather than construct them in the code under test. Split a function\n  that needs more than two mocks to test.\n- Test behaviour, not implementation details. Set or clear every\n  environment variable a test depends on, in that test. Treat a test that\n  passes or fails by run order as an isolation bug. Wait on a condition\n  with a deadline, never a fixed sleep. Never enumerate, signal or\n  terminate a process the test did not start. Never mutate host state\n  outside the working directory. Investigate a failing test's own logic\n  before skipping or suppressing it.\n- Allocate a per-test temporary database file or path from a fixture or a\n  module-level counter, never from state a test class inherits.\n- Assert after every test that no thread, subprocess or server the suite\n  started survives it; join with a timeout, never a sleep.\n- Exercise every call site of a changed shared pricing, discount or tax\n  path, not only the reported case; keep the list of consumers beside the\n  shared path.\n\n## 5. Security\n\n- Validate all external input (invoice, customer and discount-rule forms)\n  at the boundary, with a schema validator, using an allowlist. Reject\n  invalid input with a clear error; never silently coerce or strip\n  fields.\n- Encode dynamic data for its rendering context at the point of output.\n  Rely on Jinja's auto-escaping; never insert user-supplied data through\n  a raw-HTML path (`|safe`, `Markup`) that bypasses it.\n- Use parameterized SQLite queries for all database access; never\n  concatenate user input into a query string.\n- Hash the administrator's password with bcrypt, scrypt or Argon2 \u2014 never\n  MD5, SHA-1 or plain SHA-256. Require a minimum length and reject\n  known-breached passwords; impose no composition rules. Use\n  constant-time comparison for secrets and tokens. Lock the account or\n  throttle after repeated failed sign-in attempts.\n- Generate the session ID with a cryptographic random generator;\n  regenerate it after login. Set `HttpOnly`, `Secure` and\n  `SameSite=Strict` on the session cookie. Expire the session after an\n  idle period. Invalidate it on logout; do not rely on cookie expiry\n  alone.\n- Give every state-changing request (every HTMX `POST`/`PUT`/`PATCH`/\n  `DELETE`) a CSRF defence (MUST), since the administrator's session is\n  authenticated by an ambient cookie. Use the framework's built-in CSRF\n  middleware; prefer the synchroniser token pattern. Validate the token\n  on every state-changing request, never on GET. Never change state on a\n  GET request.\n- Never hardcode a secret, API key or credential in source. Keep local\n  secret files out of version control. Rotate a secret immediately if it\n  is ever committed.\n- Never expose a stack trace, an internal path or a database error to the\n  administrator's browser; log the full detail server-side. Answer a\n  failed sign-in the same way regardless of whether the account exists:\n  \"invalid credentials\", never \"user not found\".\n- Never log a secret, token or password, and never log a customer's name,\n  email or postal address (see section 6) \u2014 log an opaque ID instead.\n  Sanitize any user-supplied data that reaches a log. Log authentication\n  and authorization failures at WARN, with an opaque user ID, never a\n  submitted username. Keep the client IP only in an access-restricted\n  security log, purged at the end of its retention period.\n- Never deserialize untrusted data with a format that can instantiate\n  arbitrary types; use a data-only format (JSON) for any HTMX partial\n  that carries structured data. Pin dependency versions and verify\n  lockfile checksums; never trust an upstream registry blindly.\n- Never read, print or `cat` a file that may hold secrets (`.env`,\n  `credentials.json`, `*.pem`, `*.key`). Never echo or log an environment\n  variable's value; check its presence by name only. Warn before\n  committing a file that commonly holds secrets. Flag any secret exposed\n  in a session immediately, name it, and recommend rotation.\n- Not applicable, since nothing here reaches the network: HTTPS/HSTS/TLS\n  enforcement, reverse-proxy security headers, CORS, SSRF defences. Not\n  applicable, since the application has no upload feature: file-upload\n  validation.\n\n## 6. Privacy and data governance (GDPR)\n\n- Classify a customer's name, email and postal address as Confidential\n  personal data. Classify an invoice (which carries that PII alongside\n  pricing and tax figures) as Confidential. Classify the product catalog,\n  discount rules and tax-jurisdiction tables as Internal.\n- Match access to classification: only the signed-in administrator may\n  read or write Confidential data; there is no lower-privileged role to\n  restrict it from.\n- Encrypt PII at rest (MUST). There is no network transit to secure here.\n- Minimize PII collection: store only the name, email and postal address\n  the invoicing relationship needs.\n- Never put a customer's name, email or postal address in an application\n  log, error message or stack trace (MUST NOT); use an opaque customer ID\n  there instead.\n- Provide an erasure path (GDPR Art. 17) that anonymizes or removes a\n  customer's name, email and postal address from the live customer record\n  on request.\n- Preserve the name and address already billed on a previously issued\n  invoice exactly as issued (GDPR Art. 17(3)(b) permits retaining what a\n  legal \u2014 here, tax and bookkeeping \u2014 obligation requires): erase or\n  anonymize the customer record, never retroactively edit an issued\n  invoice's billing details. Never delete an issued invoice as a side\n  effect of an erasure request; clear or anonymize the customer reference\n  on it instead of deleting the row.\n- Provide an access/export path (GDPR Art. 15) that produces a complete,\n  human-readable copy of a customer's stored personal data and the\n  invoices billed to them, on request.\n- Record every erasure and export request in an append-only audit trail:\n  who requested it, when, and what action was taken \u2014 never the PII\n  values themselves, so that erasing the PII leaves no copy in the trail.\n  Log every other change to Confidential data (a customer record, an\n  invoice, a price-setting discount rule) the same way: who changed what,\n  when, and the previous value, with PII excluded. Keep this trail in its\n  own store, separate from application logs, access-restricted to the\n  administrator.\n- Define a retention period for customer and invoice data that satisfies\n  the bookkeeping and tax-retention law of the applicable EU member\n  state, and purge data automatically once it lapses; the exact period is\n  open for the project to decide, pending confirmation of the applicable\n  jurisdiction. Apply the same retention and purge discipline to the\n  audit trail.\n- Use synthetic customer data in tests and local development fixtures;\n  never real customer PII.\n- Designate the administrator as the owner of every data domain\n  (customers, invoices, products, discount rules, tax jurisdictions)\n  until the project names otherwise.\n\n## 7. Review process\n\nReview in this order, most critical first, weighing each finding\nseparately: **security**, **correctness**, **clarity**, **conventions**.\nLabel each finding a demonstrated defect, a policy deviation, or a\nsuggestion; block a merge only on the first two.\n\n**MUST checklist**\n\n- [ ] No credential, token or sensitive value appears in a committed file\n- [ ] Every failure path is handled; no silent catch, no swallowed\n      exception\n- [ ] Every new dependency carries a licence the project's policy allows\n- [ ] Significant logic and architectural decisions are documented\n- [ ] Existing documentation matches the code after the change\n- [ ] Every changed section was re-read whole, not only the changed line\n- [ ] Every claim changed text makes about itself (a count, \"all\") was\n      checked by counting with a tool\n- [ ] Input from outside the process is validated as untrusted before it\n      is destructured, indexed or used as a key\n- [ ] A refactor preserves behaviour on every path \u2014 each case, direction\n      and mode, including null handling, sort order and boundary values\n\n**SHOULD checklist**\n\n- [ ] Each non-trivial function has a unit test per relevant variant\n- [ ] Coverage does not fall\n- [ ] Lint errors and warnings do not rise\n- [ ] Each third-party dependency is necessary, understood and maintained\n- [ ] No new abstraction without two call sites, and no new dependency\n      without a documented reason\n\n- Produce a plan before implementing a feature or a non-trivial change:\n  the files touched, the signatures or outline, the edge cases, the\n  assumptions. Never write implementation code before the plan is\n  approved. Skip the plan for one-line fixes, typos and fully-specified\n  requests.\n- Label a finding unverified until it is demonstrated. Reproduce a defect\n  by running the path before reporting it; read a passing test that\n  contradicts the reproduction before blaming the code.\n- Explain a deviation from a SHOULD rule in the pull request. Land a\n  deviation from a MUST or MUST NOT rule only with a designated\n  approver's sign-off and its reason recorded in the pull request. Never\n  waive a MUST rule without that sign-off.\n\n## 8. Session protocol\n\n- At the start of a session, inspect the working tree and index, and read\n  this file before making any change.\n- While working, follow sections 2 through 7 for every change.\n- Before ending a session, read the MUST and SHOULD checklists in section\n  7 and execute each item in sequence, in full \u2014 do not summarize or skip\n  any of them.\n\n## 9. Governance\n\n- **Who approves a change?** Open for the project to decide.\n- **How is work tracked?** Open for the project to decide.\n- **What is a release?** Open for the project to decide.",
-    "ttft_ms": 345832,
-    "type": "result",
-    "duration_ms": 428384,
-    "uuid": "6cbb0a75-a65c-4632-b129-7400d9ad854c",
-    "ttft_stream_ms": 2771,
-    "time_to_request_ms": 482,
-    "first_content_frame_ms": 2772,
-    "queued_turn_count": 0,
-    "result_index": 0,
-    "credential_expires_at": "2026-12-11T13:29:52.387Z"
-  },
-  "budget": null,
+  "inline_skills": true,
   "output_leak": null,
   "named_tooling": [],
   "outcome": "generated",
-  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark-regen\\tests\\efficacy\\arms\\inline\\CLAUDE.md",
-  "output_lines": 481,
-  "output_words": 4236
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\inline\\CLAUDE.md",
+  "output_lines": 1778,
+  "output_words": 11990
 }

@@ -185,14 +185,15 @@ when:
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
 | FR-13-01 | Self-test | `harness.py` "the record is written as every trial starts and ends"<br>`harness.py` "every trial records the CLI's version, read as it starts" |
-| FR-13-02 | Self-test | `generate_arm.py` "every generated arm's file has its generation record beside it" |
+| FR-13-02 | Self-test | `generate_arm.py` "every built arm's file has its generation record beside it"<br>`report.py` "a pilot arm no script builds keeps its record for the report, and its vendored templates" |
 | FR-13-03 | Self-test | `archive.py` "readings, judgings, map and lock come; bundles do not"<br>`archive.py` "the original tarball's hash is recorded"<br>`archive.py` "the revisions are recorded"<br>`archive.py` "a reading changed in the archive fails the verify" |
 | FR-13-04 | Self-test | `archive.py` "a reading changed after the stamp is a problem"<br>`archive.py` "the report refuses docs/reports/ without a current stamp"<br>`report.py` "a report into any docs/reports needs the stamp" |
 | FR-13-05 | Self-test | `archive.py` "the restored root reads as the original does"<br>`archive.py` "a restored record points at the restored tarball and void"<br>`archive.py` "a restored transcript keeps its time" |
 | FR-13-06 | Self-test | `generate_arm.py` "the two map arms name the same moments in the chain's order"<br>`generate_arm.py` "the reading map names every template of the chain once, under docs/solid-ai-templates/"<br>`generate_arm.py` "each template skill is its template verbatim, named by the manifest"<br>`generate_arm.py` "a chain file the manifest does not describe is refused" |
-| FR-13-07 | Self-test | `generate_arm.py` "every fixed-text root opens with the brief, verbatim"<br>`generate_arm.py` "the brief and the facts name the stack and no tooling" |
-| FR-13-08 | Self-test | `generate_arm.py` "a generated file naming a tool is refused, and the prompt forbids one" |
+| FR-13-07 | Self-test | `generate_arm.py` "every built root opens with the brief, verbatim, the emitted ones too"<br>`generate_arm.py` "every committed arm's root opens with the brief, verbatim"<br>`generate_arm.py` "the brief and the facts name the stack and no tooling" |
+| FR-13-08 | Self-test | `generate_arm.py` "a built file naming a tool is refused" |
 | FR-13-09 | Self-test | `report.py` "with no --out-dir it lands in this repository's docs/reports/, needing the stamp but no templates source" |
+| FR-13-10 | Self-test | `generate_arm.py` "every committed arm is what the script builds at its recorded ref, byte for byte, the same twice" |
 
 ## 14 One run at a time
 

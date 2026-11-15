@@ -27,6 +27,7 @@ told.
 | [ADR-004](../decisions/004-the-builder-models.md) | Each round names its builder models in its registration, and none comes from the vendor of the rounds' judge | Accepted |
 | [ADR-007](../decisions/007-the-baseline.md) | The baseline runs against `v2.90.0`, and a template change runs baseline and candidate head to head in one round | Accepted |
 | [ADR-008](../decisions/008-the-brief-and-the-build-prompt.md) | The brief names the extension axes and the personal data, and the prompt tells every arm the spec is the approved plan and nobody will answer | Accepted |
+| [ADR-026](../decisions/026-every-arm-is-built-by-a-script.md) | From round 6 every arm is built by a script with no model call, `inline` by the emitter's `--inline-skills`; `hybrid`, `short` and `hand` run no more | Accepted |
 
 ## 9.2 What a trial is measured on
 

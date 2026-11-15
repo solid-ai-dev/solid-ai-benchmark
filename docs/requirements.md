@@ -198,9 +198,10 @@
 | FR-13-04 | The benchmark shall refuse to write a report under `docs/reports/` once a reading changed since the archive was verified. | Archive, Report |
 | FR-13-05 | The benchmark shall restore an archive so it reads as the original root does, its records pointing at the restored files. | Archive |
 | FR-13-06 | The benchmark shall build a map arm's root from the brief, the chain and the templates' manifest alone, the same moments in the same order for both map arms, and each `lazyskills` skill holding one template verbatim. | Arm generator |
-| FR-13-07 | The benchmark shall give every arm's root the same project facts: the brief, which names the stack the spec fixes and no tooling. | Arm generator |
-| FR-13-08 | The benchmark shall tell a model arm's generation to name no tool, and refuse a generated file that names one. | Arm generator |
+| FR-13-07 | The benchmark shall give every arm's root the same project facts: the brief, verbatim under the title, the emitted roots too, which names the stack the spec fixes and no tooling. | Arm generator |
+| FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
 | FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
+| FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
 
 ### 14 One run at a time
 
