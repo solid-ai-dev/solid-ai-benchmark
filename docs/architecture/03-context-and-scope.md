@@ -6,7 +6,7 @@ side, what crosses it, and over which channel.
 
 ## 3.1 Business context
 
-![The benchmark as one box with its neighbours. The owner gives it settings, and report readers get reports from it. It exchanges builds with Claude Code and judgings with the Codex CLI, and exchanges packages with the Python package index. Templates come in from the templates source and reports go back to it. The hidden suite gives it acceptance tests, and it sends archived rounds to the runs archive](../diagrams/context.png)
+![The benchmark as one box with its neighbours. The owner gives it settings, and report readers get reports from it. It exchanges builds with Claude Code and judgings with the Codex CLI, and exchanges packages with the Python package index. Templates come in from the templates source. The hidden suite gives it acceptance tests, and it sends archived rounds to the runs archive](../diagrams/context.png)
 
 | Neighbour | Gives the benchmark | Gets from the benchmark |
 | --------- | ------------------- | ----------------------- |
@@ -15,7 +15,7 @@ side, what crosses it, and over which channel.
 | Claude Code | Builds and generated files | Workspaces and prompts |
 | Codex CLI | Judgings, from round 5 | Blind bundles to judge |
 | Python package index | The packages every app and every tool installs | Nothing |
-| Templates source | The templates, the chain and the release an arm is built from | Reports under its `docs/audits/` |
+| Templates source | The templates, the chain and the release an arm is built from | Nothing |
 | Hidden suite | Acceptance tests and the change suite, at scoring only | Nothing |
 | Runs archive | A restored round, for a re-read | Each round's raw data |
 
@@ -41,7 +41,7 @@ The channel to each neighbour, and who opens it.
 | Package installs | Trials, scoring, tools and PyPI | `pip` over HTTPS, the tools from `tool-lock.txt` | The trial or the scorer |
 | Templates | Every script and the templates source | A local git clone, named by `--templates` | The operator |
 | Archive | `archive.py` and `braboj/tariff-runs` | Files written into a local clone, pushed by the operator | The operator |
-| Report | `report.py` and the templates source | A Markdown file under `docs/audits/` | The report script |
+| Report | `report.py` and this repository | A Markdown file under `docs/reports/` | The report script |
 
 ## 3.3 The app under test
 
