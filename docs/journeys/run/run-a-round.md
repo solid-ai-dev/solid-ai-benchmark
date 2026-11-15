@@ -40,6 +40,8 @@ change task starts from the fixtures in `change-fixtures.json`, not from the
 arm's own build, so it runs with `--fixtures <the directory of their
 tarballs>` and needs no build trial first. The run prints what each task
 still owes; the round is complete with both tasks at K for every arm.
+Its registration, `docs/rounds/round-c1.md` for C1, lands on `main` before
+the first trial, or the report refuses the round.
 
 ## Commands
 

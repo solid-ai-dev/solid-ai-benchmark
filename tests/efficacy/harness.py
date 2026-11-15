@@ -168,9 +168,11 @@ ARMS = {
 # its K and the digest of the prompt every arm is given. A run names its round
 # with `--round` and is held to this entry rather than to what its arm names
 # suggest, since a round may reuse a pilot arm's name. The pilot rounds have no
-# entry and keep the checks they ran under.
+# entry and keep the checks they ran under. Each names the document that
+# registers it, which has to be on the main branch before its first trial.
 REGISTRATIONS = {
     "C1": {
+        "document": "docs/rounds/round-c1.md",
         "spec": {"name": "normal", "file": "SPEC.md",
                  "sha256": ROUND6_SPEC[1]},
         "arms": ["none", "reference", "inline", "skills", "lazyref",

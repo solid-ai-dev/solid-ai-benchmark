@@ -25,10 +25,11 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
-from harness import (TrialError, assert_outside_repository,  # noqa: E402
-                     claim_path, claim_refusal_check, project_folder,
-                     read_claim, remove_tree, running_as, scoring_area,
-                     write_run)
+from harness import (REGISTRATIONS, TrialError,  # noqa: E402
+                     assert_outside_repository, claim_path,
+                     claim_refusal_check, project_folder, read_claim,
+                     registration_digest, remove_tree, running_as,
+                     scoring_area, write_run)
 
 MANIFEST = "ARCHIVE.json"
 STAMP = "archived.json"
@@ -292,8 +293,12 @@ def figures(root, seed):
     """What the report computes from a root, with paths left out."""
     import report
 
-    trials = report.load(root)
-    report.exclude_reached(trials, report.reaches(root))
+    # Read as the report reads it, by one entry point, so a reading the
+    # report counts can never change unseen by the verify.
+    trials, problem = report.round_trials(root)
+    if problem:
+        raise TrialError(problem)
+    report.leave_out_reached(root, trials)
     table = report.collect(trials)
     results = report.round_contrasts(trials, table, seed)
     withdrawn = report.withdrawals(trials)
@@ -527,6 +532,32 @@ def self_test():
               ["security_probe_pass_rate"] == {"value": 0.5})
     checks.append(("a reading changed in the archive fails the verify",
                    landed and verify(root, into, seed) != []))
+
+    # A C1 root whose one change task has no build score: the report reads
+    # it, so the verify has to, and a change to it in the archive shows.
+    named = os.path.join(scratch, "c1")
+    tarball = os.path.join(named, "change-none-1.tar")
+    os.makedirs(named)
+    plant_tarball(tarball, "change-none-1")
+    write_run(os.path.join(named, "run-c1.json"),
+              datetime.datetime(2026, 11, 15, 12, 0, 0).astimezone(),
+              [{"arm": "none", "trial": 1, "outcome": "completed",
+                "frozen": {"head": "h", "tarball": tarball}}], "change",
+              identity={"round": "C1", "registration":
+                        registration_digest(REGISTRATIONS["C1"])})
+    dump_json(os.path.join(scoring_area(named), "scores-change",
+                           "none-1.json"),
+              {"name": "none-1", "change_suite": {"value": 0.9}})
+    named_into = os.path.join(scratch, "runs", "c1")
+    archive(named, named_into)
+    clean = verify(named, named_into, seed) == []
+    archived = os.path.join(scoring_area(named_into), "scores-change",
+                            "none-1.json")
+    dump_json(archived, dict(load_json(archived),
+                             change_suite={"value": 0.4}))
+    checks.append(("a C1 change task's score changed in the archive fails "
+                   "the verify",
+                   clean and "table" in verify(named, named_into, seed)))
 
     # A round-5d root is verified by round 5d's rules, so reliability's
     # interval is Newcombe's there as it is in the report.

@@ -84,8 +84,9 @@ def judgings_of(area, name):
     return found
 
 
-def reuse_trial(name, record, source, target):
-    """Copy one trial's artifacts into the target root and scoring area.
+def reuse_trial(name, record, source, target, identity=None):
+    """Copy one trial's artifacts into the target root and scoring area;
+    `identity` names the round and registration it ran under, if named.
 
     Returns the run record to write for it and the blind label its judging
     carries, None where it was never judged.
@@ -99,6 +100,12 @@ def reuse_trial(name, record, source, target):
         "root": os.path.abspath(source),
         "name": os.path.splitext(os.path.basename(tarball))[0],
         "tarball": tarball}
+
+    # The origin names its round, so a reader can tell a trial copied within
+    # one named round, which pairs with the trials run here, from one carried
+    # over from another.
+    if identity:
+        origin = dict(origin, **identity)
 
     copied = dict(record)
     copied["reused_from"] = origin
@@ -207,7 +214,8 @@ def reuse(source, target, arms):
     taken = {label: name for name, label in mapping["blind"].items()}
     records, labels = [], {}
     for name in sorted(chosen):
-        copied, label = reuse_trial(name, chosen[name], source, target)
+        copied, label = reuse_trial(name, chosen[name], source, target,
+                                    identity)
         records.append(copied)
         if label:
             if label in taken and taken[label] != name:
@@ -361,6 +369,13 @@ def self_test():
                    header.get("round") == "C1"
                    and header.get("registration") == digest
                    and recorded_round(os.path.dirname(kept)) == ("C1", None)))
+    origin = loaded(scoring_area(os.path.dirname(kept)), "scores",
+                    "inline-1.json")["reused_from"]
+    checks.append(("a trial copied within a named round names that round in "
+                   "its origin",
+                   origin.get("round") == "C1"
+                   and origin.get("registration") == digest
+                   and origin.get("root") == os.path.abspath(named)))
     joined = []
     for origin, into in ((named, target),
                          (source, os.path.dirname(kept))):

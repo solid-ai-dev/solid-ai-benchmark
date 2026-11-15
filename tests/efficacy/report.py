@@ -649,6 +649,30 @@ def load(root, named=None):
     return trials
 
 
+def round_trials(root):
+    """A root's trials as its report and its archive's verify read them, and
+    why they cannot be read: (trials, problem)."""
+
+    # A round its run records name is read as that round, never under the
+    # pilot's rules its arms' names would suggest, and records missing its
+    # identity are refused rather than read as the pilot's.
+    named, problem = recorded_round(root)
+    if problem:
+        return {}, problem
+    trials = load(root, named)
+    if named is not None:
+        for trial in trials.values():
+            trial["round"] = named
+    return trials, None
+
+
+def leave_out_reached(root, trials):
+    """Leave out of `trials`, in place, every trial whose scan finds a reach,
+    by the rule of the round they are; return the names left out."""
+    return exclude_reached(trials, reaches(root),
+                           per_task=named_round(trials) is not None)
+
+
 def change_only(trial):
     """A trial, in place, as its change task alone: its build readings
     emptied, so every build row reads it as not measured."""
@@ -793,6 +817,14 @@ def arm_origins(trials):
     origins = {}
     for name in ordered(trials):
         source = (trials[name].get("scores") or {}).get("reused_from") or {}
+
+        # A trial reused from another root of the same named round, under the
+        # same registration, ran in this round: its origin is provenance.
+        named = named_round(trials)
+        if (named is not None and source.get("round") == named
+                and source.get("registration")
+                == registration_digest(REGISTRATIONS[named])):
+            source = {}
         origins.setdefault(arm_of(name), source.get("root")
                            or source.get("name") or None)
     return origins
@@ -1538,12 +1570,18 @@ def registration_problem(root, registration, repository=REPOSITORY):
     """Why the round's registration does not predate its first trial, or
     None when it landed on the main branch before that trial and is
     unchanged since."""
+    if not os.path.isfile(os.path.join(repository, registration)):
+        return ("%s does not exist, so no trial can be shown to have run "
+                "after its round registered" % registration)
     moments = []
     for record in run_records(root):
 
         # A trial reused from an earlier round ran under that round's
-        # registration, so only this round's own trials have to follow its.
-        if record.get("reused_from"):
+        # registration, so only this round's own trials have to follow its;
+        # one reused within its own named round ran under this one.
+        origin = record.get("reused_from")
+        if origin and not (record.get("round")
+                           and origin.get("round") == record["round"]):
             continue
         try:
             moment = datetime.datetime.fromisoformat(record["started_at"])
@@ -5359,6 +5397,10 @@ def round_identity_checks():
         ("a run whose trials name a round under a header naming none is "
          "refused, not read as the pilot's",
          refused("unheaded", [{"trials": [trial]}], "yet its trial")),
+        ("a named round is refused until its registration document is on "
+         "main before its first trial",
+         refused("unregistered", [good],
+                 "%s does not exist" % REGISTRATIONS["C1"]["document"])),
     ]
     shutil.rmtree(scratch, ignore_errors=True)
     return checks
@@ -5407,7 +5449,8 @@ def change_only_checks():
     table = collect(alone)
     checks = [
         ("a named round's change task with no build score is read on its own",
-         code == 0 and "no scores" not in printed and load(root) == {}
+         code == 2 and "no scores" not in printed
+         and REGISTRATIONS["C1"]["document"] in printed and load(root) == {}
          and sorted(alone) == ["inline-1", "inline-2", "none-1", "none-2"]
          and all(trial.get("change_only") and trial["security"] is None
                  for trial in alone.values())
@@ -5479,6 +5522,42 @@ def change_only_checks():
                    readings == [1.0, 1.0, 1.0]
                    and modifiability(broken, None) is None
                    and modifiability(working, None) == 1.0))
+
+    # Inline copied in from another root of C1, none run here: one round,
+    # so the pair is read paired; copied from a round of none, it crosses.
+    digest = registration_digest(REGISTRATIONS["C1"])
+
+    def mixed(origin):
+        trials = {}
+        for block in (1, 2, 3):
+            trials[trial_name("none", block)] = {"scores": {},
+                                                 "round": "C1"}
+            reused = dict(origin, root="elsewhere",
+                          name=trial_name("inline", block))
+            trials[trial_name("inline", block)] = {
+                "scores": {"reused_from": reused}, "round": "C1"}
+        return crossed_labels(trials)
+    checks.append(("trials reused within one named round pair with those run "
+                   "there",
+                   "inline-none" not in mixed({"round": "C1",
+                                               "registration": digest})
+                   and "inline-none" in mixed({})
+                   and "inline-none" in mixed({"round": "C1",
+                                               "registration": "0" * 64})))
+    # A trial copied within C1, which started after its registration
+    # landed, is when the round began; the pilot's skip of reused trials
+    # would leave the round with no first trial.
+    began = tempfile.mkdtemp(prefix="efficacy-report-began-")
+    with io.open(os.path.join(began, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": [{"arm": "none", "trial": 1, "round": "C1",
+                               "reused_from": {"round": "C1"},
+                               "started_at": "2026-11-15T12:00:00+00:00"}]},
+                  handle)
+    counted = registration_problem(began, ROUND5E_REGISTRATION)
+    shutil.rmtree(began, ignore_errors=True)
+    checks.append(("a trial reused within its named round counts toward when "
+                   "the round began", counted is None))
     checks.append(("a change task standing alone reads no build Python",
                    python_problem({"none-1": both("none-1"),
                                    "none-3": standing}) is None))
@@ -8612,21 +8691,15 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    # A round its run records name is read as that round, never under the
-    # pilot's rules its arms' names would suggest, and records missing its
-    # identity are refused rather than read as the pilot's.
-    named, problem = recorded_round(options.root)
+    trials, problem = round_trials(options.root)
     if problem:
         print("refused: %s" % problem)
         return 2
-    trials = load(options.root, named)
     if not trials:
         print("no scores under %s; score.py writes them"
               % scoring_area(options.root))
         return 2
-    if named is not None:
-        for trial in trials.values():
-            trial["round"] = named
+    named = named_round(trials)
 
     out_dir = options.out_dir
     if out_dir is None:
@@ -8651,6 +8724,17 @@ def main(argv):
     # A hypothesis registered or changed after the round's first trial could
     # have been written to fit what that trial showed, so the round is refused
     # rather than read against it.
+    # A named round's registration is its entry's document, held to the
+    # same rule.
+    if named is not None:
+        try:
+            problem = registration_problem(
+                options.root, REGISTRATIONS[named]["document"])
+        except TrialError as error:
+            problem = str(error)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
     if is_round5(trials):
         try:
             problem = registration_problem(
@@ -8685,8 +8769,7 @@ def main(argv):
     # A trial that read past its workspace measures what it read, not its
     # arm; the harness voids one its own scan catches, and this re-scan, under
     # the current rule, leaves out any it missed.
-    for name in exclude_reached(trials, reaches(options.root),
-                                per_task=named is not None):
+    for name in leave_out_reached(options.root, trials):
         print("left out, having reached past its workspace: %s" % name)
     if not trials:
         print("no trial is left to report once the reached ones are out")
