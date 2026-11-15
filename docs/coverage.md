@@ -199,7 +199,7 @@ when:
 | FR-13-08 | Self-test | `generate_arm.py` "a built file naming a tool is refused" |
 | FR-13-09 | Self-test | `report.py` "with no --out-dir it lands in this repository's docs/reports/, needing the stamp but no templates source" |
 | FR-13-10 | Self-test | `generate_arm.py` "every committed arm is what the script builds at its recorded ref, byte for byte, the same twice" |
-| FR-13-19 | Self-test | `reuse.py` "the readings are filed under the word and name their origin"<br>`reuse.py` "the quality readings come along beside the security readings"<br>`reuse.py` "the judgings keep their labels and the map is theirs alone" |
+| FR-13-21 | Self-test | `reuse.py` "the readings are filed under the word and name their origin"<br>`reuse.py` "the quality readings come along beside the security readings"<br>`reuse.py` "the judgings keep their labels and the map is theirs alone" |
 
 ## 14 One run at a time
 
