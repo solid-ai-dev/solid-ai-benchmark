@@ -41,7 +41,8 @@ import lib  # noqa: E402
 from generate_arm import RECORDED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
                      ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
-                     ROUND5E_ARMS, SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING,
+                     ROUND5E_ARMS, SCORABLE, SECTIONS_INTO, TEMPLATES_ENV,
+                     VENDORED, VOIDING,
                      TrialError, canonical, git, reach, read_transcripts,
                      read_change_prompt, recorded_round,
                      registration_digest, scoring_area, split_name,
@@ -1220,13 +1221,14 @@ def margined(key, direction, interval, baseline_mean, margins):
 
 
 def contrasts(table, seed, crossed=(), margins=None, strict=False,
-              resamples=RESAMPLES, only=None):
+              resamples=RESAMPLES, only=None, pairs=None):
     """The paired differences, their intervals and their verdicts, with
     each held against `margins`, by default the shared ones.
 
     `strict` reads them by round 5d's rules, as `strict_contrast` states,
     and a contrast in `crossed` unpaired. `only` limits the contrasts
-    computed to the labels it names.
+    computed to the labels it names, and `pairs` names the (treatment,
+    baseline) pairs read, by default the declared contrasts.
 
     A contrast in `crossed` pairs an arm judged in an earlier round with one
     judged in this one, so its difference carries the day as well as the arm.
@@ -1237,7 +1239,7 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
     results = {}
     for key, entry in table.items():
         per_contrast = {}
-        for treatment, baseline in CONTRASTS:
+        for treatment, baseline in pairs or CONTRASTS:
             label = "%s-%s" % (treatment, baseline)
             if only and label not in only:
                 continue
@@ -1931,6 +1933,13 @@ def write_report(root, trials, table, results, seed, out_dir,
                                    lost, scans, radar, iso, drawn))
     lines.append("")
 
+    # A named round prints the readings it registered, each per task, the
+    # templates read on each counted from that task's own transcripts.
+    registered = (registered_lines(tasks, seed, {
+        task: map_uses(root, trials, task) for task, _ in TASKS})
+        if tasks else [])
+    lines.extend(registered)
+
     lines.extend(["## What produced these numbers", ""])
     lines.extend(provenance_lines(trials, names, arms, k, seed,
                                   generation))
@@ -2077,7 +2086,8 @@ def write_report(root, trials, table, results, seed, out_dir,
         appendix: appendix_lines(trials, table, results, k, seed, generation,
                                  report, record, iso, drawn),
         report: plain_report_lines(root, trials, table, results, radar,
-                                   appendix, k, iso, uses, drawn)}
+                                   appendix, k, iso, uses, drawn,
+                                   registered)}
     for document, text in documents.items():
         with io.open(os.path.join(out_dir, document), "w", encoding="utf-8",
                      newline="\n") as handle:
@@ -2569,11 +2579,12 @@ def sureness_lines(trials, k):
 
 
 def plain_report_lines(root, trials, table, results, radar, appendix, k,
-                       iso=None, uses=None, tasks=()):
+                       iso=None, uses=None, tasks=(), registered=()):
     """The report a reader opens: the radars, each approach in plain words,
     the round's questions answered, and how sure the answers are. `iso` is
     the ISO reading where the round draws that radar; `tasks`, a named
-    round's reading of each task with its images, each read on its own."""
+    round's reading of each task with its images, each read on its own,
+    and `registered` the lines of the readings it registered."""
     names = ordered(trials)
     active = active_contrasts(trials)
     arms = by_cost(table, [pair[0] for pair in active if pair[1] == BARE])
@@ -2592,6 +2603,7 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
         lines.extend(posthoc_iso_lines(iso))
     if tasks:
         lines.extend(plain_task_lines(tasks, results))
+        lines.extend(registered)
     else:
         if radar:
             for theme, image in sorted(radar.items()):
@@ -3549,6 +3561,11 @@ def mapped_templates(arm):
     if entry.get("vendor"):
         record = generation_records().get(arm) or {}
         return list(record.get("resolved_files") or [])
+    if entry.get("sections"):
+        folder = os.path.join(ARMS_DIR, entry["sections"])
+        return sorted(os.path.relpath(os.path.join(base, name), folder)
+                      .replace(os.sep, "/")
+                      for base, _, names in os.walk(folder) for name in names)
     return []
 
 
@@ -3634,6 +3651,10 @@ def map_use(files, arm, templates=None, delegated=()):
     marker = VENDORED["into"] + "/"
     named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
 
+    # A section file is named by its path under the folder the arm's map
+    # points at, wherever a read or a shell command names it.
+    section = re.compile(re.escape(SECTIONS_INTO) + r"/([\w./-]+\.md)")
+
     def mapped(templates):
         """Those of the templates that are on the arm's map."""
         return [template for template in templates
@@ -3683,6 +3704,10 @@ def map_use(files, arm, templates=None, delegated=()):
         elif name == "Read" and entry.get("vendor"):
             path = str(given.get("file_path") or "").replace("\\", "/")
             found = mapped(named.findall(path))
+        elif name in SHELLS + ("Read",) and entry.get("sections"):
+            text = (command if name in SHELLS
+                    else str(given.get("file_path") or "").replace("\\", "/"))
+            found = mapped(section.findall(text))
         elif name == "Skill" and entry.get("skills"):
             skill = str(given.get("skill") or "").strip()
             found = [skill] if skill in known else []
@@ -3698,15 +3723,19 @@ def map_use(files, arm, templates=None, delegated=()):
             else None, "by_subagent": by_subagent}
 
 
-def map_uses(root, trials):
-    """Every trial's map use, by name, for the arms whose file points at
-    the templates and whose transcripts the root still holds."""
+def map_uses(root, trials, task="build"):
+    """Every trial's map use on `task`, by name, for the arms whose file
+    points at the templates and whose transcripts the root still holds."""
     home = os.path.join(root, "home")
     uses = {}
     for record in run_records(root):
-        if record.get("outcome") not in SCORABLE:
+        if (record.get("outcome") not in SCORABLE
+                or (record.get("task") or "build") != task):
             continue
-        name = name_of(record)
+
+        # A change task shares its build trial's name: the task, read
+        # above, is what tells their uses apart.
+        name = trial_of(record)
         if name not in trials:
             continue
         arm = arm_of(name)
@@ -5758,6 +5787,161 @@ def task_radar_checks(seed):
     return checks
 
 
+def registered_checks(seed):
+    """Round C1's registered readings: the check loop kept only on a cost
+    drop of 10 % on each task and no axis worse on either, nothing flagged
+    read as no degradation and never as non-inferior, an interval crossing
+    the margin inconclusive, and an arm delivering on demand only where it
+    reads fewer templates than the one that reads them all up front."""
+    def reading(value):
+        return {"value": value, "missing": None}
+
+    def tree(installs, cost):
+        return {"install": reading(installs),
+                "boot": reading({"factory": True, "index_status": 200}),
+                "cost": reading({"cost_usd": cost})}
+
+    def plant(costs, broken=(), flaky=()):
+        """Five blocks of each arm, `costs` mapping (arm, task) to its cost
+        per trial; a changed tree of an arm in `broken` never installs, and
+        one in `flaky` fails on the first block alone."""
+        trials = {}
+        for arm in ("lazyref", "lazyrefold", "lazysections", "reference",
+                    "lazyskills"):
+            for block in range(1, 7):
+                name = trial_name(arm, block)
+                change = tree(arm not in broken and not (
+                    arm in flaky and block == 1), costs.get(
+                        (arm, "change"), 1.0))
+                change["name"] = name
+                trials[name] = {
+                    "round": "C1", "judge": None, "judgings": [],
+                    "scores": dict(tree(True, costs.get((arm, "build"),
+                                                        2.0)), name=name),
+                    "security": None, "quality": None, "change": change}
+        return trials
+
+    def text(trials, uses=None):
+        return "\n".join(registered_lines(task_readings(trials, seed), seed,
+                                          uses or {}))
+
+    cheaper = {("lazyref", "build"): 1.6, ("lazyref", "change"): 0.8}
+    kept = text(plant(cheaper))
+    slight = text(plant(dict(cheaper) | {("lazyref", "change"): 0.95}))
+    broken = text(plant(cheaper, broken=("lazyref",)))
+    flaky = text(plant(cheaper, flaky=("lazysections",)))
+
+    def counted(arm, reads):
+        return {trial_name(arm, block): {"uses": [(1, "t%d" % index)
+                                                  for index in range(reads)]}
+                for block in range(1, 7)}
+    uses = counted("reference", 10) | counted("lazyref", 3)
+    uses.update(counted("lazyskills", 12))
+    uses.update(counted("lazysections", 2))
+    demand = text(plant(cheaper, flaky=("lazysections",)),
+                  {"build": uses, "change": uses})
+
+    # Both documents a reader opens carry the readings.
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-registered-")
+    planted = plant(cheaper)
+    table = collect(planted)
+    write_report(os.path.join(scratch, "run"), planted, table,
+                 contrasts(table, seed), seed, scratch)
+    documents = []
+    for suffix in ("efficacy.md", "efficacy-record.md"):
+        with io.open(next(os.path.join(scratch, file)
+                          for file in os.listdir(scratch)
+                          if file.endswith(suffix)),
+                     encoding="utf-8") as handle:
+            documents.append(handle.read())
+    shutil.rmtree(scratch, ignore_errors=True)
+    return [
+        ("the check loop is kept on a 10 % cost drop on each task with no "
+         "axis worse",
+         "**Kept.**" in kept and "| build task | 20 % |" in kept
+         and "| change task | 20 % |" in kept),
+        ("a cost drop under 10 % on one task does not keep the check loop",
+         "**Not kept.**" in slight and "| change task | 5 % |" in slight),
+        ("an axis worse on either task does not keep the check loop",
+         "**Not kept.**" in broken and "worse on Reliability" in broken),
+        ("nothing flagged worse reads no degradation detected, beside the "
+         "non-inferiority read apart",
+         "| %s | non-inferior on every measured axis |" % NO_DEGRADATION
+         in kept and "read apart" in kept),
+        ("an interval crossing the margin is inconclusive, never "
+         "non-inferior",
+         "| %s | inconclusive on Reliability |" % NO_DEGRADATION in flaky
+         and "`lazysections` against `lazyref`" in flaky
+         and "`lazysections` against `reference`" in flaky),
+        ("an arm delivers on demand only reading fewer templates than "
+         "reference and non-inferior to it",
+         "| build task | `lazyref` | 3.0 | 10.0 | non-inferior on every "
+         "measured axis | yes |" in demand
+         and "| build task | `lazyskills` | 12.0 | 10.0 |" in demand
+         and "`lazyskills` | 12.0 | 10.0 | non-inferior on every measured "
+         "axis | not shown |" in demand
+         and "| change task | `lazysections` | 2.0 | 10.0 | inconclusive "
+         "on Reliability | not shown |" in demand),
+        ("an arm whose reads were not counted is not shown on demand",
+         "| build task | `lazyref` | %s | %s |" % (NOT_MEASURED, NOT_MEASURED)
+         in kept and "| yes |" not in kept.split("On demand against")[-1]),
+        ("the report and its full record print the registered readings",
+         all("## The registered readings" in document
+             and "**Kept.**" in document for document in documents)),
+        ("a round running none of the registered pairs prints none of them",
+         registered_lines(task_readings({
+             name: trial for name, trial in plant(cheaper).items()
+             if arm_of(name) in ("lazyref", "lazyskills")}, seed), seed,
+             {}) == []),
+    ]
+
+
+def task_use_checks():
+    """Each task's templates read are counted from that task's own
+    transcripts, a section file named by a read or a shell command."""
+    from harness import project_folder
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-task-uses-")
+    root = os.path.join(scratch, "run")
+    sections = mapped_templates("lazysections")[:2]
+
+    def call(name, **given):
+        return {"type": "tool_use", "id": "t", "name": name, "input": given}
+
+    def line(message_id, block):
+        return json.dumps({"type": "assistant", "message": {
+            "id": message_id, "content": [block]}}) + "\n"
+    calls = {"build": [call("Read", file_path="C:\\pen\\%s\\%s" % (
+        SECTIONS_INTO.replace("/", "\\"), sections[0].replace("/", "\\")))],
+             "change": [call("Read", file_path="/pen/%s/%s" % (
+                 SECTIONS_INTO, sections[0])), call(
+                     "Bash", command="cat %s/%s | head" % (
+                         SECTIONS_INTO, sections[1])),
+                 call("Read", file_path="/pen/src/app.py")]}
+    records = []
+    for task, made in calls.items():
+        workspace = os.path.join(scratch, "pen-%s" % task)
+        folder = os.path.join(root, "home", ".claude", "projects",
+                              project_folder(workspace))
+        os.makedirs(folder)
+        with io.open(os.path.join(folder, "t.jsonl"), "w",
+                     encoding="utf-8") as handle:
+            for index, block in enumerate(made):
+                handle.write(line("m%d" % index, block))
+        records.append({"arm": "lazysections", "trial": 1, "task": task,
+                        "outcome": "completed", "workspace": workspace})
+    with io.open(os.path.join(root, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": records}, handle)
+    trials = {"lazysections-1": {}}
+    counted = {task: templates_read(map_uses(root, trials, task),
+                                    "lazysections") for task in calls}
+    shutil.rmtree(scratch, ignore_errors=True)
+    return [("each task's templates read are counted from its own "
+             "transcripts, a section file by a read or a shell command",
+             len(sections) == 2 and counted == {"build": 1.0,
+                                                "change": 2.0})]
+
+
 def change_only_checks():
     """A named round's change task is read whether or not its build trial
     was scored or reached, on rows of its own; a pilot round's keeps
@@ -7278,6 +7462,235 @@ def task_lines(reading, images):
             arm, "—" if arm == BARE else iso_answer(iso, "%s-%s"
                                                     % (arm, BARE)),
             NOT_MEASURED if mean is None else "$%.2f" % mean))
+    return lines
+
+
+# Round C1's registered readings, each paired by block on each task. The
+# check loop is read at the templates commit that cuts it to one command
+# against that commit's parent; the section files against the same rules
+# read whole on demand and all up front; and each arm that reads on demand
+# against the one that reads every template up front.
+CHECK_LOOP = ("lazyref", "lazyrefold")
+PACKAGING = (("lazysections", "lazyref"), ("lazysections", "reference"))
+ON_DEMAND = ("lazyref", "lazyskills", "lazysections")
+UP_FRONT = "reference"
+
+# The check loop is kept only where the mean billed cost per trial drops by
+# at least this share on each task, the drop read from the paired mean
+# difference over the baseline's mean on the same blocks; its interval is
+# shown beside it and decides nothing.
+COST_DROP = 0.10
+
+# What no axis flagged worse reads as: the absence of a flag, never a claim
+# that nothing got worse.
+NO_DEGRADATION = "no degradation detected under the registered rule"
+
+
+def registered_pairs():
+    """Every pair the registered readings read, each once."""
+    pairs = [CHECK_LOOP] + list(PACKAGING)
+    pairs += [(arm, UP_FRONT) for arm in ON_DEMAND]
+    return list(dict.fromkeys(pairs))
+
+
+def axis_states(iso_results, label):
+    """Each ISO axis of one pair on one task, as (axis, state): `worse`
+    where the whole interval lies past the margin downward,
+    `non-inferior` where its lower bound clears minus the margin,
+    `inconclusive` where it crosses the margin, None where unread."""
+    states = []
+    for axis, _ in ISO_AXES:
+        contrast = iso_results.get("iso:" + axis, {}).get(label) or {}
+        held = contrast.get("non_inferior") or {}
+        if contrast.get("verdict") == "worse":
+            state = "worse"
+        elif contrast.get("verdict") not in COUNTED_VERDICTS:
+            state = None
+        elif held.get("within"):
+            state = "non-inferior"
+        else:
+            state = "inconclusive"
+        states.append((axis, state))
+    return states
+
+
+def cost_drop(table, seed, pair):
+    """The share the treatment's mean billed cost per trial drops by against
+    the baseline's, paired by block, with its interval: (drop, low, high),
+    each None where no pair was measured."""
+    label = "%s-%s" % pair
+    contrast = contrasts({"cost_usd": table["cost_usd"]}, seed,
+                         pairs=[pair])["cost_usd"][label]
+    right = table["cost_usd"]["values"].get(pair[1], {})
+    left = table["cost_usd"]["values"].get(pair[0], {})
+    paired = [right[index] for index in sorted(set(left) & set(right))
+              if left[index] is not None and right[index] is not None]
+    base = statistics.fmean(paired) if paired else None
+    interval = contrast.get("interval") or {}
+    if not base or contrast.get("mean") is None:
+        return None, None, None
+    low, high = interval.get("low"), interval.get("high")
+    return (-contrast["mean"] / base,
+            None if high is None else -high / base,
+            None if low is None else -low / base)
+
+
+def pair_reading(reading, seed, pair):
+    """One pair's registered reading on one task: its cost drop, the axes
+    read worse, inconclusive and unread, and whether every measured axis is
+    non-inferior."""
+    _, _, _, table, iso = reading
+    label = "%s-%s" % pair
+    results = contrasts(iso[0], seed, margins=iso_margins(iso[0]),
+                        strict=True, pairs=[pair])
+    states = axis_states(results, label)
+    measured = [state for _, state in states if state is not None]
+    return {"cost": cost_drop(table, seed, pair),
+            "worse": [axis for axis, state in states if state == "worse"],
+            "inconclusive": [axis for axis, state in states
+                             if state == "inconclusive"],
+            "unread": [axis for axis, state in states if state is None],
+            "non_inferior": bool(measured) and all(
+                state == "non-inferior" for state in measured)}
+
+
+def worse_words(read):
+    """Whether an axis reads worse, in the registered words."""
+    if read["worse"]:
+        return "worse on %s" % spoken(read["worse"])
+    return NO_DEGRADATION
+
+
+def non_inferior_words(read):
+    """Whether the pair is non-inferior, in the registered words: claimed
+    only where every measured axis's lower bound clears minus its margin."""
+    if read["non_inferior"]:
+        return "non-inferior on every measured axis"
+    if read["worse"]:
+        return "not non-inferior: worse on %s" % spoken(read["worse"])
+    if read["inconclusive"]:
+        return "inconclusive on %s" % spoken(read["inconclusive"])
+    return "not measured"
+
+
+def percent(share):
+    """A share as a whole percentage, or a dash."""
+    return "—" if share is None else "%d %%" % round(100 * share)
+
+
+def check_loop_kept(reads):
+    """Whether the check loop is kept: its mean billed cost per trial drops
+    by at least COST_DROP on each task, and no axis reads worse on either;
+    None where a task's cost or axes were not read."""
+    if not reads or any(read["cost"][0] is None for read in reads.values()):
+        return None
+    return all(read["cost"][0] >= COST_DROP and not read["worse"]
+               for read in reads.values())
+
+
+def templates_read(uses, arm):
+    """The mean count of templates each of an arm's trials read, or None
+    where no trial's reads were counted."""
+    counts = [len({template for _, template in use["uses"]})
+              for name, use in uses.items() if arm_of(name) == arm]
+    return statistics.fmean(counts) if counts else None
+
+
+def on_demand(read, uses, arm):
+    """Whether an arm is read as delivering on demand on one task: it reads
+    fewer templates per trial than the arm that reads them all up front,
+    and is non-inferior to it on every measured axis."""
+    ours, theirs = templates_read(uses, arm), templates_read(uses, UP_FRONT)
+    if ours is None or theirs is None:
+        return False
+    return ours < theirs and read["non_inferior"]
+
+
+def registered_lines(tasks, seed, uses_by_task):
+    """Round C1's registered readings in its own words, one table each, per
+    task: the check loop and whether it is kept, the section files against
+    the same rules packaged otherwise, and each on-demand arm against the
+    templates read up front. `uses_by_task` holds each task's map use."""
+    present = {arm_of(name) for reading in tasks for name in reading[2]}
+    if not any(set(pair) <= present for pair in registered_pairs()):
+        return []
+    lines = ["## The registered readings", "",
+             "Each reading pairs two arms by block on each task. An axis "
+             "reads worse only where its whole interval lies past the "
+             "margin downward; with none flagged the reading is \"%s\". An "
+             "arm is non-inferior only where every measured axis's interval "
+             "has its lower bound above minus the margin; one crossing the "
+             "margin is inconclusive." % NO_DEGRADATION, ""]
+    reads = {(reading[0], pair): pair_reading(reading, seed, pair)
+             for reading in tasks for pair in registered_pairs()
+             if set(pair) <= present}
+    if set(CHECK_LOOP) <= present:
+        lines.extend([
+            "### Is the check loop kept? `%s` against `%s`" % CHECK_LOOP, "",
+            "| Task | Mean billed cost per trial drops by | 95 %% interval "
+            "| %d %% or more | Is an axis worse? | Non-inferior? |"
+            % round(100 * COST_DROP), "| --- | --- | --- | --- | --- | --- |"])
+        loop = {}
+        for task, label, _, _, _ in tasks:
+            read = reads[(task, CHECK_LOOP)]
+            loop[task] = read
+            drop, low, high = read["cost"]
+            lines.append("| %s | %s | %s to %s | %s | %s | %s |" % (
+                label, percent(drop), percent(low), percent(high),
+                "—" if drop is None else
+                ("yes" if drop >= COST_DROP else "no"),
+                worse_words(read), non_inferior_words(read)))
+        kept = check_loop_kept(loop)
+        lines.extend(["", "**%s.** %s Keeping the loop is no claim that "
+                      "nothing got worse: that is the non-inferiority "
+                      "column, read apart." % (
+                          {True: "Kept", False: "Not kept",
+                           None: "Not decided"}[kept],
+                          "The registered gate: the mean billed cost per "
+                          "trial drops by at least %d %% on each task, and "
+                          "no ISO axis reads worse on either; a negative "
+                          "drop is a rise." % round(100 * COST_DROP)), ""])
+    packaged = [pair for pair in PACKAGING if set(pair) <= present]
+    if packaged:
+        lines.extend([
+            "### The section files: the same rules, packaged otherwise", "",
+            "| Task | Against | Mean billed cost per trial drops by | "
+            "95 % interval | Is an axis worse? | Non-inferior? |",
+            "| --- | --- | --- | --- | --- | --- |"])
+        for task, label, _, _, _ in tasks:
+            for pair in packaged:
+                read = reads[(task, pair)]
+                drop, low, high = read["cost"]
+                lines.append("| %s | `%s` against `%s` | %s | %s to %s | %s "
+                             "| %s |" % (label, pair[0], pair[1],
+                                         percent(drop), percent(low),
+                                         percent(high), worse_words(read),
+                                         non_inferior_words(read)))
+        lines.append("")
+    lazy = [arm for arm in ON_DEMAND if {arm, UP_FRONT} <= present]
+    if lazy:
+        lines.extend([
+            "### On demand against up front", "",
+            "An arm delivers on demand only where it reads fewer templates "
+            "per trial than `%s`, which is handed them all, and is "
+            "non-inferior to it on every measured axis. Templates are "
+            "counted from each trial's transcripts: every template file or "
+            "skill it read or loaded, once." % UP_FRONT, "",
+            "| Task | Arm | Templates read per trial | `%s`'s | "
+            "Non-inferior? | Delivers on demand |" % UP_FRONT,
+            "| --- | --- | --- | --- | --- | --- |"])
+        for task, label, _, _, _ in tasks:
+            uses = uses_by_task.get(task) or {}
+            for arm in lazy:
+                read = reads[(task, (arm, UP_FRONT))]
+                ours, theirs = (templates_read(uses, arm),
+                                templates_read(uses, UP_FRONT))
+                lines.append("| %s | `%s` | %s | %s | %s | %s |" % (
+                    label, arm, NOT_MEASURED if ours is None
+                    else "%.1f" % ours, NOT_MEASURED if theirs is None
+                    else "%.1f" % theirs, non_inferior_words(read),
+                    "yes" if on_demand(read, uses, arm) else "not shown"))
+        lines.append("")
     return lines
 
 
@@ -9422,6 +9835,8 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in change_only_checks())
     checks.extend((label, ok, ok) for label, ok in change_reading_checks())
     checks.extend((label, ok, ok) for label, ok in task_radar_checks(seed))
+    checks.extend((label, ok, ok) for label, ok in registered_checks(seed))
+    checks.extend((label, ok, ok) for label, ok in task_use_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))

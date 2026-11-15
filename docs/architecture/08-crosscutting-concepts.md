@@ -690,6 +690,23 @@ each reads. Neither task's readings stand in for the other's, so a build
 that broke says nothing of the change it never started. A pilot round
 draws one radar over its trials as they are.
 
+**Round C1's registered readings** (FR-16-09, FR-16-10). Each pairs two
+arms by block on each task, on the ISO axes and on the mean billed cost per
+trial:
+
+| Question | Pair | Answer |
+| -------- | ---- | ------ |
+| Is the check loop kept? | `lazyref` against `lazyrefold` | Kept where the point estimate of the cost drops by 10 % or more on each task, its interval shown beside it, and no axis reads worse on either |
+| Is an axis worse? | Each pair | The whole interval past the margin downward; none flagged reads "no degradation detected under the registered rule" |
+| Non-inferior? | Each pair | Every measured axis's lower bound above minus its margin, on each task; an interval crossing the margin is inconclusive |
+| Do the section files hold? | `lazysections` against `lazyref` and `reference` | The worse and non-inferior readings, with the cost; no gate |
+| Does an arm deliver on demand? | `lazyref`, `lazyskills`, `lazysections` against `reference` | Fewer templates read per trial than `reference`'s and non-inferior on every measured axis; otherwise not shown |
+
+Keeping the check loop is reported apart from any non-inferiority claim:
+a gate passed says nothing got clearly worse, not that nothing got worse.
+Templates read are counted from each trial's transcripts, every template
+file, section file or skill read or loaded, once.
+
 **Each approach in plain words** (FR-12-07):
 
 - What it did better and worse than `none`, by radar axis.
