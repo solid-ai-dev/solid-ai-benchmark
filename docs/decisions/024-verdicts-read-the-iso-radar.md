@@ -63,7 +63,7 @@ draft that says it is post hoc.
 | Consequence | Effect |
 | ----------- | ------ |
 | ADR-023's rule 10 changes | The radar still carries no verdict word, but from round 6 the verdict in the text reads its markers |
-| Round 6's arms are chosen post hoc | Round 5e read by the ISO radar ranks `hybrid`, `inline`, `lazyref` and `hand` first, against `reference`, `skills`, `lazyskills` and `lazyref` by 13d.9. The axes were chosen after round 5e's results were seen, so the pick is a selection, not a finding: round 6 runs the four fresh and paired |
+| The post-hoc pick does not choose round 6's arms | Round 5e read by the ISO radar ranks `hybrid`, `inline`, `lazyref` and `hand` first, against `reference`, `skills`, `lazyskills` and `lazyref` by 13d.9. Round 6 runs only arms a script builds (#167): of round 5e's, `reference`, `skills`, `lazyref` and `lazyskills`, which pass either screen, so no rule chosen after the results picks them. `short` and `hand` are dropped, and `inline` and `hybrid` rebuilt by a script are new arms with no round-5e reading |
 | Round 5e's report stands | Its verdicts and its screen under 13d.9 are its registered reading; the post-hoc ISO page describes it and decides nothing |
 | Thin axes weigh as much as full ones | Performance and Flexibility rest on one or two targets each until the probes for them land (#119); a move on one counts as a move on Security |
 
@@ -74,3 +74,4 @@ Every change to this decision, oldest first. `#N` is in this repository.
 | Date | Change | Why | Issue |
 | ---- | ------ | --- | ----- |
 | 2026-11-14 | From round 6 verdicts and the screen read the ISO radar's axes | Round 5e read by the ISO radar showed the radar and the verdict disagreeing; the owner chose the axes | #165 |
+| 2026-11-15 | Round 6's arms are the scripted ones, whichever screen reads round 5e | A file a model writes changes on every generation; the owner kept only arms a script builds | #167 |
