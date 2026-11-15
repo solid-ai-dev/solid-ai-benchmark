@@ -1741,6 +1741,8 @@ def write_report(root, trials, table, results, seed, out_dir,
                  "fixed before any trial ran, in the "
                  "solid-ai-benchmark repository.")
     lines.append("")
+    if iso and is_round5(trials):
+        lines.extend([POSTHOC_ISO_NOTE, ""])
     if k < FEWEST_DECIDING:
         lines.append("**Every interval below is descriptive.** At K = %d no "
                      "arrangement of paired differences reaches conventional "
@@ -1834,7 +1836,7 @@ def write_report(root, trials, table, results, seed, out_dir,
         lines.append("")
     if is_round5e(trials):
         lines.extend(round5e_section(root, trials, table, results, seed,
-                                     margins_of(trials), uses))
+                                     margins_of(trials), uses, iso))
         lines.append("")
 
     lines.append("## Raw numbers, per trial")
@@ -2123,6 +2125,22 @@ PLAIN_VERDICT_RULE = (
     "and data protection. One of them clearly worse makes the verdict "
     "worse, whatever the rest gained.")
 
+# Said at the top of a pilot round read by the ISO radar, which only a
+# draft may do.
+POSTHOC_ISO_NOTE = (
+    "**A post-hoc reading.** This round registered other rules. This page "
+    "reads it by the ISO radar, chosen after its results were seen, so it "
+    "describes the round and decides nothing; the round's own report keeps "
+    "its verdicts.")
+
+# What the verdict looks at in a run read with the ISO radar, whose axes
+# decide.
+PLAIN_ISO_VERDICT_RULE = (
+    "Each verdict reads the radar's axes. One axis clearly worse than "
+    "no rules file makes the verdict worse, whatever the rest gained; one "
+    "clearly better, with none worse, makes it better. Cost is shown, not "
+    "counted.")
+
 # Round 5's questions, as a reader would ask them.
 PLAIN_QUESTIONS = {
     "skills-hybrid": "Does the skills approach do as well as the hybrid "
@@ -2177,15 +2195,41 @@ def iso_axis_moves(iso, name):
     return moves
 
 
+def iso_answer(iso, name):
+    """One word from the ISO radar's markers for one contrast: Worse where
+    an axis reads worse, Yes where one reads better and none worse, No
+    where every axis read stays within its margin, Not measured where no
+    axis could be read."""
+    moves = [value for _, value in iso_axis_moves(iso, name)
+             if value is not None]
+    if not moves:
+        return "Not measured"
+    if -1.0 in moves:
+        return "Worse"
+    if 1.0 in moves:
+        return "Yes"
+    return "No"
+
+
+def arm_answer(results, name, iso=None):
+    """An arm's verdict against the bare arm, as one word."""
+    # A run read with the ISO radar is judged by the axes the radar draws,
+    # so the chart and the verdict cannot say two things; a pilot run keeps
+    # the deciding rows it registered.
+    if iso:
+        return iso_answer(iso, name)
+    return answer([results[key][name]["verdict"] for key in ANSWERED])
+
+
 def plain_arm_lines(trials, table, results, arm, length, iso=None):
     """One approach against the bare arm, in plain words: what it did
     better, what it did worse with the numbers a reader would ask for, and
-    its verdict. With `iso`, the axes are the ISO radar's, as its markers
-    read them, and the cost gets a line of its own."""
+    its verdict. With `iso`, the axes and the verdict are the ISO radar's,
+    as its markers read them, and the cost gets a line of its own."""
     name = "%s-%s" % (arm, BARE)
     scores = (iso_axis_moves(iso, name) if iso
               else cluster_scores(results, name))
-    verdict = answer([results[key][name]["verdict"] for key in ANSWERED])
+    verdict = arm_answer(results, name, iso)
     better = [PLAIN_AXES.get(axis, axis.lower()) for axis, value in scores
               if value is not None and value > 0]
     # The runs that fell short are counted whatever the reliability axis
@@ -2248,8 +2292,31 @@ def plain_arm_lines(trials, table, results, arm, length, iso=None):
     if shortfall and not noted:
         lines.append("- Noted, though reliability was not clearly worse "
                      "overall: %s." % ", ".join(shortfall))
-    lines.extend(["", plain_verdict(results, name, verdict)])
+    lines.extend(["", iso_plain_verdict(iso, name, verdict) if iso
+                  else plain_verdict(results, name, verdict)])
     return lines
+
+
+def iso_plain_verdict(iso, name, verdict):
+    """A verdict read from the ISO radar in plain words, naming the axes
+    behind it."""
+    moves = iso_axis_moves(iso, name)
+
+    def moved(value):
+        return [PLAIN_AXES.get(axis, axis.lower()) for axis, move in moves
+                if move == value]
+    if verdict == "Worse":
+        return "**Verdict: worse**, on %s." % spoken(moved(-1.0))
+    if verdict == "Yes":
+        return ("**Verdict: better**, on %s, with no axis worse."
+                % spoken(moved(1.0)))
+    if verdict == "No":
+        return "**Verdict: no clear gain.** No axis moved clearly."
+    if any(iso[1].get("iso:" + axis, {}).get(name, {}).get("verdict")
+           == CROSSING_VERDICT for axis, _ in ISO_AXES):
+        return ("**Verdict: not given.** Its runs come from an earlier round, "
+                "and comparing them with this round's would mix two rounds.")
+    return "**Verdict: not measured.** Too few runs were scored to compare it."
 
 
 def plain_verdict(results, name, verdict):
@@ -2336,6 +2403,8 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
              "at all (`%s`). Each radar compares one approach with `%s`."
              % (times(runs, [arm for arm in runs if arm != BARE]),
                 times(runs, [BARE]), BARE, BARE), ""]
+    if iso and is_round5(trials):
+        lines.extend([POSTHOC_ISO_NOTE, ""])
     if radar:
         for theme, image in sorted(radar.items()):
             lines.append("![Radar per approach](%s#gh-%s-mode-only)"
@@ -2346,7 +2415,8 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
                   "the ring means the approach did better on that axis, "
                   "inside it means worse. Each axis groups several "
                   "measurements; the appendix lists them." % BARE, "",
-                  "## Each approach", "", PLAIN_VERDICT_RULE, ""])
+                  "## Each approach", "",
+                  PLAIN_ISO_VERDICT_RULE if iso else PLAIN_VERDICT_RULE, ""])
     for arm in arms:
         lines.extend(plain_arm_lines(trials, table, results, arm,
                                      context_lines(arm), iso))
@@ -3584,13 +3654,16 @@ SCREEN_KEEPS = 4
 SCREEN_ROWS = ROUND5D_ROWS + ("reliability",)
 
 
-def round6_screen(trials, table, results):
+def round6_screen(trials, table, results, iso=None):
     """Each candidate against the bare arm: out where a deciding row reads
     worse, the rest ranked by rows better and then by mean cost, the top
     four going on to round 6 once every candidate is read and the run is
     whole. A candidate the run holds no trial of is named as missing, and
     nothing goes on until it is read too, nor while the run is short of
-    its K: a short run decides nothing."""
+    its K: a short run decides nothing. With `iso`, the ISO radar's axes
+    stand in for the deciding rows."""
+    if iso:
+        return iso_screen(trials, table, iso)
     rows = []
     missing = []
 
@@ -3617,6 +3690,45 @@ def round6_screen(trials, table, results):
                                    if reading == "better"),
                      "cost": arm_mean(table, "cost_usd", arm),
                      "rank": None, "round6": False})
+    return screen_ranked(trials, rows, missing)
+
+
+def iso_screen(trials, table, iso):
+    """The screen on the ISO radar's axes: each candidate out where an
+    axis reads worse than the bare arm, the rest ranked by axes better and
+    then by mean cost, under the same holds as the deciding rows' screen."""
+    rows = []
+    missing = []
+    present = {arm_of(name) for name in trials}
+    for arm in SCREEN_CANDIDATES:
+        if arm not in present or BARE not in present:
+            missing.append(arm)
+            continue
+        moves = iso_axis_moves(iso, "%s-%s" % (arm, BARE))
+
+        # An axis with no reading is neither better nor worse. One that
+        # lists targets is waiting on its measurements, so it holds the
+        # screen; one with no target, which the instruments do not reach,
+        # would hold it for good, so it does not.
+        rows.append({"arm": arm,
+                     "unread": [axis for axis, move in moves
+                                if move is None and iso_targeted(axis)],
+                     "worse": [axis for axis, move in moves if move == -1.0],
+                     "better": sum(1 for _, move in moves if move == 1.0),
+                     "cost": arm_mean(table, "cost_usd", arm),
+                     "rank": None, "round6": False})
+    return screen_ranked(trials, rows, missing)
+
+
+def iso_targeted(axis):
+    """Whether any sub-characteristic of an ISO axis lists a target."""
+    return any(targets for _, targets in dict(ISO_AXES)[axis])
+
+
+def screen_ranked(trials, rows, missing):
+    """The screen's rows ranked: a candidate with nothing worse ranks by
+    how much reads better, then by mean cost, and the top four go on once
+    no candidate is missing, the run owes nothing and nothing is unread."""
     kept = [row for row in rows if not row["worse"]]
     kept.sort(key=lambda row: (-row["better"], row["cost"]
                                if row["cost"] is not None else float("inf")))
@@ -3659,17 +3771,28 @@ def screen_owed(trials):
     return owed
 
 
-def screen_lines(trials, table, results):
+def screen_lines(trials, table, results, iso=None):
     """The screen as a table, and the arms round 6 runs, or the candidates
-    still to be read before it names them."""
-    rows, missing = round6_screen(trials, table, results)
-    lines = ["### Round 6's arms, by the screen of 13d.9", "",
-             "Each candidate is read against `%s` by the rules of 13d.7. An "
-             "arm worse on a deciding row is out; the rest rank by how many "
-             "rows read better, then by mean cost. The screen decides which "
-             "arms run again, not which arm is better." % BARE, "",
-             "| Arm | Rows better | Rows worse | Mean cost | Screen |",
-             "| --- | --- | --- | --- | --- |"]
+    still to be read before it names them. With `iso`, it reads the ISO
+    radar's axes."""
+    rows, missing = round6_screen(trials, table, results, iso)
+    if iso:
+        lines = ["### Round 6's arms, by the ISO radar's axes", "",
+                 "Each candidate is read against `%s` on the radar's axes. "
+                 "An arm worse on an axis is out; the rest rank by how many "
+                 "axes read better, then by mean cost. The screen decides "
+                 "which arms run again, not which arm is better." % BARE, "",
+                 "| Arm | Axes better | Axes worse | Mean cost | Screen |",
+                 "| --- | --- | --- | --- | --- |"]
+    else:
+        lines = ["### Round 6's arms, by the screen of 13d.9", "",
+                 "Each candidate is read against `%s` by the rules of 13d.7. "
+                 "An arm worse on a deciding row is out; the rest rank by how "
+                 "many rows read better, then by mean cost. The screen "
+                 "decides which arms run again, not which arm is better."
+                 % BARE, "",
+                 "| Arm | Rows better | Rows worse | Mean cost | Screen |",
+                 "| --- | --- | --- | --- | --- |"]
     for row in rows:
         if row["worse"]:
             screen = "out: %s worse" % ", ".join(
@@ -3707,9 +3830,11 @@ def screen_lines(trials, table, results):
     return lines
 
 
-def round5e_section(root, trials, table, results, seed, margins, uses=None):
+def round5e_section(root, trials, table, results, seed, margins, uses=None,
+                    iso=None):
     """Round 5e's answer: round 5d's reading of H7 to H9, how each trial
-    used its map, and the screen for round 6."""
+    used its map, and the screen for round 6, on the ISO radar's axes
+    where `iso` is given."""
     lines = round5d_section(trials, table, results, seed, margins,
                             ROUND5E_HYPOTHESES,
                             "## Round 5e: the templates on demand")
@@ -3717,7 +3842,7 @@ def round5e_section(root, trials, table, results, seed, margins, uses=None):
     lines.extend(map_use_lines(
         trials, map_uses(root, trials) if uses is None else uses))
     lines.append("")
-    lines.extend(screen_lines(trials, table, results))
+    lines.extend(screen_lines(trials, table, results, iso))
     return lines
 
 
@@ -4370,6 +4495,127 @@ def round5e_checks():
                    and "out: %s worse" % SHORT["task_success"] in text,
                    text.splitlines()[-1]))
 
+    # The same run on the ISO radar's axes: hybrid better on two axes;
+    # skills, inline and lazyref on one each, by cost; reference out on one
+    # worse; Compatibility, which no target measures, read for no arm.
+    axes = {"iso:" + axis: {"%s-none" % arm: {"verdict": "held"}
+                            for arm in SCREEN_CANDIDATES}
+            for axis, _ in ISO_AXES}
+    for contrast in axes["iso:Compatibility"].values():
+        contrast["verdict"] = "not computed"
+    for axis, arm, verdict in (("Reliability", "hybrid", "better"),
+                               ("Security", "hybrid", "better"),
+                               ("Reliability", "inline", "better"),
+                               ("Security", "skills", "better"),
+                               ("Maintainability", "lazyref", "better"),
+                               ("Maintainability", "reference", "worse")):
+        axes["iso:" + axis]["%s-none" % arm]["verdict"] = verdict
+    iso = ({}, axes, ())
+    iso_rows, missing = round6_screen(held, table, results, iso)
+    iso_ranks = {row["arm"]: (row["rank"], row["round6"], row["worse"])
+                 for row in iso_rows}
+    checks.append(("the ISO screen drops an arm worse on an axis, ranks the "
+                   "rest by axes better and then by cost, and keeps four",
+                   not missing
+                   and iso_ranks == {"hybrid": (1, True, []),
+                                     "skills": (2, True, []),
+                                     "inline": (3, True, []),
+                                     "lazyref": (4, True, []),
+                                     "hand": (5, False, []),
+                                     "short": (6, False, []),
+                                     "lazyskills": (7, False, []),
+                                     "reference": (None, False,
+                                                   ["Maintainability"])},
+                   iso_ranks))
+    checks.append(("an axis no target measures neither holds nor moves the "
+                   "ISO screen",
+                   all(row["unread"] == [] for row in iso_rows)
+                   and any(row["round6"] for row in iso_rows),
+                   [(row["arm"], row["unread"]) for row in iso_rows]))
+    iso_text = "\n".join(screen_lines(held, table, results, iso))
+    checks.append(("the ISO screen names the arms round 6 runs and the axis "
+                   "that put one out",
+                   "by the ISO radar's axes" in iso_text
+                   and "Round 6 runs `none` and `hybrid`, `skills`, `inline` "
+                   "and `lazyref`." in iso_text
+                   and "out: Maintainability worse" in iso_text,
+                   iso_text.splitlines()[-1]))
+
+    # The security scores not in yet: Security lists targets, so the
+    # screen waits on it and names no arm, though every trial is in.
+    pending = {key: {label: dict(contrast) for label, contrast
+                     in by_label.items()} for key, by_label in axes.items()}
+    for contrast in pending["iso:Security"].values():
+        contrast["verdict"] = "not computed"
+    pending_iso = ({}, pending, ())
+    pending_rows, _ = round6_screen(held, table, results, pending_iso)
+    pending_text = "\n".join(screen_lines(held, table, results, pending_iso))
+    checks.append(("an axis that lists targets but has no reading yet holds "
+                   "the ISO screen",
+                   not any(row["round6"] for row in pending_rows)
+                   and "`hybrid`'s Security" in pending_text
+                   and "names no arms for round 6 yet" in pending_text
+                   and all(row["unread"] in ([], ["Security"])
+                           for row in pending_rows),
+                   pending_text.splitlines()[-1]))
+
+    # Skills holds every deciding row but is better on an ISO axis, so the
+    # two rules part on it; a contrast no axis reads is not measured.
+    axes["iso:Security"]["hand-none"]["verdict"] = "worse"
+    axes["iso:Reliability"]["hand-none"]["verdict"] = "better"
+    blank = ({}, {"iso:" + axis: {"short-none": {"verdict": "not computed"}}
+                  for axis, _ in ISO_AXES}, ())
+    rows = {key: {"skills-none": {"verdict": "held"}} for key in ANSWERED}
+    got = (arm_answer(rows, "skills-none"),
+           arm_answer(rows, "skills-none", iso),
+           iso_answer(iso, "hybrid-none"), iso_answer(iso, "hand-none"),
+           iso_answer(iso, "short-none"), iso_answer(blank, "short-none"))
+    checks.append(("an ISO-read arm's verdict is worse on an axis worse, "
+                   "better on one better with none worse, and no clear gain "
+                   "otherwise",
+                   got == ("No", "Yes", "Yes", "Worse", "No", "Not measured"),
+                   got))
+    got = (iso_plain_verdict(iso, "hybrid-none", "Yes"),
+           iso_plain_verdict(iso, "hand-none", "Worse"),
+           iso_plain_verdict(iso, "short-none", "No"))
+    checks.append(("the plain words name the axes behind an ISO-read verdict",
+                   got == ("**Verdict: better**, on reliability and security, "
+                           "with no axis worse.",
+                           "**Verdict: worse**, on security.",
+                           "**Verdict: no clear gain.** No axis moved "
+                           "clearly."), got))
+    shares = {"iso:" + axis: {"values": {"none": {1: 50.0},
+                                         "hybrid": {1: 80.0}}}
+              for axis, _ in ISO_AXES}
+    shares["iso:Compatibility"] = {"values": {}}
+    axes["iso:Reliability"]["hybrid-none"]["mean"] = 30.0
+    axes["iso:Security"]["hybrid-none"]["mean"] = 30.0
+    got = iso_radar_table((shares, axes, ()), ["hybrid"])
+    checks.append(("the summary's axis table of an ISO-read run is the ISO "
+                   "radar's, marked as the chart is",
+                   "| Reliability | 50 % | 80 % ▲ +30 |" in got
+                   and "| Usability | 50 % | 80 % ● |" in got
+                   and "| Compatibility | not measured | not measured |"
+                   in got and not any("Economy" in line for line in got),
+                   got))
+    audits = os.path.join(tempfile.gettempdir(), *AUDITS)
+    got = (posthoc_iso_problem(True, audits) is not None,
+           posthoc_iso_problem(True, os.path.join(audits, "iso-draft"))
+           is not None,
+           posthoc_iso_problem(True, tempfile.gettempdir()),
+           posthoc_iso_problem(False, audits),
+           aggregate_name(True), aggregate_name(False))
+    checks.append(("a pilot round read by the ISO radar is only a draft, "
+                   "never in or under docs/audits/, and keeps its aggregate "
+                   "beside the registered one",
+                   got == (True, True, None, None, "aggregate-iso.json",
+                           "aggregate.json"), got))
+    got = (iso_cross_problem(True, "C:/other-root") is not None,
+           iso_cross_problem(True, None), iso_cross_problem(False, "x"))
+    checks.append(("a run read by the ISO radar refuses a cross-check, whose "
+                   "withheld rows its markers would still count",
+                   got == (True, None, None), got))
+
     # The plain report answers the latest round's questions: with round
     # 5e's arms present, H7 to H9, and not round 5d's.
     design = {"none": 3, "reference": 3, "skills": 3, "hand": 3,
@@ -4399,6 +4645,13 @@ def round5e_checks():
                    and qualified.find("compares a map ignored")
                    > qualified.find(PLAIN_QUESTIONS["lazyref-reference"]),
                    qualified[qualified.find("## The questions"):][:500]))
+    posthoc = " ".join(rendered_plain(run, 20260912, iso=True).split())
+    checks.append(("a pilot round read by the ISO radar says it is post hoc "
+                   "and that its axes decide",
+                   " ".join(POSTHOC_ISO_NOTE.split()) in posthoc
+                   and " ".join(PLAIN_ISO_VERDICT_RULE.split()) in posthoc
+                   and " ".join(POSTHOC_ISO_NOTE.split()) not in plain,
+                   posthoc[:600]))
     return checks
 
 
@@ -5400,6 +5653,29 @@ def radar_table(results, arms):
     return lines
 
 
+def iso_radar_table(iso, arms):
+    """The ISO radar as a table, one row per axis and a column per arm,
+    each cell the axis's share with its marker as the chart labels it,
+    and the bare arm's share beside: the radar's text view."""
+    lines = ["| Axis | `%s` | %s |" % (BARE, " | ".join(
+                 "`%s`" % arm for arm in arms)),
+             "| --- | --- | %s |" % " | ".join("---" for _ in arms)]
+    for axis, _ in ISO_AXES:
+        key = "iso:" + axis
+        bare = arm_mean(iso[0], key, BARE)
+        cells = []
+        for arm in arms:
+            score = arm_mean(iso[0], key, arm)
+            contrast = iso[1].get(key, {}).get("%s-%s" % (arm, BARE), {})
+            marker = (iso_marker(contrast) if score is not None
+                      and bare is not None else None)
+            cells.append(axis_reading(score, marker, contrast.get("mean")))
+        lines.append("| %s | %s | %s |" % (
+            axis, NOT_MEASURED if bare is None else "%d %%" % round(bare),
+            " | ".join(cells)))
+    return lines
+
+
 def axis_score(value):
     """An axis score as the radar's table prints it: signed, two places,
     zero unsigned, a dash where the axis has no verdict."""
@@ -6105,7 +6381,7 @@ def executive_section(trials, table, results, withdrawn=None, lost=(),
                       else RADAR_READING, ""])
     else:
         lines.extend(["No radar was drawn for this run.", ""])
-    lines.extend(finding_lines(trials, table, results, active))
+    lines.extend(finding_lines(trials, table, results, active, iso))
     scored = between_files(results, active)
     if scored:
         lines.extend(["", scored])
@@ -6113,8 +6389,9 @@ def executive_section(trials, table, results, withdrawn=None, lost=(),
     return lines
 
 
-def finding_lines(trials, table, results, active):
-    """The finding table, its why-lines and its reading."""
+def finding_lines(trials, table, results, active, iso=None):
+    """The finding table, its why-lines and its reading. With `iso`, each
+    verdict reads the ISO radar's axes."""
     names = ["%s-%s" % (treatment, baseline)
              for treatment, baseline in active if baseline == BARE]
     if not names:
@@ -6123,15 +6400,15 @@ def finding_lines(trials, table, results, active):
                 "none in this run yet." % BARE]
     arms = [name.split("-")[0] for name in names]
     lengths = {arm: context_lines(arm) for arm in arms}
-    answers = {arm: answer([results[key][name]["verdict"]
-                            for key in ANSWERED])
+    answers = {arm: arm_answer(results, name, iso)
                for arm, name in zip(arms, names)}
 
     # One row per arm, the bare arm first as the line every other is read
     # against, then the files from the cheapest to the dearest.
     ranked = by_cost(table, arms)
     lines = ["## Arms against `%s`" % BARE, ""]
-    lines.extend(radar_table(results, ranked))
+    lines.extend(iso_radar_table(iso, ranked) if iso
+                 else radar_table(results, ranked))
     lines.extend(["",
                   "| Arm | File | Verdict vs `%s` | %s |"
                   % (BARE, " | ".join(heading
@@ -6451,6 +6728,10 @@ def parse_args(argv):
                         help="also write a post-hoc page reading the round "
                              "by round 5d's rules; its registered verdicts "
                              "stand")
+    parser.add_argument("--iso", action="store_true",
+                        help="read a pilot round by the ISO radar: its "
+                             "radar, verdicts and screen, as a draft only; "
+                             "its registered verdicts stand")
     parser.add_argument("--self-test", action="store_true",
                         help="check the verdict rule against worked cases; "
                              "read no run")
@@ -6884,8 +7165,9 @@ def rendered_appendix(trials, seed):
     return text
 
 
-def rendered_plain(trials, seed, uses=None):
-    """The plain report a planted run renders, as text."""
+def rendered_plain(trials, seed, uses=None, iso=False):
+    """The plain report a planted run renders, as text; with `iso`, read
+    by the ISO radar as `--iso` reads a pilot round."""
     table = collect(trials)
     results = round_contrasts(trials, table, seed)
     scratch = os.path.join(tempfile.gettempdir(),
@@ -6893,7 +7175,8 @@ def rendered_plain(trials, seed, uses=None):
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch)
     target = write_report(scratch, trials, table, results, seed,
-                          out_dir=scratch, uses=uses)
+                          out_dir=scratch, uses=uses,
+                          iso=iso_reading(trials, seed) if iso else None)
     with io.open(target, encoding="utf-8") as handle:
         text = handle.read()
     shutil.rmtree(scratch, ignore_errors=True)
@@ -8020,6 +8303,40 @@ def is_record(out_dir):
     return parts[-len(AUDITS):] == list(AUDITS)
 
 
+def posthoc_iso_problem(posthoc_iso, out_dir):
+    """Why a pilot round read by the ISO radar may not be written to
+    `out_dir`, or None where it may."""
+    # Its rules were chosen after its results were seen, so it may describe
+    # the round but never stand as the round's record, nor sit anywhere
+    # among the records where it could be read as one.
+    parts = os.path.normcase(os.path.abspath(out_dir)).split(os.sep)
+    among = any(parts[index:index + len(AUDITS)] == list(AUDITS)
+                for index in range(len(parts)))
+    if posthoc_iso and among:
+        return ("--iso reads a pilot round by rules it did not register, so "
+                "it writes only a draft; name --out-dir outside docs/audits/")
+    return None
+
+
+def iso_cross_problem(iso_read, cross):
+    """Why a run read by the ISO radar may not take a cross-check, or
+    None where it may."""
+    # The ISO radar's markers, which decide its verdicts, read the round's
+    # own judge alone; a second judge's disagreements would withhold rows
+    # the markers still count. Every round the ISO radar reads has one judge.
+    if iso_read and cross:
+        return ("the ISO radar's verdicts read the round's own judge alone, "
+                "so a run read by it takes no --cross-check")
+    return None
+
+
+def aggregate_name(posthoc_iso):
+    """The file in the scoring area that keeps the reading's aggregate."""
+    # The registered reading's aggregate is the one its record cites, so a
+    # post-hoc reading keeps its own beside it rather than over it.
+    return "aggregate-iso.json" if posthoc_iso else "aggregate.json"
+
+
 def main(argv):
     options = parse_args(argv)
     if options.templates:
@@ -8043,6 +8360,14 @@ def main(argv):
         except TrialError as error:
             print("refused: %s, or name --out-dir for a draft" % error)
             return 2
+
+    posthoc_iso = options.iso and not iso_rules(trials)
+    problem = (posthoc_iso_problem(posthoc_iso, out_dir)
+               or iso_cross_problem(iso_rules(trials) or posthoc_iso,
+                                    options.cross_check))
+    if problem:
+        print("refused: %s" % problem)
+        return 2
 
     # A report under docs/audits/ is the round's record, so it is written only
     # from a round archived as it stands; anywhere else it is a draft.
@@ -8128,13 +8453,14 @@ def main(argv):
             return 2
         check = cross_check(trials, other, options.seed)
         disagree(results, check)
-    iso = (iso_reading(trials, options.seed, withdrawn) if iso_rules(trials)
-           else None)
+    iso = (iso_reading(trials, options.seed, withdrawn)
+           if iso_rules(trials) or posthoc_iso else None)
     uses = map_uses(options.root, trials) if is_round5e(trials) else None
     target = write_report(options.root, trials, table, results, options.seed,
                           out_dir, withdrawn, check, iso, uses)
 
-    with io.open(os.path.join(scoring_area(options.root), "aggregate.json"),
+    with io.open(os.path.join(scoring_area(options.root),
+                              aggregate_name(posthoc_iso)),
                  "w", encoding="utf-8") as handle:
         json.dump(aggregate(options.seed, trials, table, results, withdrawn,
                             check, iso, uses), handle, indent=2,

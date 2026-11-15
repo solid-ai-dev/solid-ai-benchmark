@@ -88,3 +88,4 @@ split; `#N` is in this repository; a dash means none.
 | Date | Change | Why | Issue |
 | ---- | ------ | --- | ----- |
 | 2026-11-04 | From round 6 the radar reads ISO/IEC 25010:2023: eight axes, the share of targets met, markers past a margin, cost above | The pilot's radars read the benchmark's rows, not the software's qualities; the spike in #118 settled the chart | #121 |
+| 2026-11-14 | Rule 10 and alternative E: from round 6 the verdict in the text reads the radar's markers, as ADR-024 decides | Round 5e read by the radar showed the verdict and the chart disagreeing | #165 |
