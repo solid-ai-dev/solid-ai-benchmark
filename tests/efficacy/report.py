@@ -592,11 +592,13 @@ def non_inferior(key, interval, direction, baseline_mean=None, margins=None):
     return {"margin": label, "within": degradation <= margin}
 
 
-def load(root):
+def load(root, named=None):
     """Every scored trial, with its judging attached where one exists.
 
     Keyed by canonical name, so a trial's score, judging and reading meet
-    however each spelled it.
+    however each spelled it. For a round `named` by its run records, a change
+    task whose build trial has no score stands as a trial of its own, its
+    build readings empty and marked `change_only`.
     """
     area = scoring_area(root)
     trials = {}
@@ -624,8 +626,9 @@ def load(root):
         elif trials[name]["judge"] is None:
             trials[name]["judge"] = judging
 
-    # A change task sits beside its own build trial, so one whose build trial
-    # was never scored has nothing to pair with and is left out.
+    # A pilot round's change task ran on its own build trial, so one whose
+    # build trial was never scored has nothing to pair with and is left out.
+    # A named round's starts from a fixture, so it stands without its build.
     for file in sorted(glob.glob(os.path.join(area, "scores-change",
                                               "*.json"))):
         with io.open(file, encoding="utf-8") as handle:
@@ -633,15 +636,25 @@ def load(root):
         name = canonical(change.get("name") or "")
         if name in trials:
             trials[name]["change"] = change
+        elif named is not None:
+            trials[name] = change_only({"change": change})
 
     for file in sorted(glob.glob(os.path.join(area, "security-scores",
                                               "*.json"))):
         with io.open(file, encoding="utf-8") as handle:
             security = json.load(handle)
         name = canonical(security.get("name") or "")
-        if name in trials:
+        if name in trials and not trials[name].get("change_only"):
             trials[name]["security"] = security
     return trials
+
+
+def change_only(trial):
+    """A trial, in place, as its change task alone: its build readings
+    emptied, so every build row reads it as not measured."""
+    trial.update({"scores": {}, "judge": None, "judgings": [],
+                  "security": None, "change_only": True})
+    return trial
 
 
 def arm_of(name):
@@ -724,6 +737,7 @@ def owed_blocks(trials):
     k = max(task["k"] for task in tasks.values())
     return [block for block in range(1, k + 1)
             if any(trial_name(arm, block) not in trials
+                   or trials[trial_name(arm, block)].get("change_only")
                    or ("change" in tasks
                        and not trials[trial_name(arm, block)].get("change"))
                    for arm in run)]
@@ -1499,7 +1513,8 @@ def python_problem(trials):
     for name, trial in trials.items():
         for part in ("scores", "change"):
             scores = trial.get(part)
-            if scores is None:
+            if scores is None or (part == "scores"
+                                  and trial.get("change_only")):
                 continue
             version = scores.get("python")
             minor = ".".join(version.split(".")[:2]) if version else "unrecorded"
@@ -1592,12 +1607,14 @@ def reaches(root):
     return scans
 
 
-def exclude_reached(trials, scans):
+def exclude_reached(trials, scans, per_task=False):
     """Leave out of `trials` every trial whose scan finds a reach, in place;
     return the names left out.
 
-    A reached build trial goes whole. A reached change task takes only its
-    change reading with it, because its build trial was measured clean.
+    A reached build trial goes whole, or `per_task`, for a round whose change
+    task starts from a fixture, only its build readings. A reached change
+    task takes only its change reading with it, because its build trial was
+    measured clean.
     """
     left_out = []
     for scan in scans:
@@ -1607,8 +1624,13 @@ def exclude_reached(trials, scans):
         build = name.replace(CHANGE_TASK, "")
         if build not in trials:
             continue
-        if name == build:
+        if name == build and per_task and trials[name]["change"] is not None:
+            change_only(trials[name])
+        elif name == build:
             del trials[name]
+        elif trials[build]["change"] is not None and per_task \
+                and trials[build].get("change_only"):
+            del trials[build]
         elif trials[build]["change"] is not None:
             trials[build]["change"] = None
         else:
@@ -5339,6 +5361,99 @@ def round_identity_checks():
     return checks
 
 
+def change_only_checks():
+    """A named round's change task is read whether or not its build trial
+    was scored or reached, on rows of its own; a pilot round's keeps
+    needing its build."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-change-only-")
+    root = os.path.join(scratch, "run")
+    area = scoring_area(root)
+    for part in ("scores-change", "security-scores"):
+        os.makedirs(os.path.join(area, part))
+    os.makedirs(root)
+    records = []
+    for arm in ("none", "inline"):
+        for block in (1, 2):
+            name = trial_name(arm, block)
+            with io.open(os.path.join(area, "scores-change", name + ".json"),
+                         "w", encoding="utf-8") as handle:
+                json.dump({"name": name, "task": "change",
+                           "change_suite": {"value": 0.5 + block / 10.0,
+                                            "missing": None}}, handle)
+            records.append({"round": "C1", "task": "change", "arm": arm,
+                            "block": block, "trial": block,
+                            "outcome": "completed"})
+    with io.open(os.path.join(area, "security-scores", "none-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"name": "none-1"}, handle)
+    with io.open(os.path.join(root, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"round": "C1", "task": "change", "trials": records,
+                   "registration": registration_digest(REGISTRATIONS["C1"])},
+                  handle)
+    saved, sys.stdout = sys.stdout, io.StringIO()
+    try:
+        code = main(["--root", root, "--out-dir",
+                     os.path.join(scratch, "out")])
+        printed = sys.stdout.getvalue()
+    finally:
+        sys.stdout = saved
+    alone = load(root, "C1")
+    for trial in alone.values():
+        trial["round"] = "C1"
+    table = collect(alone)
+    checks = [
+        ("a named round's change task with no build score is read on its own",
+         code == 0 and "no scores" not in printed and load(root) == {}
+         and sorted(alone) == ["inline-1", "inline-2", "none-1", "none-2"]
+         and all(trial.get("change_only") and trial["security"] is None
+                 for trial in alone.values())
+         and table["change_success"]["values"]["none"][2] == 0.7
+         and table["task_success"]["values"]["none"][2] is None),
+    ]
+
+    # Every arm's change task in, and no build: the round still owes every
+    # block, its build observations missing.
+    changes = {trial_name(arm, block): change_only(
+        {"round": "C1", "change": {"name": trial_name(arm, block)}})
+        for arm in REGISTRATIONS["C1"]["arms"] for block in range(1, 16)}
+    checks.append(("a C1 block whose builds stand only as change tasks is "
+                   "still owed", owed_blocks(changes) == list(range(1, 16))))
+    shutil.rmtree(scratch, ignore_errors=True)
+
+    def both(name, python="3.12.1"):
+        return {"scores": {"name": name, "python": python}, "judge": None,
+                "judgings": [], "security": {"name": name},
+                "change": {"name": name, "python": python,
+                           "change_suite": {"value": 1.0, "missing": None}}}
+    reach_build = [{"name": "none-1", "hits": [{"term": "x"}]}]
+    reach_change = [{"name": "none-1" + CHANGE_TASK, "hits": [{"term": "x"}]}]
+    named = {"none-1": both("none-1"), "none-2": both("none-2")}
+    legacy = {"none-1": both("none-1"), "none-2": both("none-2")}
+    left = exclude_reached(named, reach_build, per_task=True)
+    kept = dict(named.get("none-1") or {})
+    exclude_reached(legacy, reach_build)
+    exclude_reached(named, reach_change, per_task=True)
+    checks.append(("a reached build of a named round keeps its change "
+                   "reading, and a reached change task goes alone",
+                   left == ["none-1"] and kept.get("change_only")
+                   and kept["change"] is not None
+                   and kept["scores"] == {} and kept["security"] is None
+                   and "none-1" not in legacy and "none-1" not in named
+                   and named["none-2"]["change"] is not None))
+    standing = change_only(both("none-3"))
+    checks.append(("a change task standing alone counts on its ISO axes, not "
+                   "as a broken build",
+                   iso_trial_scores(standing)["Maintainability"]
+                   ["Modifiability"] == 1.0
+                   and iso_trial_scores(dict(both("none-4"), scores={}))
+                   ["Maintainability"]["Modifiability"] is None))
+    checks.append(("a change task standing alone reads no build Python",
+                   python_problem({"none-1": both("none-1"),
+                                   "none-3": standing}) is None))
+    return checks
+
+
 def context_lines(arm):
     """The line count of the context file an arm's trials received, None
     where the arm receives none."""
@@ -6069,7 +6184,9 @@ def iso_trial_scores(trial, withdrawn=()):
     where the install target fails, and reads None on every other axis. A
     target reading a metric in `withdrawn` is not measured.
     """
-    broken = works(trial) != 1.0
+    # A change task standing alone had no build measured, which is not a
+    # broken one, so its change targets still count on their axes.
+    broken = works(trial) != 1.0 and not trial.get("change_only")
     scores = {}
     for axis, subs in ISO_AXES:
         per_sub = {}
@@ -8392,6 +8509,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in prompt_checks())
     checks.extend((label, ok, ok) for label, ok in python_checks())
     checks.extend((label, ok, ok) for label, ok in round_identity_checks())
+    checks.extend((label, ok, ok) for label, ok in change_only_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -8457,18 +8575,17 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    trials = load(options.root)
-    if not trials:
-        print("no scores under %s; score.py writes them"
-              % scoring_area(options.root))
-        return 2
-
     # A round its run records name is read as that round, never under the
     # pilot's rules its arms' names would suggest, and records missing its
     # identity are refused rather than read as the pilot's.
     named, problem = recorded_round(options.root)
     if problem:
         print("refused: %s" % problem)
+        return 2
+    trials = load(options.root, named)
+    if not trials:
+        print("no scores under %s; score.py writes them"
+              % scoring_area(options.root))
         return 2
     if named is not None:
         for trial in trials.values():
@@ -8531,7 +8648,8 @@ def main(argv):
     # A trial that read past its workspace measures what it read, not its
     # arm; the harness voids one its own scan catches, and this re-scan, under
     # the current rule, leaves out any it missed.
-    for name in exclude_reached(trials, reaches(options.root)):
+    for name in exclude_reached(trials, reaches(options.root),
+                                per_task=named is not None):
         print("left out, having reached past its workspace: %s" % name)
     if not trials:
         print("no trial is left to report once the reached ones are out")

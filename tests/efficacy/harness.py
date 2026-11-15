@@ -1699,6 +1699,10 @@ def run_files(root):
 # own, copied or reused, still says which round, task, arm and block it was.
 IDENTITY = ("round", "task", "arm", "block")
 
+# What a named round's run record says of the round as a whole, which any
+# rewrite of the record keeps.
+RUN_IDENTITY = ("round", "registration", "fixtures")
+
 
 def identity_problem(root, round_name=None, digest=None):
     """Why the run records in `root` do not fit a run of `round_name` under
@@ -1846,6 +1850,32 @@ def run_fixtures(options):
                       "distinct": len(set(blocks.values())),
                       "blocks": {str(block): trial
                                  for block, trial in blocks.items()}}
+
+
+def fixtures_problem(root, summary):
+    """Why a named round's change run, taking its fixtures as `summary`
+    says, may not join the change runs already in `root`, or None."""
+
+    # The registration names the manifest only by its file, so a manifest
+    # edited between two runs of one round would start a block's arms from
+    # different builds; its content and each block's build must hold.
+    for file in run_files(root):
+        with io.open(file, encoding="utf-8") as handle:
+            run = json.load(handle)
+        if run.get("task") != "change":
+            continue
+        earlier, base = run.get("fixtures") or {}, os.path.basename(file)
+        if earlier.get("manifest_sha256") != summary["manifest_sha256"]:
+            return ("%s took its fixtures from a manifest at sha256 %s, and "
+                    "the manifest now reads %s"
+                    % (base, earlier.get("manifest_sha256"),
+                       summary["manifest_sha256"]))
+        for block, trial in sorted(summary["blocks"].items()):
+            started = (earlier.get("blocks") or {}).get(block, trial)
+            if started != trial:
+                return ("%s started block %s from %s, and this run would "
+                        "start it from %s" % (base, block, started, trial))
+    return None
 
 
 def round_records(root):
@@ -2502,10 +2532,11 @@ def recover(root, home, table=None):
             records[index] = dict(record, **ending)
             changed = True
         if changed:
+            identity = {key: run[key] for key in RUN_IDENTITY if key in run}
             write_run(run_file, datetime.datetime.fromisoformat(
                 run["started_at"]), records, run.get("task", "build"),
                 run.get("prompt", PROMPT), run.get("arms") or (),
-                run.get("k"))
+                run.get("k"), identity or None)
     return voided
 
 
@@ -4230,6 +4261,25 @@ def registration_checks():
                    and identity_problem(os.path.dirname(written), "C1",
                                         digest) is None))
 
+    # A harness that died mid-trial leaves its run record for the next run
+    # to rewrite, which keeps the round it names.
+    recovered = os.path.join(scratch, "recovered")
+    os.makedirs(recovered)
+    summary = {"manifest_sha256": "1" * 64, "blocks": {"1": "none-2"}}
+    write_run(os.path.join(recovered, "run-1.json"), stamp,
+              [dict(in_flight("none", 1), harness_pid=4242)], "change",
+              change, ["none"], 1,
+              {"round": "C1", "registration": digest, "fixtures": summary})
+    recover(recovered, os.path.join(scratch, "home"), [])
+    with io.open(os.path.join(recovered, "run-1.json"),
+                 encoding="utf-8") as handle:
+        run = json.load(handle)
+    checks.append(("recovery keeps a named round's identity in its run "
+                   "record",
+                   run["trials"][0]["outcome"] == "interrupted"
+                   and run.get("fixtures") == summary
+                   and identity_problem(recovered, "C1", digest) is None))
+
     # A round of two tasks, two arms and two blocks: the change tasks come
     # after the builds, and one build lost leaves its change task counted.
     small = {"arms": ["none", "inline"],
@@ -4439,6 +4489,24 @@ def fixture_run_checks(scratch, tarballs):
                 run = json.load(handle)
         trials = run.get("trials", [])
         prepared = os.path.isdir(os.path.join(dry, "change-inline-1"))
+
+        # The same round's earlier change run, planted beside this one with
+        # its manifest edited, and with its block 1 started from another
+        # build: each refuses the run.
+        drifted = []
+        for name, change in (
+                ("manifest", {"manifest_sha256": "0" * 64}),
+                ("block", {"blocks": {"1": "none-7"}})):
+            earlier = os.path.join(scratch, "drift-" + name)
+            os.makedirs(earlier)
+            with io.open(os.path.join(earlier, "run-1.json"), "w",
+                         encoding="utf-8") as handle:
+                json.dump(dict(run, fixtures=dict(run.get("fixtures") or {},
+                                                  **change)), handle)
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                drifted.append((main(["--root", earlier] + argv[2:]),
+                                printed.getvalue()))
         os.makedirs(root, exist_ok=True)
         planted = os.path.join(root, "run-planted.json")
         write_run(planted, datetime.datetime.now().astimezone(), [])
@@ -4466,6 +4534,14 @@ def fixture_run_checks(scratch, tarballs):
                  and trial.get("block") == 1 for trial in trials)),
         ("a named round's run refuses a root whose records name none",
          mixed == 2 and "names no round" in printed.getvalue()),
+        ("a change run whose manifest or block mapping differs from the "
+         "root's earlier change runs is refused",
+         [code for code, _ in drifted] == [2, 2]
+         and "the manifest now reads" in drifted[0][1]
+         and "started block 1 from none-7" in drifted[1][1]
+         and fixtures_problem(dry, dict(run.get("fixtures") or {},
+                                        blocks={"1": "none-2",
+                                                "2": "none-7"})) is None),
     ]
 
 
@@ -4646,6 +4722,9 @@ def main(argv):
                 builds = scorable_trials(options.root, task="build")
             else:
                 fixtures, identity["fixtures"] = run_fixtures(options)
+                problem = fixtures_problem(options.root, identity["fixtures"])
+                if problem:
+                    raise TrialError(problem)
         except TrialError as error:
             print("refused: %s" % error)
             return 2
