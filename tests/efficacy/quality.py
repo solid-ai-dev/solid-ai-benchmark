@@ -4,7 +4,9 @@ Seven probes, each read on the application the trial's factory returns:
 fault tolerance under malformed requests, concurrent writes, latency, an
 invoice of 500 lines, SQL statements per invoice line, two instances side by
 side, and the same build on another Python. Each passes or fails, except the
-latency, which is recorded as two repeats of its 95th percentile.
+latency, which is recorded as two repeats of its 95th percentile. A change
+task's tree is read on the same probes and on one more, the data upgrade: a
+database its fixture seeded, opened by the changed tree with nothing lost.
 
 Each trial is installed into a fresh environment of its own, on the spec's
 Python, and read there in one in-process run through the test client. A probe
@@ -15,11 +17,13 @@ is lost, and reads failed.
 
 import argparse
 import datetime
+import hashlib
 import io
 import json
 import os
 import shutil
 import sys
+import tarfile
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lib  # noqa: E402
 from harness import (LiveRunError, canonical, claim_area,  # noqa: E402
                      claim_refusal_check, release_area, remove_tree,
-                     scoring_area)
+                     scoring_area, task_folder)
 from score import (create_venv, pip, python_in, run,  # noqa: E402
                    venv_version)
 
@@ -39,6 +43,10 @@ PROBES = ("fuzz_robustness", "concurrent_writes", "latency_p95_ms",
           "capacity_500_lines", "n_plus_one", "coexistence",
           "python_portability")
 MEASURED = ("latency_p95_ms",)
+
+# The probe a change task's tree is read on besides: the database the
+# fixture saved, opened by the changed tree with nothing lost.
+CHANGE_PROBES = ("data_upgrade",)
 
 # The probes the one in-process run reads; portability needs an interpreter
 # of its own.
@@ -71,7 +79,7 @@ PROBE_TIMEOUT = 900
 # behind that sign-in; a request it turns away, with its redirect, a 401 or
 # a 403, is never measured, and the probe is lost.
 QUALITY_SCRIPT = r'''
-import builtins, html, io, json, logging, math, os, platform, re, sqlite3
+import builtins, csv, html, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -213,10 +221,14 @@ def folder():
     return tempfile.mkdtemp(prefix="quality-probe-", dir=DATABASES)
 
 
+# The data upgrade names the database the application opens: the one the
+# fixture seeds, and then a copy of it for the changed tree. Every other mode
+# starts on an empty one of its own.
 try:
     import importlib
     package = importlib.import_module(PACKAGE)
-    app = package.create_app(os.path.join(folder(), "quality-probe.sqlite"))
+    app = package.create_app(os.environ.get("QUALITY_DATABASE")
+                             or os.path.join(folder(), "quality-probe.sqlite"))
     client = app.test_client()
 except Exception as error:
     report["error"] = repr(error)[:300]
@@ -872,12 +884,292 @@ def fuzz_robustness():
     return passed(not failed, requests=len(answers), failed=failed)
 
 
+# What the data upgrade seeds through the fixture's own application: a
+# product of each rated category, a customer, a rule of three kinds over the
+# new products, a jurisdiction of its own, and invoices that read all of
+# them, one billed to the customer and one on the seed's own data.
+UPGRADE_PRODUCTS = (
+    {"sku": "UPG-1", "name": "Upgrade lamp", "unit_price": "7.50",
+     "tax_category": "standard"},
+    {"sku": "UPG-2", "name": "Upgrade manual", "unit_price": "15.00",
+     "tax_category": "reduced"})
+UPGRADE_CUSTOMER = {"name": "Ada Upgrade", "email": "ada.upgrade@example.test",
+                    "address": "1 Upgrade Street\n10115 Berlin"}
+UPGRADE_RULES = (
+    {"rule_id": "u-pct-lamp", "kind": "percentage", "sku": "UPG-1",
+     "percent": "12"},
+    {"rule_id": "u-bulk-manual", "kind": "bulk", "sku": "UPG-2", "buy": "3",
+     "pay": "2"},
+    {"rule_id": "u-coupon", "kind": "coupon", "sku": "", "code": "UPGRADE",
+     "amount": "5.00"})
+UPGRADE_JURISDICTION = {"code": "UP", "name": "Upgradia",
+                        "default_rate": "0.2",
+                        "rates": "standard=0.2,reduced=0.05"}
+CUSTOMER_LINK = re.compile(r"/customers/(\d+)(?![\d/])")
+
+
+def upgrade_body(jurisdiction, customer, lines, coupons):
+    return {"jurisdiction": jurisdiction, "currency": "EUR",
+            "customer": customer, "coupon_codes": coupons,
+            "sku": [sku for sku, _ in lines],
+            "quantity": [str(quantity) for _, quantity in lines]}
+
+
+def text_of(answer):
+    return html.unescape(answer.get_data(as_text=True))
+
+
+def created(path, body):
+    """Post one record through its form; Gated where it is turned away."""
+    answer = held(form_post(client, path, path, body), "the post to " + path)
+    return answer.status_code
+
+
+def customer_id(email):
+    """The id the customer list links to for `email`, read from each linked
+    customer's export."""
+    for found in sorted(set(CUSTOMER_LINK.findall(
+            text_of(page(client, "/customers")))), key=int):
+        try:
+            export = json.loads(page(client, "/customers/%s/export.json"
+                                     % found).get_data(as_text=True))
+        except ValueError:
+            continue
+        if isinstance(export, dict) and export.get("email") == email:
+            return found
+    return None
+
+
+def listed_on():
+    """What each list page must show of the records seeded."""
+    return {
+        "/products": [value for item in UPGRADE_PRODUCTS
+                      for value in (item["sku"], item["name"])],
+        "/customers": [UPGRADE_CUSTOMER["name"], UPGRADE_CUSTOMER["email"]],
+        "/rules": [item["rule_id"] for item in UPGRADE_RULES],
+        "/jurisdictions": [UPGRADE_JURISDICTION["code"],
+                           UPGRADE_JURISDICTION["name"]]}
+
+
+def invoice_reading(path):
+    """A saved invoice as other software reads it: its page's status, its
+    JSON export parsed, and its CSV export's text."""
+    shown = page(client, path)
+    export = page(client, path + "/export.json")
+    csv_text = page(client, path + "/export.csv")
+    try:
+        parsed = json.loads(export.get_data(as_text=True))
+    except ValueError:
+        parsed = None
+    return {"status": shown.status_code, "export_status": export.status_code,
+            "export": parsed, "csv_status": csv_text.status_code,
+            "csv": csv_text.get_data(as_text=True)}
+
+
+def seed_upgrade():
+    """Seed the records through the fixture's forms and read each back as
+    the fixture shows it; the readings, or why the fixture could not."""
+    for item in UPGRADE_PRODUCTS:
+        created("/products", item)
+    created("/customers", UPGRADE_CUSTOMER)
+    for item in UPGRADE_RULES:
+        created("/rules", item)
+    created("/jurisdictions", UPGRADE_JURISDICTION)
+    customer = customer_id(UPGRADE_CUSTOMER["email"])
+    if customer is None:
+        return None, "the seeded customer is not listed with its export"
+    bodies = (upgrade_body("UP", customer, (("UPG-1", 3), ("UPG-2", 4)),
+                           "UPGRADE"),
+              upgrade_body("DE", "", WORKED, "WELCOME"))
+    invoices = []
+    for body in bodies:
+        answer = held(form_post(client, "/invoices/new", "/invoices", body),
+                      "the save")
+        path = saved_page(answer)
+        if path is None:
+            return None, "an invoice was not saved: it answered %d" % (
+                answer.status_code)
+        reading = invoice_reading(path)
+        if not (200 <= reading["status"] < 300
+                and isinstance(reading["export"], dict)
+                and 200 <= reading["csv_status"] < 300):
+            return None, "the fixture does not show the invoice it saved"
+        preview = held(form_post(client, "/invoices/new",
+                                 "/invoices/preview", body,
+                                 headers={"HX-Request": "true"}),
+                       "the preview")
+        try:
+            total = Decimal(str(reading["export"].get("total")))
+        except InvalidOperation:
+            total = None
+
+        # A preview is read against the old total only where the fixture's
+        # own preview shows it.
+        reading.update(body=body, path=path,
+                       total=None if total is None else str(total),
+                       previewed=bool(total is not None and ok(preview)
+                                      and shows_total(preview, total)))
+        invoices.append(reading)
+    pages = listed_on()
+    for path, values in pages.items():
+        shown = text_of(page(client, path))
+        missing = [value for value in values if value not in shown]
+        if missing:
+            return None, "%s does not list %s" % (path, missing[0])
+    export = page(client, "/customers/%s/export.json" % customer)
+    try:
+        customer_export = json.loads(export.get_data(as_text=True))
+    except ValueError:
+        return None, "the seeded customer's export is not JSON"
+    return {"invoices": invoices, "pages": pages,
+            "customer": {"id": customer, "export": customer_export}}, None
+
+
+def unkept(old, new, where="$"):
+    """The first place `new` no longer holds what `old` did, or None: every
+    key `old` had with the same value, a list as long, item by item. A key
+    only `new` has is the change's own, and is no loss."""
+    if isinstance(old, dict):
+        if not isinstance(new, dict):
+            return where
+        for key, value in old.items():
+            if key not in new:
+                return "%s.%s" % (where, key)
+            found = unkept(value, new[key], "%s.%s" % (where, key))
+            if found:
+                return found
+        return None
+    if isinstance(old, list):
+        if not isinstance(new, list) or len(new) != len(old):
+            return where
+        for index, (before, after) in enumerate(zip(old, new)):
+            found = unkept(before, after, "%s[%d]" % (where, index))
+            if found:
+                return found
+        return None
+    return None if old == new else where
+
+
+def csv_unkept(old, new):
+    """Where a CSV export no longer holds an old column's values, or None.
+    A column only the new export has is the change's own."""
+    before = list(csv.DictReader(io.StringIO(old)))
+    after = list(csv.DictReader(io.StringIO(new)))
+    if len(before) != len(after):
+        return "it holds %d rows, not %d" % (len(after), len(before))
+    for index, (row, now) in enumerate(zip(before, after)):
+        for column, value in row.items():
+            if now.get(column) != value:
+                return "row %d's %s reads %r, not %r" % (
+                    index + 1, column, now.get(column), value)
+    return None
+
+
+def data_upgrade(seeded):
+    """The changed tree on a copy of the fixture's database: every record
+    seeded is still there and reads the same, every old invoice opens and
+    prices as it did, and the upgraded database takes new records."""
+    failures = []
+    for path, values in seeded["pages"].items():
+        answer = page(client, path)
+        shown = text_of(answer)
+        if not ok(answer):
+            failures.append("%s answered %d" % (path, answer.status_code))
+            continue
+        failures += ["%s no longer lists %s" % (path, value)
+                     for value in values if value not in shown]
+    for old in seeded["invoices"]:
+        now = invoice_reading(old["path"])
+        if not 200 <= now["status"] < 300:
+            failures.append("%s answered %d" % (old["path"], now["status"]))
+            continue
+        place = unkept(old["export"], now["export"])
+        if place:
+            failures.append("%s/export.json no longer reads the same at %s"
+                            % (old["path"], place))
+        if now["csv_status"] != old["csv_status"]:
+            failures.append("%s/export.csv answered %d" % (
+                old["path"], now["csv_status"]))
+        else:
+            place = csv_unkept(old["csv"], now["csv"])
+            if place:
+                failures.append("%s/export.csv: %s" % (old["path"], place))
+        if old["previewed"]:
+            preview = held(form_post(client, "/invoices/new",
+                                     "/invoices/preview", old["body"],
+                                     headers={"HX-Request": "true"}),
+                           "the preview")
+            if not (ok(preview) and shows_total(preview,
+                                                Decimal(old["total"]))):
+                failures.append("the old invoice %s no longer prices at %s"
+                                % (old["path"], old["total"]))
+    customer = seeded["customer"]
+    answer = page(client, "/customers/%s/export.json" % customer["id"])
+    try:
+        export = json.loads(answer.get_data(as_text=True))
+    except ValueError:
+        export = None
+    place = unkept(customer["export"], export)
+    if place:
+        failures.append("the customer's export no longer reads the same at %s"
+                        % place)
+
+    # The new schema has to take new rows on the old file too, not only read
+    # the old ones: a column added for new tables alone fails here.
+    written = {"/jurisdictions": {"code": "U2", "name": "Upgradia Nova",
+                                  "default_rate": "0.1",
+                                  "rates": "standard=0.1"},
+               "/rules": {"rule_id": "u-pct-after", "kind": "percentage",
+                          "sku": "UPG-2", "percent": "3"}}
+    for path, body in written.items():
+        created(path, body)
+        if body["code" if path == "/jurisdictions" else "rule_id"] \
+                not in text_of(page(client, path)):
+            failures.append("a record posted to %s after the upgrade is not "
+                            "listed" % path)
+    saved = saved_page(held(form_post(client, "/invoices/new", "/invoices",
+                                      seeded["invoices"][0]["body"]),
+                            "the save"))
+    if saved is None:
+        failures.append("an invoice saved after the upgrade has no page")
+    else:
+        again = invoice_reading(saved)
+        total = (again["export"] or {}).get("total") if isinstance(
+            again["export"], dict) else None
+        if str(total) != str(seeded["invoices"][0]["export"].get("total")):
+            failures.append("the first invoice saved again totals %r, not %r"
+                            % (total, seeded["invoices"][0]["export"].get(
+                                "total")))
+    return passed(not failures, failures=failures[:20])
+
+
 report["signed_in"] = sign_in(client)
 if not report["signed_in"] or MODE == "portability":
     try:
         report["index_status"] = ask(client, "GET", "/").status_code
     except Raised as error:
         report["index_error"] = str(error)
+    finish()
+
+# The data upgrade's two halves each run alone: the fixture seeds and reads
+# back, and the changed tree reads the copy of what it seeded.
+if MODE in ("seed", "upgrade"):
+    report["running"] = MODE
+    save()
+    try:
+        if MODE == "seed":
+            report["seeded"], report["seed_error"] = seed_upgrade()
+        else:
+            with real_open(os.environ["QUALITY_SEEDED"],
+                           encoding="utf-8") as handle:
+                report["probes"]["data_upgrade"] = data_upgrade(
+                    json.load(handle))
+    except Gated as error:
+        report["gated"] = str(error)
+    except Raised as error:
+        report["raised"] = str(error)
+    except Exception as error:
+        report["reader_error"] = repr(error)[:300]
     finish()
 
 # Fuzzing comes last: what a malformed request stores cannot reach another
@@ -1067,30 +1359,49 @@ def read_portability(tree, where, other):
         remove_tree(venv)
 
 
-def read_trial(area, name, scores_file, other):
-    """Every quality probe on one scored trial, read from its score file."""
+def read_trial(area, name, scores_file, other, task="build"):
+    """Every quality probe on one scored trial of `task`, read from its score
+    file; a change task's adds the data upgrade."""
     with io.open(scores_file, encoding="utf-8") as handle:
         scores = json.load(handle)
     tree = scores.get("workspace")
     result = {"name": name, "read_at": datetime.datetime.now().isoformat(
         timespec="seconds")}
-    where = os.path.join(area, "quality", name)
+    where = os.path.join(area, task_folder("quality", task), name)
     os.makedirs(where, exist_ok=True)
+
+    # The fixture seeds first, in an environment of its own that is gone
+    # before the changed tree's is made.
+    seeded = reason = None
+    if task == "change":
+        seeded, reason = seed_fixture(scores, where)
+    upgrade = None
     venv = create_venv(os.path.join(where, "venv"))
     try:
         result["python"] = venv_version(venv)
         installed = pip(venv, "install", tree, cwd=where)
         if installed["failed"] or installed["status"] != 0:
-            reason = ("the trial did not install: %s"
-                      % (installed["stderr"] or installed["stdout"])[-300:])
-            probes = probe_results(None, reason, lost=True)
+            reason_lost = ("the trial did not install: %s"
+                           % (installed["stderr"]
+                              or installed["stdout"])[-300:])
+            probes = probe_results(None, reason_lost, lost=True)
+            if task == "change" and seeded:
+                upgrade = dict(lost_reading("data_upgrade", reason_lost),
+                               **provenance(scores, seeded))
         else:
-            payload, reason, stalled = probe_runtime(python_in(venv), where)
-            probes = probe_results(payload, reason, stalled=stalled)
+            payload, why, stalled = probe_runtime(python_in(venv), where)
+            probes = probe_results(payload, why, stalled=stalled)
+            if task == "change" and seeded:
+                upgrade = upgrade_with(python_in(venv), where, seeded,
+                                       dict(os.environ),
+                                       provenance(scores, seeded))
     finally:
 
         # About 290 MB a trial, and nothing reads it again.
         remove_tree(venv)
+    if task == "change" and upgrade is None:
+        upgrade = dict(missing_reading("data_upgrade", reason),
+                       **provenance(scores, None))
 
     # A build the spec's Python could not install, boot or sign in is lost
     # on the other one too: it was never read there.
@@ -1106,7 +1417,140 @@ def read_trial(area, name, scores_file, other):
     else:
         probes["python_portability"] = read_portability(tree, where, other)
     result["probes"] = {name: probes[name] for name in PROBES}
+    if task == "change":
+        result["probes"]["data_upgrade"] = upgrade
     return result
+
+
+def fixture_tree(scores, where):
+    """The tree the change task started from, out of the changed tree's own
+    history: its starting commit, as the agent was handed it."""
+    tree, base = scores.get("workspace"), scores.get("base")
+    if not base:
+        return None, "the change names no starting commit"
+    target = os.path.join(where, "fixture")
+    remove_tree(target)
+    os.makedirs(target)
+    archive = os.path.join(os.path.abspath(where), "fixture.tar")
+    made = run(["git", "-C", tree, "archive", "--format=tar", "-o", archive,
+                base], timeout=300)
+    if made["failed"] or made["status"] != 0:
+        return None, ("git could not read the starting commit %s: %s"
+                      % (base, (made["failed"] or made["stderr"])[-300:]))
+    with tarfile.open(archive) as handle:
+        handle.extractall(target, filter="data")
+    os.remove(archive)
+    return target, None
+
+
+def folder_digest(folder):
+    """The sha256 over a folder's files, by name and content."""
+    digest = hashlib.sha256()
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name)
+        if os.path.isfile(path):
+            digest.update(name.encode("utf-8") + b"\0")
+            with io.open(path, "rb") as handle:
+                digest.update(handle.read())
+    return digest.hexdigest()
+
+
+def seed_fixture(scores, where):
+    """Seed a database through the fixture's own application, installed on
+    the spec's Python; the seeding, or None and why it is missing."""
+    tree, reason = fixture_tree(scores, where)
+    if reason:
+        return None, reason
+    venv = create_venv(os.path.join(where, "venv-fixture"))
+    try:
+        installed = pip(venv, "install", tree, cwd=where)
+        if installed["failed"] or installed["status"] != 0:
+            return None, ("the fixture did not install: %s"
+                          % (installed["stderr"]
+                             or installed["stdout"])[-300:])
+        return seed_with(python_in(venv), where, dict(os.environ))
+    finally:
+
+        # The fixture's environment, as large as the trial's, is not read
+        # again once it has seeded.
+        remove_tree(venv)
+        remove_tree(tree)
+
+
+# Where the fixture's database is seeded, and where the changed tree's copy
+# of it is, each a folder of its own so a database's sidecars go with it.
+SEEDED, UPGRADED, DATABASE = "seeded", "upgraded", "upgrade.sqlite"
+
+
+def seed_with(python, where, env):
+    """Seed through the application `python` imports; the seeding, or None
+    and why. A fixture that cannot seed leaves the upgrade unread, never
+    failed: it is no arm's."""
+    folder = os.path.join(where, SEEDED)
+    remove_tree(folder)
+    os.makedirs(folder)
+    env = dict(env, QUALITY_DATABASE=os.path.join(folder, DATABASE))
+    payload, reason, stalled = probe_runtime(python, where, "seed", env=env)
+    if reason:
+        return None, reason
+    if "error" in payload:
+        return None, "the fixture would not boot: %s" % payload["error"]
+    if not payload.get("signed_in"):
+        return None, "the fixture's administrator could not sign in"
+    if not payload.get("seeded"):
+        return None, "the fixture could not be seeded: %s" % (
+            payload.get("seed_error") or payload.get("gated")
+            or payload.get("raised") or payload.get("reader_error")
+            or stalled)
+    readings = os.path.join(where, "seeded.json")
+    with io.open(readings, "w", encoding="utf-8") as handle:
+        json.dump(payload["seeded"], handle, indent=2, sort_keys=True)
+    return {"folder": folder, "readings": readings,
+            "sha256": folder_digest(folder),
+            "python": payload.get("python")}, None
+
+
+def provenance(scores, seeded):
+    """What a data upgrade was read against: the fixture by its hash, the
+    commit the change started from, and the database it seeded."""
+    fixture = scores.get("fixture") or {}
+    return {"fixture": fixture.get("trial"),
+            "fixture_sha256": fixture.get("sha256"),
+            "base": scores.get("base"),
+            "seeded_sha256": (seeded or {}).get("sha256")}
+
+
+def upgrade_with(python, where, seeded, env, origin):
+    """The changed tree, as `python` imports it, on a copy of the seeded
+    database: the data upgrade's reading, beside where it came from."""
+    copy = os.path.join(where, UPGRADED)
+    remove_tree(copy)
+    shutil.copytree(seeded["folder"], copy)
+    env = dict(env, QUALITY_DATABASE=os.path.join(copy, DATABASE),
+               QUALITY_SEEDED=seeded["readings"])
+    payload, reason, stalled = probe_runtime(python, where, "upgrade",
+                                             env=env)
+    if reason:
+        return dict(missing_reading("data_upgrade", reason), **origin)
+
+    # A changed tree that will not open, sign in on or answer from the
+    # database its fixture saved has lost that data to its users.
+    if "error" in payload:
+        return dict(lost_reading("data_upgrade", (
+            "the changed tree would not open the fixture's database: %s"
+            % payload["error"])), **origin)
+    if not payload.get("signed_in"):
+        return dict(lost_reading("data_upgrade", (
+            "the administrator could not sign in on the fixture's "
+            "database")), **origin)
+    probe = (payload.get("probes") or {}).get("data_upgrade")
+    if probe is not None:
+        return dict(probe, **origin)
+    trouble = payload.get("gated") or payload.get("raised") or stalled
+    if trouble:
+        return dict(lost_reading("data_upgrade", trouble), **origin)
+    return dict(missing_reading("data_upgrade", payload.get(
+        "reader_error") or "the upgrade did not report"), **origin)
 
 
 # A stand-in application for the in-process probes, importable without
@@ -1449,6 +1893,382 @@ def create_app(database):
     return App(database)
 '''
 
+# A stand-in for the data upgrade, a fixture at version 1 and a changed
+# tree at version 2 of one application on a real SQLite file: version 2 adds
+# a cap to each jurisdiction and a minimum to each rule, shows the cap in its
+# JSON and CSV exports, and adds the columns to an old file. `sound` does
+# all of that. Each other mode plants one fault in version 2 alone:
+# `unmigrated` adds the columns to new files only and then reads them,
+# `dropping` rebuilds an old file empty, `rewriting` migrates and resets every
+# jurisdiction's rate, rows all kept, `fragile` cannot read an old
+# jurisdiction's empty cap, so old invoices break while new ones open, and
+# `refusing` will not open an old file at all. At version 1, `unlisting`
+# links no customer, so nothing can be seeded.
+UPGRADE_APP = '''import decimal
+import json
+import os
+import sqlite3
+
+VERSION = __VERSION__
+MODE = "__MODE__"
+TOKEN = '<input type="hidden" name="csrf_token" value="t">'
+CENT = decimal.Decimal("0.01")
+SEED = (("WID-1", "Widget", "10.00", "standard"),
+        ("GAD-2", "Gadget", "24.50", "standard"),
+        ("BOK-3", "Handbook", "12.00", "reduced"),
+        ("SRV-4", "Support hour", "80.00", "standard"),
+        ("SEE-5", "Seed pack", "3.75", "zero"))
+TABLES = ("products", "customers", "rules", "jurisdictions", "invoices",
+          "lines")
+ADDED = (("rules", "minimum"), ("jurisdictions", "caps"))
+
+
+class Response(object):
+    def __init__(self, status, body="", headers=None):
+        self.status_code = status
+        self.headers = dict(headers or {})
+        self._body = body
+
+    def get_data(self, as_text=False):
+        return self._body if as_text else self._body.encode("utf-8")
+
+
+def form(action, body=""):
+    return ('%s<form method="post" action="%s">%s</form>'
+            % (body, action, TOKEN))
+
+
+def columns(connection, table):
+    return [row[1] for row in connection.execute(
+        "PRAGMA table_info(%s)" % table)]
+
+
+class App(object):
+    def __init__(self, database):
+        self.database = database
+        connection = self.connect()
+        old = "jurisdictions" in [row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")]
+        stale = old and VERSION == 2 and "caps" not in columns(
+            connection, "jurisdictions")
+        if stale and MODE == "refusing":
+            raise RuntimeError("this database is from an older version")
+        if stale and MODE == "dropping":
+            for table in TABLES:
+                connection.execute("DROP TABLE %s" % table)
+        added = ", minimum TEXT" if VERSION == 2 else ""
+        capped = ", caps TEXT" if VERSION == 2 else ""
+        connection.executescript(
+            "CREATE TABLE IF NOT EXISTS admin (password TEXT);"
+            "CREATE TABLE IF NOT EXISTS products (sku TEXT PRIMARY KEY, "
+            "name TEXT, unit_price TEXT, tax_category TEXT);"
+            "CREATE TABLE IF NOT EXISTS customers (id INTEGER PRIMARY KEY, "
+            "name TEXT, email TEXT, address TEXT);"
+            "CREATE TABLE IF NOT EXISTS rules (rule_id TEXT PRIMARY KEY, "
+            "kind TEXT, sku TEXT, detail TEXT%s);"
+            "CREATE TABLE IF NOT EXISTS jurisdictions (code TEXT PRIMARY "
+            "KEY, name TEXT, default_rate TEXT%s);"
+            "CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY, "
+            "jurisdiction TEXT, customer TEXT, coupons TEXT);"
+            "CREATE TABLE IF NOT EXISTS lines (invoice INTEGER, position "
+            "INTEGER, sku TEXT, quantity INTEGER);" % (added, capped))
+        if stale and MODE not in ("unmigrated", "dropping"):
+            for table, column in ADDED:
+                connection.execute("ALTER TABLE %s ADD COLUMN %s TEXT"
+                                   % (table, column))
+            if MODE == "rewriting":
+                connection.execute("UPDATE jurisdictions SET "
+                                   "default_rate = '0'")
+        if not connection.execute("SELECT * FROM admin").fetchone():
+            connection.execute("INSERT INTO admin VALUES (?)", (
+                os.environ.get("TARIFF_ADMIN_PASSWORD"),))
+        if not connection.execute("SELECT * FROM products").fetchone():
+            connection.executemany("INSERT INTO products VALUES "
+                                   "(?, ?, ?, ?)", SEED)
+            for code, rate in (("DE", "0.19"), ("IE", "0.23")):
+                self.add_jurisdiction(connection, code, code, rate)
+        connection.commit()
+        connection.close()
+
+    def connect(self):
+        return sqlite3.connect(self.database)
+
+    def add_jurisdiction(self, connection, code, name, rate):
+        if VERSION == 2:
+            connection.execute("INSERT INTO jurisdictions VALUES "
+                               "(?, ?, ?, ?)", (code, name, rate, "{}"))
+        else:
+            connection.execute("INSERT INTO jurisdictions VALUES (?, ?, ?)",
+                               (code, name, rate))
+
+    def test_client(self):
+        return Client(self)
+
+
+def listed(value):
+    if value is None:
+        return []
+    return list(value) if isinstance(value, (list, tuple)) else [value]
+
+
+class Client(object):
+    def __init__(self, app):
+        self.app = app
+        self.signed = False
+
+    def open(self, path, method="GET", data=None, headers=None):
+        connection = self.app.connect()
+        try:
+            answer = self.dispatch(connection, path.split("?")[0], method,
+                                   data or {})
+            connection.commit()
+            return answer
+        except Exception as error:
+            return Response(500, "Internal Server Error: %r" % error)
+        finally:
+            connection.close()
+
+    def dispatch(self, connection, path, method, data):
+        if path == "/sign-in":
+            if method == "GET":
+                return Response(200, form("/sign-in"))
+            stored = connection.execute("SELECT password FROM admin")
+            if (data.get("csrf_token") == "t"
+                    and data.get("username") == "admin"
+                    and data.get("password") == stored.fetchone()[0]):
+                self.signed = True
+                return Response(302, "", {"Location": "/"})
+            return Response(200, "wrong" + form("/sign-in"))
+        if not self.signed:
+            return Response(302, "", {"Location": "/sign-in"})
+        if method == "POST" and data.get("csrf_token") != "t":
+            return Response(400, "missing token")
+        parts = path.strip("/").split("/")
+        if path == "/":
+            return Response(200, "dashboard")
+        if parts[0] in ("products", "rules", "jurisdictions") \\
+                and len(parts) == 1:
+            if method == "POST":
+                return self.create(connection, parts[0], data)
+            return Response(200, form(path, self.listing(connection,
+                                                          parts[0])))
+        if parts[0] == "customers":
+            return self.customers(connection, parts, method, data)
+        if parts[0] == "invoices":
+            return self.invoices(connection, parts, method, data)
+        return Response(404, "not found")
+
+    def listing(self, connection, table):
+        if table == "products":
+            rows = connection.execute("SELECT sku, name FROM products")
+        elif table == "rules":
+            rows = connection.execute("SELECT rule_id, kind FROM rules")
+        elif VERSION == 2:
+            rows = connection.execute("SELECT code, name, caps FROM "
+                                      "jurisdictions")
+        else:
+            rows = connection.execute("SELECT code, name FROM jurisdictions")
+        return "".join("<p>%s</p>" % " ".join(str(value) for value in row)
+                       for row in rows)
+
+    def create(self, connection, table, data):
+        if table == "products":
+            connection.execute("INSERT INTO products VALUES (?, ?, ?, ?)", (
+                data["sku"], data["name"], data["unit_price"],
+                data["tax_category"]))
+        elif table == "rules":
+            detail = json.dumps({key: data.get(key) for key in (
+                "percent", "buy", "pay", "code", "amount")})
+            if VERSION == 2:
+                connection.execute("INSERT INTO rules VALUES (?, ?, ?, ?, ?)",
+                                   (data["rule_id"], data["kind"],
+                                    data.get("sku"), detail, None))
+            else:
+                connection.execute("INSERT INTO rules VALUES (?, ?, ?, ?)",
+                                   (data["rule_id"], data["kind"],
+                                    data.get("sku"), detail))
+        else:
+            self.app.add_jurisdiction(connection, data["code"], data["name"],
+                                      data["default_rate"])
+        return Response(302, "", {"Location": "/" + table})
+
+    def customers(self, connection, parts, method, data):
+        if len(parts) == 1 and method == "POST":
+            connection.execute("INSERT INTO customers (name, email, address) "
+                               "VALUES (?, ?, ?)", (data["name"],
+                                                    data["email"],
+                                                    data["address"]))
+            return Response(302, "", {"Location": "/customers"})
+        if len(parts) == 1:
+            rows = connection.execute("SELECT id, name, email FROM customers")
+            return Response(200, form("/customers", "".join(
+                ("<p>%s %s</p>" if MODE == "unlisting"
+                 else '<p><a href="/customers/%d">%s</a> %s</p>') % row
+                for row in rows)))
+        row = connection.execute("SELECT id, name, email, address FROM "
+                                 "customers WHERE id = ?",
+                                 (parts[1],)).fetchone()
+        if row is None:
+            return Response(404, "not found")
+        invoices = [found[0] for found in connection.execute(
+            "SELECT id FROM invoices WHERE customer = ? ORDER BY id",
+            (str(row[0]),))]
+        return Response(200, json.dumps({
+            "customer_id": row[0], "name": row[1], "email": row[2],
+            "address": row[3], "invoices": invoices}))
+
+    def priced(self, connection, jurisdiction, coupons, lines):
+        found = connection.execute("SELECT * FROM jurisdictions WHERE code "
+                                   "= ?", (jurisdiction,)).fetchone()
+        if found is None:
+            raise LookupError(jurisdiction)
+        rate = decimal.Decimal(found[2])
+        if VERSION == 2:
+            caps = json.loads(found[3]) if MODE == "fragile" else (
+                json.loads(found[3] or "{}"))
+            rate = rate if caps is not None else rate
+        net = []
+        for sku, quantity in lines:
+            price = connection.execute("SELECT unit_price FROM products "
+                                       "WHERE sku = ?", (sku,)).fetchone()
+            net.append((sku, quantity, (decimal.Decimal(price[0])
+                                        * quantity).quantize(CENT)))
+        subtotal = sum((amount for _, _, amount in net),
+                       decimal.Decimal("0"))
+        for kind, detail in connection.execute("SELECT kind, detail FROM "
+                                               "rules"):
+            detail = json.loads(detail)
+            if kind == "coupon" and detail.get("code") in coupons \\
+                    and detail.get("amount"):
+                subtotal -= decimal.Decimal(detail["amount"])
+        total = (subtotal * (1 + rate)).quantize(CENT)
+        return net, str(total)
+
+    def invoices(self, connection, parts, method, data):
+        if parts[1:] in (["preview"], []) and method == "POST":
+            lines = [(sku, int(quantity)) for sku, quantity in zip(
+                listed(data.get("sku")), listed(data.get("quantity")))]
+            coupons = (data.get("coupon_codes") or "").split(",")
+            _, total = self.priced(connection, data["jurisdiction"], coupons,
+                                   lines)
+            if parts[1:] == ["preview"]:
+                return Response(200, "<p>Total %s</p>" % total)
+            invoice = connection.execute(
+                "INSERT INTO invoices (jurisdiction, customer, coupons) "
+                "VALUES (?, ?, ?)", (data["jurisdiction"],
+                                     data.get("customer") or "",
+                                     data.get("coupon_codes") or "")
+            ).lastrowid
+            connection.executemany("INSERT INTO lines VALUES (?, ?, ?, ?)",
+                                   [(invoice, position, sku, quantity)
+                                    for position, (sku, quantity)
+                                    in enumerate(lines)])
+            return Response(302, "", {"Location": "/invoices/%d" % invoice})
+        if parts[1:] == ["new"]:
+            return Response(200, form("/invoices/preview"))
+        row = connection.execute("SELECT jurisdiction, coupons FROM invoices "
+                                 "WHERE id = ?", (parts[1],)).fetchone()
+        if row is None:
+            return Response(404, "not found")
+        lines = connection.execute("SELECT sku, quantity FROM lines WHERE "
+                                   "invoice = ? ORDER BY position",
+                                   (parts[1],)).fetchall()
+        net, total = self.priced(connection, row[0], row[1].split(","),
+                                 lines)
+        if parts[2:] == ["export.json"]:
+            export = {"invoice_id": int(parts[1]), "jurisdiction": row[0],
+                      "lines": [{"sku": sku, "quantity": quantity,
+                                 "net": str(amount)}
+                                for sku, quantity, amount in net],
+                      "total": total}
+            if VERSION == 2:
+                export["caps"] = {}
+            return Response(200, json.dumps(export))
+        if parts[2:] == ["export.csv"]:
+            head = "sku,quantity,net" + (",cap" if VERSION == 2 else "")
+            return Response(200, "\\n".join([head] + [
+                "%s,%d,%s" % (sku, quantity, amount)
+                + ("," if VERSION == 2 else "")
+                for sku, quantity, amount in net]) + "\\n")
+        return Response(200, "<p>Invoice %s</p><p>Total %s</p>"
+                        % (parts[1], total))
+
+
+def create_app(database):
+    return App(database)
+'''
+
+# The faults the data upgrade must catch at version 2, and what each loses.
+UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "fragile",
+                  "refusing")
+
+
+def plant_upgrade(where, version, mode):
+    """The stand-in at `version` in `mode`, importable from its own folder;
+    the environment that imports it."""
+    site = os.path.join(where, "site-%d" % version)
+    package = os.path.join(site, "tariff")
+    os.makedirs(package)
+    with io.open(os.path.join(package, "__init__.py"), "w",
+                 encoding="utf-8") as handle:
+        handle.write(UPGRADE_APP.replace("__VERSION__", str(version))
+                     .replace("__MODE__", mode))
+    return dict(os.environ, PYTHONPATH=site)
+
+
+def upgrade_reading(scratch, fixture, changed):
+    """The data upgrade of a version 2 in mode `changed` over a version 1
+    in mode `fixture`: the reading, or why seeding left it missing."""
+    where = os.path.join(scratch, "upgrade-%s-%s" % (fixture, changed))
+    os.makedirs(where)
+    seeded, reason = seed_with(sys.executable, where,
+                               plant_upgrade(where, 1, fixture))
+    if seeded is None:
+        return dict(missing_reading("data_upgrade", reason))
+    return upgrade_with(sys.executable, where, seeded,
+                        plant_upgrade(where, 2, changed),
+                        {"seeded_sha256": seeded["sha256"]})
+
+
+def upgrade_self_checks(scratch):
+    """A sound upgrade passes; each planted fault fails or loses the probe;
+    a fixture that cannot seed leaves it missing."""
+    sound = upgrade_reading(scratch, "sound", "sound")
+    faults = {mode: upgrade_reading(scratch, "sound", mode)
+              for mode in UPGRADE_FAULTS}
+    unseeded = upgrade_reading(scratch, "unlisting", "sound")
+    failed = sorted(mode for mode, reading in faults.items()
+                    if reading.get("passed") is False)
+    return [
+        ("a version 2 that migrates the old database keeps every record",
+         sound.get("passed") is True and not sound.get("failures")
+         and len(sound.get("seeded_sha256") or "") == 64),
+        ("a schema change shipped without a migration fails the upgrade",
+         faults["unmigrated"].get("passed") is False
+         and any("/jurisdictions" in failure for failure in
+                 faults["unmigrated"].get("failures") or [])),
+        ("an old database rebuilt empty fails the upgrade",
+         faults["dropping"].get("passed") is False
+         and any("no longer lists" in failure for failure in
+                 faults["dropping"].get("failures") or [])),
+        ("rows all kept with their values changed fail the upgrade",
+         faults["rewriting"].get("passed") is False
+         and any("no longer reads the same" in failure for failure in
+                 faults["rewriting"].get("failures") or [])),
+        ("old invoices that break on the new field fail the upgrade",
+         faults["fragile"].get("passed") is False
+         and any("/invoices/" in failure for failure in
+                 faults["fragile"].get("failures") or [])),
+        ("a version 2 that will not open the old database loses the upgrade",
+         faults["refusing"].get("passed") is False
+         and bool(faults["refusing"].get("lost"))),
+        ("every planted upgrade fault fails",
+         failed == sorted(UPGRADE_FAULTS)),
+        ("a fixture that cannot seed leaves the upgrade missing, not failed",
+         unseeded.get("passed") is None and bool(unseeded.get("missing"))),
+    ]
+
+
 FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "locking": "concurrent_writes", "lossy": "concurrent_writes",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
@@ -1681,6 +2501,47 @@ def leftover_self_checks(scratch):
          sorted(result["probes"]) == sorted(PROBES)
          and all("did not install" in probe.get("lost", "")
                  for probe in result["probes"].values())),
+    ] + change_reading_checks(area, tree)
+
+
+def change_reading_checks(area, tree):
+    """A change task is read from its own scores into its own folders, adds
+    the data upgrade, and loses it with a changed tree that will not
+    install; with no fixture to seed, the upgrade is missing."""
+    scores_file = os.path.join(area, "scores-change", "none-1.json")
+    os.makedirs(os.path.dirname(scores_file))
+    with io.open(scores_file, "w", encoding="utf-8") as handle:
+        json.dump({"workspace": tree, "fixture": {"trial": "none-2",
+                                                  "sha256": "f" * 64}},
+                  handle)
+    unseeded = read_trial(area, "none-1", scores_file, None, "change")
+
+    # A fixture that seeded, as the reading takes it, over the same tree.
+    saved = globals()["seed_fixture"]
+    globals()["seed_fixture"] = lambda scores, where: (
+        {"sha256": "a" * 64, "folder": where, "readings": None}, None)
+    try:
+        seeded = read_trial(area, "none-1", scores_file, None, "change")
+    finally:
+        globals()["seed_fixture"] = saved
+    upgrade = seeded["probes"]["data_upgrade"]
+    return [
+        ("a change task is read from its own scores into "
+         "quality-scores-change",
+         sorted(scored_trials(area, "change")) == ["none-1"]
+         and readings_folder(area, "change")
+         == os.path.join(area, "quality-scores-change")
+         and os.path.isdir(os.path.join(area, "quality-change", "none-1"))),
+        ("a change task with no starting commit leaves the upgrade missing",
+         sorted(unseeded["probes"]) == sorted(PROBES + CHANGE_PROBES)
+         and "starting commit" in (unseeded["probes"]["data_upgrade"]
+                                   .get("missing") or "")),
+        ("a changed tree that does not install loses the upgrade, its "
+         "fixture named",
+         "did not install" in (upgrade.get("lost") or "")
+         and upgrade.get("passed") is False
+         and upgrade.get("fixture_sha256") == "f" * 64
+         and upgrade.get("seeded_sha256") == "a" * 64),
     ]
 
 
@@ -1692,7 +2553,7 @@ def self_test():
     os.makedirs(scratch)
     checks = (runtime_self_checks(scratch) + reading_self_checks()
               + portability_self_checks(scratch) + claim_self_checks(scratch)
-              + leftover_self_checks(scratch))
+              + leftover_self_checks(scratch) + upgrade_self_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     remove_tree(scratch)
@@ -1718,6 +2579,10 @@ def parse_args(argv):
     parser.add_argument("--reread", action="store_true",
                         help="read a trial already read; by default such a "
                              "trial is skipped")
+    parser.add_argument("--task", choices=("build", "change"),
+                        default="build",
+                        help="read the build trials' trees, or the trees the "
+                             "change tasks left, with the data upgrade")
     parser.add_argument("--self-test", action="store_true",
                         help="prove every probe against a planted app; read "
                              "no trial")
@@ -1732,20 +2597,14 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    # A score is filed under its trial's name, read as the arms spell it.
     area = scoring_area(options.root)
-    scores = os.path.join(area, "scores")
-    scored = {canonical(os.path.splitext(entry)[0]):
-              os.path.join(scores, entry)
-              for entry in (sorted(os.listdir(scores))
-                            if os.path.isdir(scores) else [])
-              if entry.endswith(".json")}
+    scored = scored_trials(area, options.task)
     wanted = (sorted(canonical(name) for name in options.trial)
               if options.trial else sorted(scored))
     missing = [name for name in wanted if name not in scored]
     if not scored or missing:
-        print("no build score for %s under %s; score.py writes them"
-              % (", ".join(missing) or "any trial", area))
+        print("no %s score for %s under %s; score.py writes them"
+              % (options.task, ", ".join(missing) or "any trial", area))
         return 2
 
     # A run clears each trial's environment before rebuilding it, so a second
@@ -1761,9 +2620,24 @@ def main(argv):
         release_area(claim)
 
 
+def scored_trials(area, task):
+    """Every score of `task` in the scoring area, by the trial's name as the
+    arms spell it."""
+    scores = os.path.join(area, task_folder("scores", task))
+    return {canonical(os.path.splitext(entry)[0]): os.path.join(scores, entry)
+            for entry in (sorted(os.listdir(scores))
+                          if os.path.isdir(scores) else [])
+            if entry.endswith(".json")}
+
+
+def readings_folder(area, task):
+    """Where the quality readings of `task` are filed."""
+    return os.path.join(area, task_folder("quality-scores", task))
+
+
 def read_trials(options, area, scored, wanted):
     """Read each wanted trial not read yet; return the exit code."""
-    target = os.path.join(area, "quality-scores")
+    target = readings_folder(area, options.task)
     done = []
     if not options.reread:
         for name in wanted:
@@ -1781,7 +2655,7 @@ def read_trials(options, area, scored, wanted):
     os.makedirs(target, exist_ok=True)
     for name in wanted:
         print("%s  reading for quality" % name)
-        result = read_trial(area, name, scored[name], other)
+        result = read_trial(area, name, scored[name], other, options.task)
         with io.open(os.path.join(target, "%s.json" % name), "w",
                      encoding="utf-8") as handle:
             json.dump(result, handle, indent=2, sort_keys=True)

@@ -33,7 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lib  # noqa: E402
 import score  # noqa: E402
 from harness import (LiveRunError, TrialError, canonical,  # noqa: E402
-                     claim_area, claim_refusal_check, release_area)
+                     claim_area, claim_refusal_check, release_area,
+                     task_folder)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.basename(__file__)
@@ -343,8 +344,9 @@ def copied_dir(base, name):
                    for cache, inner in USER_CACHE_DIRS)
 
 
-def build_bundle(tree, target):
-    """Copy one trial's tree into a blind bundle and return what was stripped.
+def build_bundle(tree, target, trial=None):
+    """Copy one trial's tree into a blind bundle and return what was stripped;
+    `trial` names the trial where the tree's own folder does not.
 
     The context file is the loudest marker but not the only one: a README that
     credits its conventions names the arm just as clearly, so the text files
@@ -385,9 +387,13 @@ def build_bundle(tree, target):
     if spec:
         with io.open(os.path.join(target, "SPEC.md"), "wb") as handle:
             handle.write(spec.pop("text"))
+    # A changed tree's folder carries the task beside the trial's name, and
+    # a path through its scoring area the trial's name alone.
+    names = {os.path.basename(tree), trial or os.path.basename(tree)}
+    leaks = [leak for name in sorted(names)
+             for leak in surviving_markers(target, name)]
     return {"removed": removed, "markers_masked": masked, "spec": spec,
-            "leaks": surviving_markers(target, os.path.basename(tree)),
-            "digest": digest(target)}
+            "leaks": leaks, "digest": digest(target)}
 
 
 def spec_text(path):
@@ -692,24 +698,30 @@ def refusal(stripped):
     return None
 
 
-def trees(root):
-    """Every scored trial's extracted tree, by canonical trial name."""
+def trees(root, task="build"):
+    """Every scored trial's extracted tree of `task`, by canonical trial
+    name: the folder scoring made for the trial, whatever the tree's own
+    folder is called."""
     found = {}
-    scoring = os.path.join(score.scoring_area(root), "scoring")
+    scoring = os.path.join(score.scoring_area(root),
+                           task_folder("scoring", task))
     for path in sorted(glob.glob(os.path.join(scoring, "*", "tree", "*"))):
         if os.path.isdir(path):
-            found[canonical(os.path.basename(path))] = path
+            trial = os.path.basename(os.path.dirname(os.path.dirname(path)))
+            found[canonical(trial)] = path
     return found
 
 
-def failed_builds(root):
-    """The trials whose build did not install, by canonical trial name.
+def failed_builds(root, task="build"):
+    """The trials whose tree of `task` did not install, by canonical name.
 
     A trial that produced no installable workspace has its quality metrics
-    recorded as missing, never scored, so its tree is not judged.
+    recorded as missing, never scored, so its tree is not judged; a change
+    task that left one is held to the same rule.
     """
     failed = set()
-    pattern = os.path.join(score.scoring_area(root), "scores", "*.json")
+    pattern = os.path.join(score.scoring_area(root),
+                           task_folder("scores", task), "*.json")
     for file in sorted(glob.glob(pattern)):
         with io.open(file, encoding="utf-8") as handle:
             record = json.load(handle)
@@ -790,10 +802,10 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    available = trees(options.root)
+    available = trees(options.root, options.task)
     if not available:
-        print("no extracted trial trees under %s; score.py writes them"
-              % score.scoring_area(options.root))
+        print("no extracted %s trees under %s; score.py writes them"
+              % (options.task, score.scoring_area(options.root)))
         return 2
 
     try:
@@ -809,10 +821,11 @@ def main(argv):
 
     # The report reads no judge row of a build that did not install, so
     # judging one would spend readings on a tree nothing counts.
-    failed = failed_builds(options.root)
+    failed = failed_builds(options.root, options.task)
     for name in wanted:
         if name in failed:
-            print("%s  not judged: its build did not install" % name)
+            print("%s  not judged: its %s tree did not install"
+                  % (name, options.task))
     wanted = [name for name in wanted if name not in failed]
 
     # A second run against the area takes the same next label as a live one,
@@ -837,7 +850,10 @@ def judge_trials(options, available, wanted):
     # calls on one unchanged tree returned readability 4, 4, 4, 3, 4, 4. The
     # mean of several is what the report reads, so what is owed here is the
     # shortfall, which also makes an interrupted run resumable.
-    judging = os.path.join(score.scoring_area(options.root), "judge")
+    # A change task's judgings go apart from the build's, with labels and a
+    # map of their own: both are keyed by the trial.
+    judging = os.path.join(score.scoring_area(options.root),
+                           task_folder("judge", options.task))
     done = judged(judging)
     if options.repeat < 1:
         print("refused: --repeat is a count of judgings per trial, at least 1")
@@ -892,14 +908,15 @@ def judge_trials(options, available, wanted):
         repeats.setdefault(name, []).append(label)
         print("%s  as %s" % (name, label))
         bundle = os.path.join(bundles, label)
-        stripped = build_bundle(available[name], bundle)
+        stripped = build_bundle(available[name], bundle, name)
         refused = refusal(stripped)
         if refused:
             answer = {"argv": None, "error": refused}
         else:
             answer = judge_bundle(bundle, options, schema_path)
 
-        record = {"trial": name, "blind_id": label, "model": options.model,
+        record = {"trial": name, "task": options.task, "blind_id": label,
+                  "model": options.model,
                   "repeat": len(repeats[name]),
                   "effort": options.effort, "cli": version,
                   "seed": options.seed, "bundle": stripped,
@@ -1353,8 +1370,38 @@ def failed_checks(scratch):
                      encoding="utf-8") as handle:
             json.dump({"name": name, "install": {"value": value}}, handle)
     found = failed_builds(root)
+    changes = os.path.join(score.scoring_area(root), "scores-change")
+    os.makedirs(changes)
+    for name, value in (("none-2", False), ("none-1", True)):
+        with io.open(os.path.join(changes, "%s.json" % name), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"name": name, "install": {"value": value}}, handle)
     return [("only a build that did not install goes unjudged",
-             found == {"none-1"})]
+             found == {"none-1"}),
+            ("a changed tree that did not install goes unjudged, read from "
+             "its own scores", failed_builds(root, "change") == {"none-2"})]
+
+
+def change_checks(scratch):
+    """A change task's trees are found by their trial, apart from the
+    build's, and a bundle naming the trial in a path is caught."""
+    root = os.path.join(scratch, "changed")
+    area = score.scoring_area(root)
+    built = os.path.join(area, "scoring", "none-1", "tree", "none-1")
+    changed = os.path.join(area, "scoring-change", "none-1", "tree",
+                           "change-none-1")
+    for tree in (built, changed):
+        os.makedirs(tree)
+    plant(changed, {"notes.txt": "built under %s\n" % changed.replace(
+        "change-none-1", "x")})
+    stripped = build_bundle(changed, os.path.join(scratch, "change-bundle"),
+                            "none-1")
+    return [("a change task's trees are found by their trial, apart from "
+             "the build's",
+             trees(root, "change") == {"none-1": changed}
+             and trees(root) == {"none-1": built}),
+            ("a changed tree's bundle naming its trial in a path leaks",
+             any(leak[1] == "none-1" for leak in stripped["leaks"]))]
 
 
 def claim_checks(scratch):
@@ -1388,6 +1435,7 @@ def self_test():
     checks.extend(claim_checks(scratch))
     checks.extend(default_checks(scratch))
     checks.extend(failed_checks(scratch))
+    checks.extend(change_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     shutil.rmtree(scratch, ignore_errors=True)
@@ -1408,6 +1456,10 @@ def parse_args(argv):
                              "judge nothing")
     parser.add_argument("--trial", action="append", default=[],
                         help="judge only this trial, as none-1; repeatable")
+    parser.add_argument("--task", choices=("build", "change"),
+                        default="build",
+                        help="judge the build trials' trees, or the trees the "
+                             "change tasks left")
     parser.add_argument("--cli", default=DEFAULT_CLI,
                         choices=("codex", "claude"),
                         help="which CLI drives the judge. `codex` is the "

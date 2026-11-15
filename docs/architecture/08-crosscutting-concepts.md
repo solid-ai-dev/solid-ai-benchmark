@@ -360,6 +360,38 @@ green, whether the acceptance modules pass through the API, and, from round
 The decision is ADR-009, including why round 1's change-task pass rate was
 withdrawn.
 
+**The changed tree, scored in full.** From round 6 every arm's change task
+of a block starts from one fixture, a qualifying `none` build of round 5e,
+so the changed tree is read on every ISO axis the build is. It gets the
+same scoring, security and quality readings and judge, each filed apart
+from the build's under a `-change` folder of its own (FR-16-01, FR-16-03,
+FR-16-05). A changed tree that does not install loses its probes and goes
+unjudged, as a build does; a reading the reader could not take is missing.
+
+Two readings compare the changed tree with its fixture, each counted on one
+axis only:
+
+| Reading | What it reads | Fails when | ISO place |
+| ------- | ------------- | ---------- | --------- |
+| Interfaces | The hidden suite's API, route and two export modules on the changed tree, against the fixture's frozen baseline | A module the fixture passed whole no longer does | Compatibility, Interoperability |
+| Data upgrade | Products, customers, rules, a jurisdiction and invoices saved through the fixture's own forms, then the changed tree on a copy of that database | A record is gone or reads differently, an old invoice will not open or price as it did, or the file takes no new record | Flexibility, Adaptability |
+
+- **Inherited is not broken.** An interface module the fixture already
+  failed is the fixture's, not the change's, and counts neither way
+  (FR-16-02).
+- **Values, not counts.** Each record is read back as the fixture showed
+  it: the list pages, each invoice's JSON and CSV exports, the customer's
+  export, and the old invoice priced again. A key or column only the
+  changed tree has is the change's own, and is no loss (FR-16-04).
+- **Lost and missing.** A changed tree that will not open the file, or
+  sign in on it, has lost the data and fails. A fixture that cannot seed is
+  no arm's, so the reading is missing. Each reading names the fixture's
+  hash, the starting commit and the seeded database's hash.
+- **One place each.** The data upgrade is the migration target on
+  Adaptability: the change adapts to data an earlier version saved. It is
+  not read on Interoperability too, so no build is credited twice
+  (FR-16-06).
+
 ### 8.6.5 Pattern use
 
 For each design pattern it finds, the judge records where it is, what it
@@ -622,8 +654,8 @@ interval of the difference against `none` lies past the axis's margin
 each radar, shown and not scored, and the appendix holds one table of
 sub-scores per axis. The decision is ADR-023.
 
-Round 6's targets read three sources the pilot's did not (FR-12-21 to
-FR-12-23):
+Round 6's targets read four sources the pilot's did not (FR-12-21 to
+FR-12-23, FR-16-06):
 
 - **Hidden-suite modules.** Functional correctness has one target per build
   module, met where the module passes whole: no check failed, errored or
@@ -637,6 +669,10 @@ FR-12-23):
 - **Latency.** Its target reads a cutoff calibrated from the reference
   build and a planted slowdown, frozen before round 6 registers. Until then
   it is not measured.
+- **The change task's tree.** Its interfaces are one target on
+  Interoperability and its data upgrade one on Adaptability (8.6.4). Both
+  are read whatever the trial's build did, since the change starts from a
+  fixture, not from that build (FR-16-06).
 
 A pilot round read by the ISO radar keeps the targets it had before round 6,
 and reads round 6's only when `--round6-targets` asks for them.

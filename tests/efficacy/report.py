@@ -651,7 +651,40 @@ def load(root, named=None):
             name = canonical(reading.get("name") or "")
             if name in trials and not trials[name].get("change_only"):
                 trials[name][key] = reading
+
+    # A change task's own readings sit beside its change score, as the
+    # build's beside its score, and go only with a trial that has one.
+    for kind, key in CHANGE_READINGS:
+        for file in sorted(glob.glob(os.path.join(area, kind, "*.json"))):
+            with io.open(file, encoding="utf-8") as handle:
+                reading = json.load(handle)
+            name = canonical(reading.get("name") or "")
+            if name in trials and trials[name]["change"] is not None:
+                trials[name][key] = reading
+    for file in sorted(glob.glob(os.path.join(area, "judge-change",
+                                              "T*.json"))):
+        with io.open(file, encoding="utf-8") as handle:
+            judging = json.load(handle)
+        name = canonical(judging.get("trial") or "")
+        if (name in trials and trials[name]["change"] is not None
+                and judging.get("outcome") == "judged"):
+            trials[name].setdefault("change_judgings", []).append(judging)
     return trials
+
+
+# The change task's readings beyond its score, each the folder it is filed
+# in and the key a trial carries it under.
+CHANGE_READINGS = (("security-scores-change", "change_security"),
+                   ("quality-scores-change", "change_quality"))
+
+
+def drop_change(trial):
+    """A trial, in place, without its change task's readings."""
+    trial["change"] = None
+    for _, key in CHANGE_READINGS:
+        trial.pop(key, None)
+    trial.pop("change_judgings", None)
+    return trial
 
 
 def round_trials(root):
@@ -1703,7 +1736,7 @@ def exclude_reached(trials, scans, per_task=False):
                 and trials[build].get("change_only"):
             del trials[build]
         elif trials[build]["change"] is not None:
-            trials[build]["change"] = None
+            drop_change(trials[build])
         else:
             continue
         left_out.append(name)
@@ -5489,6 +5522,80 @@ def round_identity_checks():
     return checks
 
 
+def change_reading_checks():
+    """A change task's own readings go with its change score, never with a
+    build's; its two targets sit once each on the ISO radar, read whatever
+    its build did; a pilot round's table reads neither."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-change-readings-")
+    area = scoring_area(os.path.join(scratch, "run"))
+
+    def plant(kind, name, body):
+        os.makedirs(os.path.join(area, kind), exist_ok=True)
+        with io.open(os.path.join(area, kind, name + ".json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump(body, handle)
+    upgrade = {"passed": True, "seeded_sha256": "a" * 64}
+    for name in ("none-1", "inline-1"):
+        plant("scores", name, {"name": name})
+        plant("security-scores-change", name, {"name": name, "probes": {}})
+        plant("quality-scores-change", name, {
+            "name": name, "probes": {"data_upgrade": upgrade}})
+    plant("scores-change", "none-1", {"name": "none-1", "interfaces": {
+        "value": 1.0, "missing": None}})
+    plant("judge-change", "T1", {"trial": "none-1", "outcome": "judged"})
+    plant("judge-change", "T2", {"trial": "none-1", "outcome": "failed"})
+    trials = load(os.path.join(scratch, "run"))
+    none, inline = trials["none-1"], trials["inline-1"]
+    checks = [("a change task's security, quality and judgings go with its "
+               "change score, apart from the build's",
+               none["change_quality"]["probes"]["data_upgrade"] == upgrade
+               and none["change_security"]["name"] == "none-1"
+               and len(none["change_judgings"]) == 1
+               and none["security"] is None and none["quality"] is None
+               and "change_quality" not in inline
+               and "change_judgings" not in inline)]
+    drop_change(none)
+    checks.append(("a change reading left out takes its own readings along",
+                   none["change"] is None and "change_quality" not in none
+                   and "change_judgings" not in none))
+    shutil.rmtree(scratch, ignore_errors=True)
+
+    placed = [(axis, sub, source) for axis, sub, _, source, _, _
+              in iso_targets() if source.startswith(CHANGE_SOURCE)]
+    checks.append((
+        "the interfaces sit on Interoperability and the data upgrade on "
+        "Adaptability, once each",
+        placed == [("Compatibility", "Interoperability",
+                    "change:interfaces"),
+                   ("Flexibility", "Adaptability", "change:data_upgrade")]))
+    checks.append(("a pilot round's table reads no change-task target",
+                   not any(source.startswith(CHANGE_SOURCE)
+                           for _, _, _, source, _, _
+                           in iso_targets(pilot_axes()))))
+
+    def reading(interfaces, data_upgrade, install=True):
+        trial = {"round": "C1", "scores": {
+            "install": {"value": install, "missing": None}},
+            "change": {"name": "none-1", "interfaces": interfaces},
+            "change_quality": {"probes": {"data_upgrade": data_upgrade}}}
+        scores = iso_trial_scores(trial)
+        return (scores["Compatibility"]["Interoperability"],
+                target_met(trial, "change:data_upgrade", AT_LEAST, 1.0))
+    kept = reading({"value": 1.0, "missing": None}, upgrade)
+    broken = reading({"value": 0.0, "missing": None},
+                     {"passed": False, "lost": "would not open"})
+    unread = reading({"value": None, "missing": "no baseline"},
+                     {"passed": None, "missing": "no fixture"})
+    gated = reading({"value": 1.0, "missing": None}, upgrade, install=False)
+    checks.append(("a change kept, broken, lost or unread reads met, not "
+                   "met, not met and not measured",
+                   kept == (1.0, True) and broken == (0.0, False)
+                   and unread == (None, None)))
+    checks.append(("a named round's change targets read whatever its build "
+                   "did", gated == (1.0, True)))
+    return checks
+
+
 def change_only_checks():
     """A named round's change task is read whether or not its build trial
     was scored or reached, on rows of its own; a pilot round's keeps
@@ -6189,10 +6296,11 @@ LATENCY_CUTOFF_MS = None
 # bare arm. Safety, the ninth characteristic, does not apply to this backend.
 # Each sub-characteristic lists its targets as (what it asks, where the value
 # comes from, the pass condition): a metric row by its key, a security probe
-# by `probe:<name>`, a quality probe by `quality:<name>`, or a hidden-suite
-# module by `suite:<file>`. A target is met, not met, or not measured, and a
-# sub-characteristic with no target reads not measured, never 0 %. This is
-# round 6's table; a pilot round read by the radar keeps its own, below.
+# by `probe:<name>`, a quality probe by `quality:<name>`, a hidden-suite
+# module by `suite:<file>`, or a reading of the change task's tree against
+# its fixture by `change:<name>`. A target is met, not met, or not measured,
+# and a sub-characteristic with no target reads not measured, never 0 %. This
+# is round 6's table; a pilot round read by the radar keeps its own, below.
 AT_LEAST, AT_MOST = ">=", "<="
 ISO_AXES = (
     ("Functionality", (
@@ -6229,9 +6337,11 @@ ISO_AXES = (
             ("two instances side by side keep their data and files apart",
              "quality:coexistence", AT_LEAST, 1.0),)),
 
-        # The changed tree's targets join here once the change task's tree
-        # is scored: the data an earlier build saved still reads.
-        ("Interoperability", ()),
+        # The change task's tree is read here against its fixture: what the
+        # fixture exposed to other software still answers as it did.
+        ("Interoperability", (
+            ("the change keeps every interface its fixture passed",
+             "change:interfaces", AT_LEAST, 1.0),)),
     )),
     ("Usability", (
         ("Appropriateness recognisability", ()),
@@ -6347,12 +6457,14 @@ ISO_AXES = (
     )),
     ("Flexibility", (
 
-        # The changed tree's targets join here too once it is scored: a
-        # schema change shipped as a migration, the database named by
-        # configuration.
+        # The changed tree adapts to the database its fixture saved: its
+        # schema change applied to the old file, nothing lost. The data
+        # upgrade is read here alone, never on Interoperability too.
         ("Adaptability", (
             ("the build installs and serves a signed-in page on a second "
-             "Python", "quality:python_portability", AT_LEAST, 1.0),)),
+             "Python", "quality:python_portability", AT_LEAST, 1.0),
+            ("the changed tree opens its fixture's database, nothing lost",
+             "change:data_upgrade", AT_LEAST, 1.0),)),
         ("Scalability", ()),
         ("Installability", (
             ("pip install . succeeds in a clean environment", "install",
@@ -6406,8 +6518,10 @@ PILOT_CORRECTNESS = (
     ("the hidden suite passes at 98 % or more", "task_success",
      AT_LEAST, 0.98),)
 
-# The sources round 6 added; a pilot round's draft reads none of them.
-ROUND6_SOURCES = ("quality:", "suite:")
+# The sources round 6 added; a pilot round's draft reads none of them. A
+# change-task target, `change:<name>`, reads the change task's own readings.
+CHANGE_SOURCE = "change:"
+ROUND6_SOURCES = ("quality:", "suite:", CHANGE_SOURCE)
 
 
 def pilot_axes():
@@ -6484,6 +6598,8 @@ def iso_value(trial, source):
         return quality_value(trial, source[len("quality:"):])
     if source.startswith("suite:"):
         return module_value(trial, source[len("suite:"):])
+    if source.startswith(CHANGE_SOURCE):
+        return change_target_value(trial, source[len(CHANGE_SOURCE):])
     if source in ISO_EXTRA:
         accessor = ISO_EXTRA[source]
     else:
@@ -6495,6 +6611,18 @@ def iso_value(trial, source):
         return accessor(trial)
     except (TypeError, KeyError, ValueError):
         return None
+
+
+def change_target_value(trial, name):
+    """A change-task target's value: the interfaces reading of the change
+    score, or the data upgrade of the change task's quality reading; None
+    where not measured."""
+    if name == "interfaces":
+        return change_value(trial, "interfaces")
+    if name == "data_upgrade":
+        return quality_value({"quality": trial.get("change_quality")},
+                             "data_upgrade")
+    return None
 
 
 def target_met(trial, source, condition, threshold):
@@ -6536,7 +6664,8 @@ def iso_trial_scores(trial, withdrawn=(), axes=ISO_AXES):
             met = [target_met(trial, source, condition, threshold)
                    for _, source, condition, threshold in targets
                    if source not in withdrawn
-                   and not (gated and source not in CHANGE)]
+                   and not (gated and source not in CHANGE
+                            and not source.startswith(CHANGE_SOURCE))]
             measured = [outcome for outcome in met if outcome is not None]
             per_sub[sub] = (sum(measured) / len(measured) if measured
                             else None)
@@ -8349,15 +8478,17 @@ def iso_checks(seed):
                    "rules file." in words, words[:8]))
 
     # Every target reads a metric row, a probe security.py or quality.py
-    # runs, a hidden-suite module, or a reading of the radar's own; a target
-    # pointed elsewhere would read not measured for every trial without
-    # failing.
+    # runs, a hidden-suite module, the change score's interfaces or a probe
+    # of the change task's quality reading, or a reading of the radar's own;
+    # a target pointed elsewhere would read not measured for every trial
+    # without failing.
     import quality
     import security
     readers = {"probe:": set(security.SECURITY_PROBES
                              + security.DATA_PROTECTION_PROBES),
                "quality:": set(quality.PROBES),
-               "suite:": set(HIDDEN_MODULES)}
+               "suite:": set(HIDDEN_MODULES),
+               CHANGE_SOURCE: {"interfaces"} | set(quality.CHANGE_PROBES)}
     keys = {key for key, _, _, _ in METRICS} | set(ISO_EXTRA)
 
     def reads(source):
@@ -8533,7 +8664,7 @@ def iso_checks(seed):
     lines = iso_axis_lines(run, table, ["none", "hybrid"])
     thin = [line for line in lines if line.startswith("| Installability |")]
     empty = [line for line in lines
-             if line.startswith("| Interoperability |")]
+             if line.startswith("| Scalability |")]
     checks.append(("the tables mark a thin sub-characteristic and read an "
                    "empty one as not measured",
                    len(thin) == 1 and "(fewer than 3 targets)" in thin[0]
@@ -9016,6 +9147,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in python_checks())
     checks.extend((label, ok, ok) for label, ok in round_identity_checks())
     checks.extend((label, ok, ok) for label, ok in change_only_checks())
+    checks.extend((label, ok, ok) for label, ok in change_reading_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))

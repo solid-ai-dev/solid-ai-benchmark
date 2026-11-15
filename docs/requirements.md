@@ -245,6 +245,18 @@
 | FR-15-05 | The benchmark shall read portability on Python 3.14, the trial installed, booted and serving a signed-in page there, and leave it missing where no Python 3.14 is found. | Quality reader |
 | FR-15-06 | The benchmark shall read the quality probes in a fresh environment per trial on the spec's Python, and remove every environment once it is read. | Quality reader |
 
+### 16 The changed tree
+
+| ID | Requirement | Delivered by |
+| -- | ----------- | ------------ |
+| FR-16-01 | The benchmark shall score a change task's tree on every reading a build's is, with the build and change suites in place of the one suite, its churn taken before the battery writes into the tree, and its security reading filed beside its score. | Scorer |
+| FR-16-02 | The benchmark shall read a change task's interfaces against its fixture's frozen baseline: met where every one of `test_api_contract.py`, `test_http_routes.py`, `test_export_json.py` and `test_export_csv.py` the fixture passed whole passes whole on the changed tree, not met where one does not, a module the fixture already failed inherited and counted neither way; not measured with no baseline, no build suite, or none the fixture passed; and refuse a fixture whose baseline does not say which of the four it passed. | Scorer, Harness |
+| FR-16-03 | The benchmark shall read the security and quality probes on a change task's tree from its own score into folders of its own, a tree that does not install losing them as a build's does. | Security reader, Quality reader |
+| FR-16-04 | The benchmark shall read a change task's data upgrade: products, customers, rules, a jurisdiction and invoices seeded through the forms of the application at the change's starting commit, then a copy of that database opened by the changed tree; failed where a record is gone or reads differently, an old invoice does not open or price as it did, or the upgraded file refuses new records; lost where the changed tree does not install, open the file or sign in; missing where the fixture cannot seed or the change names no starting commit; each reading naming the fixture's hash, the starting commit and the seeded database's hash. | Quality reader |
+| FR-16-05 | The benchmark shall judge a change task's tree blind, apart from the build's, with labels and a map of its own, and not judge one that did not install. | Judge |
+| FR-16-06 | From round 6 the benchmark shall read a change task's interfaces on Interoperability and its data upgrade on Adaptability, each once, whatever its build did, its security and quality readings and judgings going only with its change score; a pilot round reads neither. | Report |
+| FR-16-07 | The benchmark shall archive a change task's security and quality readings and judgings, and reuse a change task with its arm's build trials, in a change run of its own naming its round's fixtures, with every reading and judging of its own. | Archive, Reuse |
+
 ## Quality requirements
 
 - **Numbering:** characteristics follow ISO/IEC 25010:2023 order, 01
@@ -338,8 +350,9 @@
 - **Pilot drafts:** a pilot round read by the ISO radar keeps the targets it
   had before round 6: the hidden suite at 98 % or more for correctness, and
   no quality probe. Round 6's are read there only when asked for.
-- **Later:** interoperability and the migration targets come with the
-  changed tree's scoring. The export formats take no target of their own:
+- **Change task:** two targets read the change task's tree against its
+  fixture, each in one place: its interfaces on Interoperability, its data
+  upgrade on Adaptability. The export formats take no target of their own:
   the hidden suite's export modules grade them.
 
 ### 01 Functional suitability
@@ -365,6 +378,7 @@
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-03-01 | Co-existence | Two instances side by side keep their data and files apart. | Quality probe `coexistence` |
+| QT-03-02 | Interoperability | The change keeps every interface its fixture passed: its Python names, routes and two exports. | Change score `interfaces` |
 
 ### 04 Interaction capability
 
@@ -436,3 +450,4 @@
 | -- | ------------------ | ------ | --------- |
 | QT-08-01 | Installability | `pip install .` succeeds in a clean environment. | Installs in a clean environment |
 | QT-08-02 | Adaptability | The build installs and serves a signed-in page on a second Python. | Quality probe `python_portability` |
+| QT-08-03 | Adaptability | The changed tree opens its fixture's database, nothing lost. | Change task's quality probe `data_upgrade` |

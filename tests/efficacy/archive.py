@@ -35,8 +35,14 @@ MANIFEST = "ARCHIVE.json"
 STAMP = "archived.json"
 
 # The scoring area's per-trial readings the report aggregates, each a JSON
-# file named for its trial.
-READINGS = ("scores", "scores-change", "security-scores", "quality-scores")
+# file named for its trial, a change task's beside the build's.
+READINGS = ("scores", "scores-change", "security-scores",
+            "security-scores-change", "quality-scores",
+            "quality-scores-change")
+
+# The judgings' folders, the build's and the change task's, each with its
+# own labels and map.
+JUDGINGS = ("judge", "judge-change")
 
 # What a frozen workspace holds that no reading needs and any scoring
 # rebuilds: tool caches, compiled bytecode, and every virtual environment,
@@ -117,8 +123,9 @@ def readings_digest(root):
     files = {os.path.basename(path): path
              for path in glob.glob(os.path.join(root, "run-*.json"))}
     patterns = [os.path.join(kind, "*.json") for kind in READINGS]
-    patterns += [os.path.join("judge", "T*.json"),
-                 os.path.join("judge", "map.json")]
+    for judging in JUDGINGS:
+        patterns += [os.path.join(judging, "T*.json"),
+                     os.path.join(judging, "map.json")]
     for pattern in patterns:
         for path in glob.glob(os.path.join(area, pattern)):
             files[os.path.relpath(path, area).replace(os.sep, "/")] = path
@@ -213,10 +220,11 @@ def archive(root, into):
 
     # A judging's bundle is rebuilt from its tree, so only the judgings, the
     # unblinding map and a failed judging's output tail are kept.
-    for path in sorted(glob.glob(os.path.join(area, "judge", "*"))):
-        if os.path.isfile(path):
-            copy_file(path, os.path.join(into_area, "judge",
-                                         os.path.basename(path)))
+    for judging in JUDGINGS:
+        for path in sorted(glob.glob(os.path.join(area, judging, "*"))):
+            if os.path.isfile(path):
+                copy_file(path, os.path.join(into_area, judging,
+                                             os.path.basename(path)))
     lock = os.path.join(area, "tool-lock.txt")
     if os.path.isfile(lock):
         copy_file(lock, os.path.join(into_area, "tool-lock.txt"))
@@ -361,7 +369,9 @@ def drop_trees(root):
     for part in ("scoring", "scoring-change"):
         for kind in ("tree", "venv"):
             folders += glob.glob(os.path.join(area, part, "*", kind))
-    folders += glob.glob(os.path.join(area, "security", "*", "venv"))
+    for reader in ("security", "security-change", "quality",
+                   "quality-change"):
+        folders += glob.glob(os.path.join(area, reader, "*", "venv"))
     for folder in folders:
         remove_tree(folder)
     return len(folders)
@@ -444,7 +454,8 @@ def plant_root(scratch):
     # what the archive copies, so a kind it stops copying shows.
     for name, arm in (("none-1", "none"), ("hybrid-1", "hybrid")):
         for kind in ("scores", "scores-change", "security-scores",
-                     "quality-scores"):
+                     "security-scores-change", "quality-scores",
+                     "quality-scores-change"):
             dump_json(os.path.join(area, kind, "%s.json" % name),
                       {"name": name, "arm": arm, "trial": 1,
                        "suite_revision": "suite1"})
@@ -452,6 +463,11 @@ def plant_root(scratch):
               {"trial": "none-1", "blind_id": "T1", "outcome": "judged",
                "answer": {"rubric": {}}})
     dump_json(os.path.join(area, "judge", "map.json"),
+              {"seed": 1, "blind": {"none-1": "T1"}})
+    dump_json(os.path.join(area, "judge-change", "T1.json"),
+              {"trial": "none-1", "task": "change", "blind_id": "T1",
+               "outcome": "judged", "answer": {"rubric": {}}})
+    dump_json(os.path.join(area, "judge-change", "map.json"),
               {"seed": 1, "blind": {"none-1": "T1"}})
     os.makedirs(os.path.join(area, "judge", "T1"))
     with io.open(os.path.join(area, "judge", "T1", "bundle.txt"), "w",
@@ -502,6 +518,15 @@ def self_test():
         ("quality readings are archived beside the security readings",
          {"scoring/quality-scores/none-1.json",
           "scoring/quality-scores/hybrid-1.json"} <= set(files)),
+        ("a change task's security and quality readings and judgings are "
+         "archived beside its score",
+         {"scoring/security-scores-change/none-1.json",
+          "scoring/quality-scores-change/hybrid-1.json",
+          "scoring/judge-change/T1.json",
+          "scoring/judge-change/map.json"} <= set(files)
+         and set(readings_digest(root)) >= {
+             "quality-scores-change/none-1.json",
+             "judge-change/T1.json"}),
         ("a voided directory is kept as a marker",
          manifest["voided"] == ["hybrid-1-2026-10-01T11-00-00"]
          and os.path.isfile(os.path.join(into, "void", manifest["voided"][0],

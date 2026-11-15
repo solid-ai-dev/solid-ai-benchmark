@@ -38,10 +38,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 import probes  # noqa: E402
-from harness import (SCORABLE, LiveRunError, TrialError,  # noqa: E402
-                     canonical, claim_area, claim_refusal_check,
+from harness import (INTERFACE_MODULES, SCORABLE, LiveRunError,  # noqa: E402
+                     TrialError, canonical, claim_area, claim_refusal_check,
                      frozen_top, name_of, release_area, remove_tree,
-                     scorable_trials, scoring_area)
+                     scorable_trials, scoring_area, task_folder)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.basename(__file__)
@@ -1235,7 +1235,19 @@ def score_trial(record, options, suite, lock):
             raise ScoreError("%s; score with --no-web to accept the skips"
                              % refusal)
     scores["hidden_suite"] = run_hidden_suite(venv, suite, workspace, "build")
+    measure_code(scores, venv, workspace, options, lock, source)
+    scores["scope"] = scope(workspace, roots)
+    scores["cost"] = cost(record)
 
+    scores["flagged"] = metric_flags(scores)
+    drop_venv(venv)
+    return scores
+
+
+def measure_code(scores, venv, workspace, options, lock, source):
+    """The static battery, the structure and web probes and adherence, read
+    into `scores` from the installed tree once its suites have run."""
+    roots, seen = scores["discovery"]["roots"], scores["seen"]
     scores["battery"] = install_battery(venv, lock)
 
     # Again after the battery, which installs the lock's own Playwright over
@@ -1277,13 +1289,6 @@ def score_trial(record, options, suite, lock):
     # After the battery and the structure probe, because every item it scores
     # is read from one of them.
     scores["adherence"] = adherence(workspace, scores)
-
-    scores["scope"] = scope(workspace, roots)
-    scores["cost"] = cost(record)
-
-    scores["flagged"] = metric_flags(scores)
-    drop_venv(venv)
-    return scores
 
 
 # What churn does not count: environments, caches, build output and the
@@ -1328,28 +1333,43 @@ def churn(workspace, base):
                     invocation=outcome["argv"])
 
 
-def score_change_trial(record, options, suite):
-    """Score one frozen change task: install, both suites, churn and cost."""
+def score_change_trial(record, options, suite, lock):
+    """Score one frozen change task: everything a build is scored on, both
+    suites, the interfaces it kept, churn and cost."""
     name = name_of(record)
     frozen = "change-%s" % name
 
     # Apart from `scoring/`, whose extracted trees the judge takes for build
     # trials; a change tree there would be judged as one.
-    scoring = os.path.join(scoring_area(options.root), "scoring-change", name)
+    scoring = os.path.join(scoring_area(options.root),
+                           task_folder("scoring", "change"), name)
     os.makedirs(scoring, exist_ok=True)
     workspace = extract((record.get("frozen") or {}).get("tarball"),
                         os.path.join(scoring, "tree"), frozen)
+    files = python_files(workspace)
     venv = create_venv(os.path.join(scoring, "venv"))
 
+    # The fixture is named by its hash and with the readings it qualified
+    # on, so every reading of the change says what it was read against.
     scores = {"arm": record["arm"], "trial": record["trial"],
               "name": name,
               "task": "change", "workspace": workspace,
               "base": record.get("base"), "model": record.get("model"),
+              "fixture": record.get("fixture"),
+              "templates_tree": record.get("templates_tree"),
               "suite_revision": suite["revision"],
               "python": venv_version(venv),
               "scored_at": datetime.datetime.now().isoformat(
-                  timespec="seconds")}
+                  timespec="seconds"),
+              "python_files": files}
     scores["install"] = install_trial(venv, workspace)
+    source = package_source(venv)
+    scores["boot"] = boot_check(venv, workspace)
+    discovery = discover_roots(venv, workspace)
+    roots = discovery["roots"]
+    scores["discovery"] = {"roots": roots, "how": discovery["how"],
+                           "installed": discovery["installed"]}
+    scores["seen"] = count_source(roots)
 
     # The build suite re-runs unchanged beside the change suite: a change that
     # passes its own checks by breaking the application has not scored well.
@@ -1364,13 +1384,73 @@ def score_change_trial(record, options, suite):
     scores["build_suite"] = run_hidden_suite(venv, suite, workspace, "build")
     scores["change_suite"] = run_hidden_suite(venv, suite, workspace,
                                               "change")
+    scores["interfaces"] = interfaces(scores["build_suite"],
+                                      record.get("fixture"))
+
+    # Before the battery, whose tools leave reports and caches in the tree
+    # that the agent never wrote.
     scores["churn"] = (churn(workspace, record["base"]) if record.get("base")
                        else absent("the change record names no starting "
                                    "commit"))
+    measure_code(scores, venv, workspace, options, lock, source)
+    scores["scope"] = scope(workspace, roots)
     scores["cost"] = cost(record)
     scores["flagged"] = metric_flags(scores)
     drop_venv(venv)
     return scores
+
+
+def module_whole(report, module):
+    """Whether a suite report shows a module passed whole: some check
+    passed and none failed, errored or was skipped; a module it does not
+    list did not run."""
+    counts = ((report or {}).get("modules") or {}).get(module)
+    if not isinstance(counts, dict):
+        return False
+    unproven = sum(counts.get(key) or 0
+                   for key in ("failed", "error", "skipped"))
+    return not unproven and bool(counts.get("passed"))
+
+
+def interfaces(build_suite, fixture):
+    """Whether what the fixture exposed still answers after the change:
+    1.0 where every interface module the fixture passed whole passes whole
+    on the changed tree, 0.0 where one no longer does.
+
+    A module the fixture already failed is inherited, never the change's,
+    and counts neither way; it is told apart from one the change broke.
+    """
+    baseline = ((fixture or {}).get("baseline") or {}).get("interfaces")
+    if not isinstance(baseline, dict) or any(
+            not isinstance(baseline.get(module), bool)
+            for module in INTERFACE_MODULES):
+        return absent("the change task names no fixture whose interface "
+                      "modules were frozen")
+    if build_suite.get("missing"):
+        return absent("the build suite did not run on the changed tree: %s"
+                      % build_suite["missing"])
+    report = build_suite.get("report")
+    modules = {}
+    for module in INTERFACE_MODULES:
+        before, after = baseline[module], module_whole(report, module)
+        verdict = ({(True, True): "kept", (True, False): "broken",
+                    (False, True): "repaired", (False, False): "inherited"}
+                   [(before, after)])
+        modules[module] = {"fixture": before, "changed": after,
+                           "verdict": verdict}
+    held = [module for module in INTERFACE_MODULES if baseline[module]]
+    broken = [module for module in held
+              if modules[module]["verdict"] == "broken"]
+    inherited = [module for module in INTERFACE_MODULES
+                 if modules[module]["verdict"] == "inherited"]
+    fixture_name = (fixture or {}).get("trial")
+    if not held:
+        return absent("the fixture passed none of the interface modules "
+                      "whole, so the change had none to keep",
+                      modules=modules, inherited=inherited,
+                      fixture=fixture_name)
+    return measured(0.0 if broken else 1.0, modules=modules, broken=broken,
+                    inherited=inherited, fixture=fixture_name)
 
 
 PLANTED_MODULE = '''"""A plausible module, so the battery has something to read."""
@@ -1685,6 +1765,97 @@ def security_checks(scratch):
     owed = security_owed(target, ["inline-1", "hand-1", "none-1"], ["none-1"])
     return [("a rescored trial is read again, a skipped one only if unread",
              owed == ["hand-1", "none-1"])]
+
+
+def interface_checks():
+    """The interfaces reading: kept, broken, inherited and repaired told
+    apart, and missing where there is nothing to read it against."""
+    def suite(failing=(), skipped=(), absent_modules=()):
+        modules = {module: {"passed": 3, "failed": 1 if module in failing
+                            else 0, "skipped": 1 if module in skipped else 0}
+                   for module in INTERFACE_MODULES
+                   if module not in absent_modules}
+        return measured(1.0, report={"modules": modules})
+
+    def fixture(failed=()):
+        return {"trial": "none-2", "sha256": "0" * 64, "baseline": {
+            "interfaces": {module: module not in failed
+                           for module in INTERFACE_MODULES}}}
+
+    api, routes = INTERFACE_MODULES[0], INTERFACE_MODULES[1]
+    kept = interfaces(suite(), fixture())
+    broken = interfaces(suite(failing=[routes]), fixture())
+    skipped = interfaces(suite(skipped=[routes]), fixture())
+    unrun = interfaces(suite(absent_modules=[routes]), fixture())
+    inherited = interfaces(suite(failing=[api]), fixture(failed=[api]))
+    repaired = interfaces(suite(), fixture(failed=[api]))
+    none_held = interfaces(suite(), fixture(failed=INTERFACE_MODULES))
+    return [
+        ("a change keeping every interface the fixture passed reads 1",
+         kept["value"] == 1.0 and not kept["broken"]),
+        ("an interface module the change broke reads 0 and is named",
+         broken["value"] == 0.0 and broken["broken"] == [routes]
+         and broken["modules"][routes]["verdict"] == "broken"),
+        ("a skipped or unrun interface module is not kept",
+         skipped["value"] == 0.0 and unrun["value"] == 0.0),
+        ("a module the fixture already failed is inherited, not the change's",
+         inherited["value"] == 1.0 and inherited["inherited"] == [api]
+         and inherited["modules"][api]["verdict"] == "inherited"),
+        ("a module the change repaired reads repaired",
+         repaired["value"] == 1.0
+         and repaired["modules"][api]["verdict"] == "repaired"),
+        ("interfaces read missing with no frozen baseline, no build suite, "
+         "or none the fixture passed",
+         interfaces(suite(), None)["missing"] is not None
+         and interfaces(suite(), {"baseline": {}})["missing"] is not None
+         and interfaces(absent("no grader"), fixture())["missing"]
+         is not None
+         and none_held["value"] is None and none_held["missing"]),
+    ]
+
+
+def change_breadth_checks(scratch):
+    """A change task is scored on every reading a build is, with its own
+    suites and churn in place of the build's one suite."""
+    import argparse as _argparse
+    stubs = {
+        "extract": lambda tarball, into, name: os.path.join(into, name),
+        "python_files": lambda workspace: [],
+        "create_venv": lambda where: where,
+        "venv_version": lambda venv: "3.12.0",
+        "install_trial": lambda venv, workspace: measured(True),
+        "package_source": lambda venv: "site",
+        "boot_check": lambda venv, workspace: measured(True),
+        "discover_roots": lambda venv, workspace: {
+            "roots": [], "how": "stub", "installed": None},
+        "count_source": lambda roots: {"files": 0, "lines": 0},
+        "pip": lambda venv, *args, **kwargs: None,
+        "run_hidden_suite": lambda venv, suite, workspace, which: measured(
+            1.0, report={"modules": {}}),
+        "install_battery": lambda venv, lock: {"missing": "stubbed"},
+        "package_moved": lambda before, after: None,
+        "adherence": lambda workspace, scores: measured(1.0),
+        "scope": lambda workspace, roots: measured({}),
+        "churn": lambda workspace, base: measured({}),
+        "drop_venv": lambda venv: None,
+    }
+    saved = {name: globals()[name] for name in stubs}
+    record = {"arm": "none", "trial": 1, "base": "abc", "frozen": {
+        "tarball": "none-1.tar"}, "fixture": None}
+    options = _argparse.Namespace(root=os.path.join(scratch, "breadth"),
+                                  web=False)
+    suite = {"revision": "stub", "path": scratch}
+    globals().update(stubs)
+    try:
+        build = score_trial(record, options, suite, "lock")
+        change = score_change_trial(record, options, suite, "lock")
+    finally:
+        globals().update(saved)
+    owed = set(build) - {"hidden_suite"}
+    return [("a changed tree is scored on every reading a build is",
+             owed <= set(change)
+             and {"build_suite", "change_suite", "interfaces",
+                  "churn"} <= set(change))]
 
 
 PLANTED_SEEDING_APP = '''\
@@ -2068,7 +2239,8 @@ def self_test():
               + coverage_checks(scratch) + ruler_checks(scratch)
               + adherence_checks(scratch)
               + python_files_checks(scratch)
-              + scope_checks(scratch) + revision_checks(scratch))
+              + scope_checks(scratch) + revision_checks(scratch)
+              + interface_checks() + change_breadth_checks(scratch))
     dropped = create_venv(os.path.join(scratch, "dropped"))
     drop_venv(dropped)
     checks.append(("a scored trial's environment is dropped",
@@ -2203,11 +2375,11 @@ def summary(scores):
     flagged = len(scores.get("flagged") or [])
     if scores.get("task") == "change":
         changed = (scores.get("churn") or {}).get("value") or {}
-        return ("change suite %s, build suite %s, %s file(s) and %s line(s) "
-                "changed, %d metric(s) flagged"
+        return ("change suite %s, build suite %s, interfaces kept %s, %s "
+                "file(s) and %s line(s) changed, %d metric(s) flagged"
                 % (rate("change_suite"), rate("build_suite"),
-                   changed.get("files", "?"), changed.get("lines", "?"),
-                   flagged))
+                   rate("interfaces"), changed.get("files", "?"),
+                   changed.get("lines", "?"), flagged))
     return "suite %s, %d metric(s) flagged" % (rate("hidden_suite"), flagged)
 
 
@@ -2253,8 +2425,7 @@ def score_trials(options):
     # trial, and one must never overwrite the other.
     area = scoring_area(options.root)
     lock = os.path.join(area, "tool-lock.txt")
-    target = os.path.join(area, "scores" if options.task == "build"
-                          else "scores-change")
+    target = os.path.join(area, task_folder("scores", options.task))
     try:
         wanted = {canonical(name) for name in options.trial}
     except TrialError as error:
@@ -2297,7 +2468,7 @@ def score_trials(options):
         print("%s  scoring the %s task" % (name, options.task))
         try:
             if options.task == "change":
-                scores = score_change_trial(record, options, suite)
+                scores = score_change_trial(record, options, suite, lock)
             else:
                 scores = score_trial(record, options, suite, lock)
         except ScoreError as error:
@@ -2311,17 +2482,17 @@ def score_trials(options):
         print("  %s" % summary(scores))
         scored.append(name)
 
-    # The probe pass rates are primary, so a build scoring files them rather
-    # than leaving them to a second command someone must remember.
-    owed = []
-    if options.task == "build":
-        owed = security_owed(os.path.join(area, "security-scores"),
-                             scored + skipped, scored)
+    # The probe pass rates are primary, so scoring files them rather than
+    # leaving them to a second command someone must remember; a change task's
+    # go beside its own scores, as the build's do.
+    owed = security_owed(os.path.join(area, task_folder("security-scores",
+                                                        options.task)),
+                         scored + skipped, scored)
     if owed:
         # Imported here, because security.py imports this module.
         import security
         security.file_readings(area, {name: existing_score(target, name)
-                                      for name in owed}, owed)
+                                      for name in owed}, owed, options.task)
 
     done = bool(scored or skipped)
     lib.print_verdict(refused == 0 and done,
