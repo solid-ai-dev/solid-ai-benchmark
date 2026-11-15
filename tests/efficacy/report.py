@@ -4597,7 +4597,7 @@ def round5e_checks():
                    and "| Compatibility | not measured | not measured |"
                    in got and not any("Economy" in line for line in got),
                    got))
-    reports = os.path.join(tempfile.gettempdir(), *REPORTS)
+    reports = os.path.join(tempfile.gettempdir(), "docs", "reports")
     got = (posthoc_iso_problem(True, reports) is not None,
            posthoc_iso_problem(True, os.path.join(reports, "iso-draft"))
            is not None,
@@ -5210,7 +5210,7 @@ def record_checks():
     """A report into any docs/reports/ needs the round archived, and one
     with no --out-dir lands in this repository's, with no templates source."""
     scratch = tempfile.mkdtemp(prefix="efficacy-report-record-")
-    reports = os.path.join(scratch, "benchmark", *REPORTS)
+    reports = os.path.join(scratch, "benchmark", "docs", "reports")
     checks = [("any docs/reports directory is a round's record",
                is_record(reports) and not is_record(scratch), reports)]
     root = os.path.join(scratch, "run")
@@ -5230,7 +5230,7 @@ def record_checks():
     checks.append(("a report into any docs/reports needs the stamp",
                    code == 2 and "not been archived" in printed
                    and not os.path.exists(reports), printed[:200]))
-    own = os.path.join(REPOSITORY, *REPORTS)
+    own = os.path.join(REPOSITORY, "docs", "reports")
     before = sorted(os.listdir(own)) if os.path.isdir(own) else []
     source = os.environ.pop(TEMPLATES_ENV, None)
     try:
