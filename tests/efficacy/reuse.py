@@ -3,11 +3,11 @@ they were.
 
 Round 5d reuses round 5c's trials rather than running them again. This
 module copies what the report reads for a trial — its run record, frozen
-tarball, transcripts, score, judging and security reading — from the earlier
-root and scoring area into the new ones, and marks each copy with where it
-came from. The earlier root is never touched, and nothing copied is scored or
-judged again: the scorer, the judge and the security reader skip a trial
-whose result is already there.
+tarball, transcripts, score, judging, and security and quality readings —
+from the earlier root and scoring area into the new ones, and marks each copy
+with where it came from. The earlier root is never touched, and nothing
+copied is scored or judged again: the scorer, the judge and the security and
+quality readers skip a trial whose result is already there.
 """
 
 import argparse
@@ -31,7 +31,7 @@ from harness import (ARMS, PROMPT, REGISTRATIONS, TrialError,  # noqa: E402
 
 # The scoring area's per-trial readings, each a JSON file named for the
 # trial, that a reused trial brings with it.
-READINGS = ("scores", "security-scores")
+READINGS = ("scores", "security-scores", "quality-scores")
 
 
 def existing_file(directory, name):
@@ -258,7 +258,10 @@ def plant_source(scratch, name="earlier", identity=None):
         with io.open(os.path.join(folder, "planted.jsonl"), "w",
                      encoding="utf-8") as handle:
             handle.write("{}\n")
-        for kind in READINGS:
+
+        # Each reading the scoring area holds, named here rather than taken
+        # from what a reuse copies, so a kind it stops copying shows.
+        for kind in ("scores", "security-scores", "quality-scores"):
             os.makedirs(os.path.join(area, kind), exist_ok=True)
             with io.open(os.path.join(area, kind, "%s.json" % old), "w",
                          encoding="utf-8") as handle:
@@ -325,6 +328,10 @@ def self_test():
              for name, old in (("inline-1", "inline-1"), ("hand-1", "hand-1")))
          and not os.path.exists(os.path.join(area, "scores",
                                              "none-1.json"))),
+        ("the quality readings come along beside the security readings",
+         all(os.path.isfile(os.path.join(area, kind, "%s.json" % name))
+             for kind in ("security-scores", "quality-scores")
+             for name in ("inline-1", "hand-1"))),
         ("the judgings keep their labels and the map is theirs alone",
          loaded(area, "judge", "T2.json")["trial"] == "inline-1"
          and loaded(area, "judge", "T1.json")["trial"] == "hand-1"

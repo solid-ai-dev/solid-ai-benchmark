@@ -36,7 +36,7 @@ STAMP = "archived.json"
 
 # The scoring area's per-trial readings the report aggregates, each a JSON
 # file named for its trial.
-READINGS = ("scores", "scores-change", "security-scores")
+READINGS = ("scores", "scores-change", "security-scores", "quality-scores")
 
 # What a frozen workspace holds that no reading needs and any scoring
 # rebuilds: tool caches, compiled bytecode, and every virtual environment,
@@ -389,7 +389,8 @@ def plant_tarball(path, name, extra=()):
 
 def plant_root(scratch):
     """A round with two build trials, one change trial, one voided attempt
-    and its re-run, scored, judged, read for security and archived nowhere."""
+    and its re-run, scored, judged, read for security and quality, and
+    archived nowhere."""
     root = os.path.join(scratch, "round")
     area = scoring_area(root)
     started = datetime.datetime(2026, 10, 1, 12, 0, 0)
@@ -439,8 +440,11 @@ def plant_root(scratch):
                  "w", encoding="utf-8") as handle:
         handle.write('{"token": "planted-secret"}')
 
+    # Each reading the scoring area holds, named here rather than taken from
+    # what the archive copies, so a kind it stops copying shows.
     for name, arm in (("none-1", "none"), ("hybrid-1", "hybrid")):
-        for kind in READINGS:
+        for kind in ("scores", "scores-change", "security-scores",
+                     "quality-scores"):
             dump_json(os.path.join(area, kind, "%s.json" % name),
                       {"name": name, "arm": arm, "trial": 1,
                        "suite_revision": "suite1"})
@@ -495,6 +499,9 @@ def self_test():
           "scoring/scores-change/none-1.json", "scoring/judge/T1.json",
           "scoring/judge/map.json", "scoring/tool-lock.txt"} <= set(files)
          and not any("bundle" in key for key in files)),
+        ("quality readings are archived beside the security readings",
+         {"scoring/quality-scores/none-1.json",
+          "scoring/quality-scores/hybrid-1.json"} <= set(files)),
         ("a voided directory is kept as a marker",
          manifest["voided"] == ["hybrid-1-2026-10-01T11-00-00"]
          and os.path.isfile(os.path.join(into, "void", manifest["voided"][0],
