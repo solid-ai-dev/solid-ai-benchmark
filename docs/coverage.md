@@ -178,7 +178,7 @@ when:
 | FR-12-15 | Self-test | `report.py` "the screen drops an arm worse than none on a deciding row, ranks the rest by rows better and then by cost, and keeps four"<br>`report.py` "the screen names the arms round 6 runs"<br>`report.py` "the screen names no arm for round 6 while the run is short of its K"<br>`report.py` "a reused arm short of its K holds the screen as a fresh one does"<br>`report.py` "a deciding row not computed yet holds the screen"<br>`report.py` "a candidate out on a row read worse holds the screen for no unread row"<br>`report.py` "the screen ranks what it holds and names no arm for round 6 while a candidate is missing" |
 | FR-12-16 | Self-test | `report.py` "an ISO-read arm's verdict is worse on an axis worse, better on one better with none worse, and no clear gain otherwise"<br>`report.py` "the plain words name the axes behind an ISO-read verdict"<br>`report.py` "the summary's axis table of an ISO-read run is the ISO radar's, marked as the chart is" |
 | FR-12-17 | Self-test | `report.py` "the ISO screen drops an arm worse on an axis, ranks the rest by axes better and then by cost, and keeps four"<br>`report.py` "an axis no target measures neither holds nor moves the ISO screen"<br>`report.py` "an axis that lists targets but has no reading yet holds the ISO screen"<br>`report.py` "the ISO screen names the arms round 6 runs and the axis that put one out" |
-| FR-12-18 | Self-test | `report.py` "a pilot round read by the ISO radar is only a draft, never in or under docs/audits/, and keeps its aggregate beside the registered one"<br>`report.py` "a pilot round read by the ISO radar says it is post hoc and that its axes decide"<br>`report.py` "a run read by the ISO radar refuses a cross-check, whose withheld rows its markers would still count" |
+| FR-12-18 | Self-test | `report.py` "a pilot round read by the ISO radar is only a draft, never in or under docs/reports/, and keeps its aggregate beside the registered one"<br>`report.py` "a pilot round read by the ISO radar says it is post hoc and that its axes decide"<br>`report.py` "a run read by the ISO radar refuses a cross-check, whose withheld rows its markers would still count" |
 
 ## 13 Records and archive
 
@@ -187,12 +187,13 @@ when:
 | FR-13-01 | Self-test | `harness.py` "the record is written as every trial starts and ends"<br>`harness.py` "every trial records the CLI's version, read as it starts" |
 | FR-13-02 | Self-test | `generate_arm.py` "every built arm's file has its generation record beside it"<br>`report.py` "a pilot arm no script builds keeps its record for the report, and its vendored templates" |
 | FR-13-03 | Self-test | `archive.py` "readings, judgings, map and lock come; bundles do not"<br>`archive.py` "the original tarball's hash is recorded"<br>`archive.py` "the revisions are recorded"<br>`archive.py` "a reading changed in the archive fails the verify" |
-| FR-13-04 | Self-test | `archive.py` "a reading changed after the stamp is a problem"<br>`archive.py` "the report refuses docs/audits/ without a current stamp"<br>`report.py` "a report into a templates source's docs/audits needs the stamp" |
+| FR-13-04 | Self-test | `archive.py` "a reading changed after the stamp is a problem"<br>`archive.py` "the report refuses docs/reports/ without a current stamp"<br>`report.py` "a report into any docs/reports needs the stamp" |
 | FR-13-05 | Self-test | `archive.py` "the restored root reads as the original does"<br>`archive.py` "a restored record points at the restored tarball and void"<br>`archive.py` "a restored transcript keeps its time" |
 | FR-13-06 | Self-test | `generate_arm.py` "the two map arms name the same moments in the chain's order"<br>`generate_arm.py` "the reading map names every template of the chain once, under docs/solid-ai-templates/"<br>`generate_arm.py` "each template skill is its template verbatim, named by the manifest"<br>`generate_arm.py` "a chain file the manifest does not describe is refused" |
 | FR-13-07 | Self-test | `generate_arm.py` "every built root opens with the brief, verbatim, the emitted ones too"<br>`generate_arm.py` "every committed arm's root opens with the brief, verbatim"<br>`generate_arm.py` "the brief and the facts name the stack and no tooling" |
 | FR-13-08 | Self-test | `generate_arm.py` "a built file naming a tool is refused" |
-| FR-13-09 | Self-test | `generate_arm.py` "every committed arm is what the script builds at its recorded ref, byte for byte, the same twice" |
+| FR-13-09 | Self-test | `report.py` "with no --out-dir it lands in this repository's docs/reports/, needing the stamp but no templates source" |
+| FR-13-10 | Self-test | `generate_arm.py` "every committed arm is what the script builds at its recorded ref, byte for byte, the same twice" |
 
 ## 14 One run at a time
 

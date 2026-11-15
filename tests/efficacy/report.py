@@ -42,7 +42,7 @@ from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
                      ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, ROUND5E_ARMS,
                      SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING, TrialError,
                      canonical, git, reach, read_transcripts, scoring_area,
-                     split_name, templates_root, transcript_files,
+                     split_name, transcript_files,
                      trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
@@ -62,11 +62,10 @@ ROUND5E_REGISTRATION = "docs/rounds/round-5e.md"
 # A registration counts once it is on this branch, not on a branch of its own.
 REGISTRATION_BRANCH = "main"
 
-# A round's report is its record, kept beside the templates it measured:
-# under the templates source's docs/audits/. A report written to any such
-# directory needs the round archived as it stands; anywhere else it is a
-# draft.
-AUDITS = ("docs", "audits")
+# A round's report is its record, kept in this repository's docs/reports/. A
+# report written to any such directory needs the round archived as it stands;
+# anywhere else it is a draft.
+REPORTS = ("docs", "reports")
 
 # The fewest paired differences at which all of them pointing one way is
 # unlikely by luck at 5 %: 2 of 64 sign patterns. Below it, no interval is
@@ -1713,7 +1712,7 @@ def write_report(root, trials, table, results, seed, out_dir,
 
     The directory has no default so a shakedown of the writer renders into
     a scratch directory. A fabricated run must not be able to leave a file
-    among the real audits, where its date alone would read as a result.
+    among the real reports, where its date alone would read as a result.
     `withdrawn` maps each withdrawn metric to its record, already blanked
     from `table` and `results`.
     `cross` is the other vendor's judge's reading, already applied to
@@ -4598,15 +4597,15 @@ def round5e_checks():
                    and "| Compatibility | not measured | not measured |"
                    in got and not any("Economy" in line for line in got),
                    got))
-    audits = os.path.join(tempfile.gettempdir(), *AUDITS)
-    got = (posthoc_iso_problem(True, audits) is not None,
-           posthoc_iso_problem(True, os.path.join(audits, "iso-draft"))
+    reports = os.path.join(tempfile.gettempdir(), "docs", "reports")
+    got = (posthoc_iso_problem(True, reports) is not None,
+           posthoc_iso_problem(True, os.path.join(reports, "iso-draft"))
            is not None,
            posthoc_iso_problem(True, tempfile.gettempdir()),
-           posthoc_iso_problem(False, audits),
+           posthoc_iso_problem(False, reports),
            aggregate_name(True), aggregate_name(False))
     checks.append(("a pilot round read by the ISO radar is only a draft, "
-                   "never in or under docs/audits/, and keeps its aggregate "
+                   "never in or under docs/reports/, and keeps its aggregate "
                    "beside the registered one",
                    got == (True, True, None, None, "aggregate-iso.json",
                            "aggregate.json"), got))
@@ -5208,12 +5207,12 @@ def failed_build_checks():
 
 
 def record_checks():
-    """A report into any docs/audits/ needs the round archived, and one with
-    neither a templates source nor --out-dir is refused."""
+    """A report into any docs/reports/ needs the round archived, and one
+    with no --out-dir lands in this repository's, with no templates source."""
     scratch = tempfile.mkdtemp(prefix="efficacy-report-record-")
-    audits = os.path.join(scratch, "templates", *AUDITS)
-    checks = [("any docs/audits directory is a round's record",
-               is_record(audits) and not is_record(scratch), audits)]
+    reports = os.path.join(scratch, "benchmark", "docs", "reports")
+    checks = [("any docs/reports directory is a round's record",
+               is_record(reports) and not is_record(scratch), reports)]
     root = os.path.join(scratch, "run")
     scores = os.path.join(scoring_area(root), "scores")
     os.makedirs(scores)
@@ -5227,18 +5226,23 @@ def record_checks():
             return main(argv), sys.stdout.getvalue()
         finally:
             sys.stdout = saved
-    code, printed = quietly(["--root", root, "--out-dir", audits])
-    checks.append(("a report into a templates source's docs/audits needs "
-                   "the stamp", code == 2 and "not been archived" in printed
-                   and not os.path.exists(audits), printed[:200]))
+    code, printed = quietly(["--root", root, "--out-dir", reports])
+    checks.append(("a report into any docs/reports needs the stamp",
+                   code == 2 and "not been archived" in printed
+                   and not os.path.exists(reports), printed[:200]))
+    own = os.path.join(REPOSITORY, "docs", "reports")
+    before = sorted(os.listdir(own)) if os.path.isdir(own) else []
     source = os.environ.pop(TEMPLATES_ENV, None)
     try:
         code, printed = quietly(["--root", root])
     finally:
         if source is not None:
             os.environ[TEMPLATES_ENV] = source
-    checks.append(("with no templates source and no --out-dir it refuses",
-                   code == 2 and "no templates source" in printed,
+    after = sorted(os.listdir(own)) if os.path.isdir(own) else []
+    checks.append(("with no --out-dir it lands in this repository's "
+                   "docs/reports/, needing the stamp but no templates source",
+                   reports_dir() == own and is_record(own) and code == 2
+                   and "not been archived" in printed and after == before,
                    printed[:200]))
     shutil.rmtree(scratch, ignore_errors=True)
     return checks
@@ -6713,9 +6717,9 @@ def parse_args(argv):
     parser.add_argument("--seed", type=int, default=20260912,
                         help="bootstrap seed, recorded in the report")
     parser.add_argument("--out-dir",
-                        help="where the report is written; default is the "
-                             "templates source's docs/audits/. Any "
-                             "docs/audits/ takes only a round archived as it "
+                        help="where the report is written; default is "
+                             "this repository's docs/reports/. Any "
+                             "docs/reports/ takes only a round archived as it "
                              "stands; elsewhere the report is a draft")
     parser.add_argument("--templates",
                         help="a git clone of the templates repository, "
@@ -8306,15 +8310,15 @@ def self_test(seed):
     return 0 if passed == len(checks) else 1
 
 
-def audits_dir():
-    """The templates source's docs/audits/, where a round's report lands."""
-    return os.path.join(templates_root(), *AUDITS)
+def reports_dir():
+    """This repository's docs/reports/, where a round's report lands."""
+    return os.path.join(REPOSITORY, *REPORTS)
 
 
 def is_record(out_dir):
     """Whether a report written to `out_dir` is a round's record."""
     parts = os.path.normcase(os.path.abspath(out_dir)).split(os.sep)
-    return parts[-len(AUDITS):] == list(AUDITS)
+    return parts[-len(REPORTS):] == list(REPORTS)
 
 
 def posthoc_iso_problem(posthoc_iso, out_dir):
@@ -8324,11 +8328,11 @@ def posthoc_iso_problem(posthoc_iso, out_dir):
     # the round but never stand as the round's record, nor sit anywhere
     # among the records where it could be read as one.
     parts = os.path.normcase(os.path.abspath(out_dir)).split(os.sep)
-    among = any(parts[index:index + len(AUDITS)] == list(AUDITS)
+    among = any(parts[index:index + len(REPORTS)] == list(REPORTS)
                 for index in range(len(parts)))
     if posthoc_iso and among:
         return ("--iso reads a pilot round by rules it did not register, so "
-                "it writes only a draft; name --out-dir outside docs/audits/")
+                "it writes only a draft; name --out-dir outside docs/reports/")
     return None
 
 
@@ -8369,11 +8373,7 @@ def main(argv):
 
     out_dir = options.out_dir
     if out_dir is None:
-        try:
-            out_dir = audits_dir()
-        except TrialError as error:
-            print("refused: %s, or name --out-dir for a draft" % error)
-            return 2
+        out_dir = reports_dir()
 
     posthoc_iso = options.iso and not iso_rules(trials)
     problem = (posthoc_iso_problem(posthoc_iso, out_dir)
@@ -8383,7 +8383,7 @@ def main(argv):
         print("refused: %s" % problem)
         return 2
 
-    # A report under docs/audits/ is the round's record, so it is written only
+    # A report under docs/reports/ is the round's record, so it is written only
     # from a round archived as it stands; anywhere else it is a draft.
     if is_record(out_dir):
         problem = archive.stamp_problem(options.root)

@@ -11,7 +11,7 @@ dependency with its keyword.
 
 ## 5.1 Overview
 
-![The benchmark's building blocks. The running group, generate_arm.py, harness.py and reuse.py, reads the inputs: the specs, the brief, the change prompt, the arms' files, the scoring requirements, the tool configuration and the withdrawn list. It writes the run root, which holds workspaces, tarballs and run records. The scoring group, score.py with probes.py, security.py and judge.py, reads the run root and writes the scoring area. control.py builds damaged and improved trees for the judge. report.py reads the scoring area, checks the archive's stamp and writes the dated report to docs/audits in the templates source. archive.py copies the scoring area and the run root and pushes them to braboj/tariff-runs](../diagrams/building-blocks.png)
+![The benchmark's building blocks. The running group, generate_arm.py, harness.py and reuse.py, reads the inputs: the specs, the brief, the change prompt, the arms' files, the scoring requirements, the tool configuration and the withdrawn list. It writes the run root, which holds workspaces, tarballs and run records. The scoring group, score.py with probes.py, security.py and judge.py, reads the run root and writes the scoring area. control.py builds damaged and improved trees for the judge. report.py reads the scoring area, checks the archive's stamp and writes the dated report to docs/reports in this repository. archive.py copies the scoring area and the run root and pushes them to braboj/tariff-runs](../diagrams/building-blocks.png)
 
 | Block | Responsibility | Reads | Writes |
 | ----- | -------------- | ----- | ------ |
@@ -24,7 +24,7 @@ dependency with its keyword.
 | `security.py` | Seeds each app, signs in its administrator, runs the 11 security and 3 data-protection probes | The scored trees | `security-scores/` |
 | `judge.py` | Builds a blind bundle per trial, runs the judge CLI against the rubric, checks every quoted line | The scored trees | `judge/` |
 | `control/control.py` | Builds the rubric control: trees damaged or improved on one row each, from two pinned bases | `base.zip`, `base-2.zip`, `overlay/` | A control root for `judge.py` |
-| `report.py` | Pairs trials, computes intervals and verdicts, applies withdrawals, prints the report | The run root, the scoring area, `withdrawn.json` | `docs/audits/YYYY-MM-DD-efficacy.md` in the templates source |
+| `report.py` | Pairs trials, computes intervals and verdicts, applies withdrawals, prints the report | The run root, the scoring area, `withdrawn.json` | `docs/reports/YYYY-MM-DD-efficacy.md` in this repository |
 | `archive.py` | Copies a round's raw data to the private archive, restores it, recomputes the report's figures from both | The run root, the scoring area | The archive clone, `archived.json` |
 
 ## 5.2 Inputs

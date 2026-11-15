@@ -186,7 +186,7 @@
 | FR-12-15 | The benchmark shall screen round 6's candidates against `none` as round 5d registers: out on a deciding row worse, the rest ranked by rows better and then by mean cost, the top four kept. | Report |
 | FR-12-16 | From round 6 the benchmark shall give each approach its verdict from the ISO radar's axes: Yes where an axis is better and none worse, Worse where any is worse, No where none moved; and the summary's axis table shall be the ISO radar's. | Report |
 | FR-12-17 | The benchmark shall screen round 6's candidates on the ISO radar's axes: out on an axis worse, the rest ranked by axes better and then by mean cost, the top four kept; an axis no target measures shall neither hold nor move it, and an axis that lists targets but has no reading yet shall hold it. | Report |
-| FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/audits/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
+| FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/reports/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
 
 ### 13 Records and archive
 
@@ -195,12 +195,13 @@
 | FR-13-01 | The benchmark shall write the run record as every trial starts and ends, with the CLI's version. | Harness |
 | FR-13-02 | The benchmark shall write `generation.json` beside every file the arm generator writes. | Arm generator |
 | FR-13-03 | The benchmark shall archive every reading, judging, map and lock, with a hash per file, and fail the verify on a changed one. | Archive |
-| FR-13-04 | The benchmark shall refuse to write a report under `docs/audits/` once a reading changed since the archive was verified. | Archive, Report |
+| FR-13-04 | The benchmark shall refuse to write a report under `docs/reports/` once a reading changed since the archive was verified. | Archive, Report |
 | FR-13-05 | The benchmark shall restore an archive so it reads as the original root does, its records pointing at the restored files. | Archive |
 | FR-13-06 | The benchmark shall build a map arm's root from the brief, the chain and the templates' manifest alone, the same moments in the same order for both map arms, and each `lazyskills` skill holding one template verbatim. | Arm generator |
 | FR-13-07 | The benchmark shall give every arm's root the same project facts: the brief, verbatim under the title, the emitted roots too, which names the stack the spec fixes and no tooling. | Arm generator |
 | FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
-| FR-13-09 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
+| FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
+| FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
 
 ### 14 One run at a time
 

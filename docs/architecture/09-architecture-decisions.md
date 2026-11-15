@@ -27,6 +27,7 @@ told.
 | [ADR-004](../decisions/004-the-builder-models.md) | Each round names its builder models in its registration, and none comes from the vendor of the rounds' judge | Accepted |
 | [ADR-007](../decisions/007-the-baseline.md) | The baseline runs against `v2.90.0`, and a template change runs baseline and candidate head to head in one round | Accepted |
 | [ADR-008](../decisions/008-the-brief-and-the-build-prompt.md) | The brief names the extension axes and the personal data, and the prompt tells every arm the spec is the approved plan and nobody will answer | Accepted |
+| [ADR-026](../decisions/026-every-arm-is-built-by-a-script.md) | From round 6 every arm is built by a script with no model call, `inline` by the emitter's `--inline-skills`; `hybrid`, `short` and `hand` run no more | Accepted |
 
 ## 9.2 What a trial is measured on
 
@@ -62,7 +63,6 @@ report shows first.
 | [ADR-015](../decisions/015-contrasts-and-verdicts.md) | A contrast gets a verdict only when both its arms run in the same round | Accepted |
 | [ADR-023](../decisions/023-the-iso-radar.md) | From round 6 the radar reads ISO/IEC 25010:2023: eight axes, each the share of its targets met against `none`, a marker only past the axis's margin, the cost shown above | Accepted |
 | [ADR-024](../decisions/024-verdicts-read-the-iso-radar.md) | From round 6 an arm's verdict and round 6's screen read the ISO radar's axes; a pilot round read by them is a post-hoc draft | Accepted |
-| [ADR-025](../decisions/025-every-arm-is-built-by-a-script.md) | From round 6 every arm is built by a script with no model call, `inline` by the emitter's `--inline-skills`; `hybrid`, `short` and `hand` run no more | Accepted |
 
 ## 9.5 Running and keeping a round
 
@@ -77,6 +77,7 @@ kept.
 | [ADR-020](../decisions/020-trial-isolation.md) | A trial is fenced by deny rules and excluded by its transcript, in a pen of its own; a reach voids it | Accepted |
 | [ADR-021](../decisions/021-rescore-after-an-instrument-fault.md) | An instrument fault is fixed, validated and every reading round re-scored in full, its report replaced with a dated note keeping the old verdicts | Accepted |
 | [ADR-022](../decisions/022-round-names.md) | From round 6 a round is named by the knob it turns, `C`, `S`, `M` or `T`, and the count of rounds of that knob, as `C1`; trials keep their names | Accepted |
+| [ADR-025](../decisions/025-where-a-report-is-kept.md) | A round's report is kept in this repository, under `docs/reports/`, and the stamp guard protects that folder | Accepted |
 
 ## 9.6 Decisions about the templates
 

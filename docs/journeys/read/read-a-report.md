@@ -18,7 +18,7 @@ Assumptions:
 
 | # | Who | Step | Time | Notes |
 | - | --- | ---- | ---- | ----- |
-| 1 | Team lead | Finds the latest report under `docs/audits/` in `solid-ai-templates` | 3 min | Nothing in this repository links to it |
+| 1 | Team lead | Finds the latest report in [the rounds index](../../rounds/README.md#reports) | 3 min | Each links its report under `docs/reports/` |
 | 2 | Team lead | Reads the radar: one shape per file, against the no-file ring | 1 min | Outside the ring is better; the axes cluster the verdicts |
 | 3 | Team lead | Reads each approach: better, worse, and the verdict with its reason | 3 min | A file that breaks the app is not an improvement, whatever else it gains |
 | 4 | Team lead | Reads the questions answered and how sure we are | 2 min | Plain words; the numbers are in the appendix |

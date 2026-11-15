@@ -26,17 +26,18 @@ the specification, `M` the builder model and `T` the task
 
 ## Reports
 
-Each round's report sits beside the templates, in their `docs/audits/`.
+Each round's report sits in this repository, in [`docs/reports/`](../reports/).
 Rounds 1 to 3 were registered in the templates' own design, before this
 repository existed.
 
 | Round | Run | What it turned | Report |
 | ----- | --- | -------------- | ------ |
-| 1 | 2026-09-17 | Context file: none, the templates' inline file, a hand-written one | [Report](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-17-efficacy.md) |
-| 2 | 2026-09-18 | Context file: adds the short and hybrid files | [Report](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-18-efficacy.md) |
-| 3 | 2026-09-27 | Context file: every arm run fresh | [Report](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy.md), [assessment of rounds 1 to 3](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy-assessment.md) |
-| 4 | 2026-10-17 | Spec: thin, and builder: Haiku 4.5 | [Summary](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-round-4.md), [thin spec](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-efficacy-thin.md), [weaker model](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-10-17-efficacy-weaker.md) |
+| 1 | 2026-09-17 | Context file: none, the templates' inline file, a hand-written one | [Report](../reports/2026-09-17-efficacy.md) |
+| 2 | 2026-09-18 | Context file: adds the short and hybrid files | [Report](../reports/2026-09-18-efficacy.md) |
+| 3 | 2026-09-27 | Context file: every arm run fresh | [Report](../reports/2026-09-27-efficacy.md), [assessment of rounds 1 to 3](../reports/2026-09-27-efficacy-assessment.md) |
+| 4 | 2026-10-17 | Spec: thin, and builder: Haiku 4.5 | [Summary](../reports/2026-10-17-round-4.md), [thin spec](../reports/2026-10-17-efficacy-thin.md), [weaker model](../reports/2026-10-17-efficacy-weaker.md) |
 | 5 | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
 | 5b | Stopped 2026-10-29, after four trials | Context file: how the rules are delivered | — |
-| 5c | 2026-10-29 to 2026-10-31 | Context file: how the rules are delivered | [Report](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-11-01-efficacy.md) |
-| 5d | Not run yet | Context file: a hand-written one and a 40-line one, against 5c | — |
+| 5c | 2026-10-29 to 2026-10-31 | Context file: how the rules are delivered | [Report](../reports/2026-11-01-efficacy.md), [post-hoc reading](../reports/2026-11-01-efficacy-posthoc.md) |
+| 5d | Reported 2026-11-07 | Context file: a hand-written one and a 40-line one, against 5c | [Report](../reports/2026-11-07-efficacy.md) |
+| 5e | Reported 2026-11-13 | Context file: the templates read on demand, as a file and as a skill, against 5c and 5d | [Report](../reports/2026-11-13-efficacy.md) |

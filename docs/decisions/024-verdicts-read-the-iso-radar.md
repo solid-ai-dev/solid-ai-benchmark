@@ -47,7 +47,7 @@ draft that says it is post hoc.
 | 6 | The screen reads the axes | Out on an axis worse; the rest ranked by axes better, then by mean cost; the top four go on, as 13d.9 had it for its rows |
 | 7 | An unmeasured axis never holds the screen | An axis no target reaches would hold it for good; a run short of its K still holds it |
 | 8 | The summary's table is the radar's | The record's first table lists the ISO axes, each arm's share and marker, not the pilot's clusters |
-| 9 | A pilot round is read post hoc | `report.py --iso` writes a draft only, never under `docs/audits/`, opens with a note that the rules came after the results, and keeps its aggregate as `aggregate-iso.json` beside the registered one |
+| 9 | A pilot round is read post hoc | `report.py --iso` writes a draft only, never under `docs/reports/`, opens with a note that the rules came after the results, and keeps its aggregate as `aggregate-iso.json` beside the registered one |
 
 ## Alternatives considered
 
@@ -75,3 +75,4 @@ Every change to this decision, oldest first. `#N` is in this repository.
 | ---- | ------ | --- | ----- |
 | 2026-11-14 | From round 6 verdicts and the screen read the ISO radar's axes | Round 5e read by the ISO radar showed the radar and the verdict disagreeing; the owner chose the axes | #165 |
 | 2026-11-15 | Round 6's arms are the scripted ones, whichever screen reads round 5e | A file a model writes changes on every generation; the owner kept only arms a script builds | #167 |
+| 2026-11-15 | The report is written under this repository's `docs/reports/`, no longer the templates source's `docs/audits/` | The templates repository removes `docs/audits/` (solid-ai-templates#2448), and ADR-025 keeps the reports here | #170 |

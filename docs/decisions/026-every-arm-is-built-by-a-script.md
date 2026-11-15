@@ -1,5 +1,5 @@
 ---
-id: "025"
+id: "026"
 status: Accepted
 date: 2026-11-15
 category: arms
@@ -7,7 +7,7 @@ supersedes: []
 superseded_by: []
 ---
 
-# ADR-025: From round 6, every arm is built by a script
+# ADR-026: From round 6, every arm is built by a script
 
 ## Context
 

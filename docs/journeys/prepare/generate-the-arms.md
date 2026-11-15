@@ -14,7 +14,7 @@ Assumptions:
 - A templates clone holding the round's registered ref, named with
   `--templates`
 - The arms, all built with no model call
-  ([ADR-025](../../decisions/025-every-arm-is-built-by-a-script.md)):
+  ([ADR-026](../../decisions/026-every-arm-is-built-by-a-script.md)):
   `reference`, `lazyref` and `lazyskills` as fixed text, `inline` and
   `skills` from the templates' emitter
 - All times are estimates
@@ -42,6 +42,6 @@ py tests/efficacy/generate_arm.py --arm inline --ref <ref> --root <outside this 
 
 | # | Finding | Status |
 | - | ------- | ------ |
-| 1 | A written arm changes with every writing: round 5e's `hybrid` was 511 lines, the one regenerated for round 6 was 221 | Settled in [ADR-025](../../decisions/025-every-arm-is-built-by-a-script.md), 2026-11-15 |
-| 2 | The emitted `skills` root lacked the brief's paragraphs on personal data and on boundaries, and no check read an emitted root | Settled in [ADR-025](../../decisions/025-every-arm-is-built-by-a-script.md), rule 4 |
-| 3 | The emitter builds no hybrid file, and the templates' rules forbid one that names template files | Settled in [ADR-025](../../decisions/025-every-arm-is-built-by-a-script.md); `hybrid` runs no more |
+| 1 | A written arm changes with every writing: round 5e's `hybrid` was 511 lines, the one regenerated for round 6 was 221 | Settled in [ADR-026](../../decisions/026-every-arm-is-built-by-a-script.md), 2026-11-15 |
+| 2 | The emitted `skills` root lacked the brief's paragraphs on personal data and on boundaries, and no check read an emitted root | Settled in [ADR-026](../../decisions/026-every-arm-is-built-by-a-script.md), rule 4 |
+| 3 | The emitter builds no hybrid file, and the templates' rules forbid one that names template files | Settled in [ADR-026](../../decisions/026-every-arm-is-built-by-a-script.md); `hybrid` runs no more |
