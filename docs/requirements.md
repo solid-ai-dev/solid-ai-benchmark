@@ -192,9 +192,9 @@
 | FR-12-16 | From round 6 the benchmark shall give each approach its verdict from the ISO radar's axes: Yes where an axis is better and none worse, Worse where any is worse, No where none moved; and the summary's axis table shall be the ISO radar's. | Report |
 | FR-12-17 | The benchmark shall screen round 6's candidates on the ISO radar's axes: out on an axis worse, the rest ranked by axes better and then by mean cost, the top four kept; an axis no target measures shall neither hold nor move it, and an axis that lists targets but has no reading yet shall hold it. | Report |
 | FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/reports/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
-| FR-12-19 | From round 6 the benchmark shall load each trial's quality reading beside its security reading and read each quality probe as an ISO target: a lost probe fails, a missing one is not measured, and the latency target is not measured until its cutoff is registered. | Report |
-| FR-12-20 | From round 6 the benchmark shall read functional correctness as one target per hidden-suite build module, met only where every check in it ran and passed; a module the trial's report lacks is not measured where the suite's revision did not hold it, and not met where it did. | Report |
-| FR-12-21 | The benchmark shall read a pilot round by the ISO radar with the targets it had before round 6, and by round 6's only where asked, refusing that request where no pilot draft would read it. | Report |
+| FR-12-21 | From round 6 the benchmark shall load each trial's quality reading beside its security reading and read each quality probe as an ISO target: a lost probe fails, a missing one is not measured, and the latency target is not measured until its cutoff is registered. | Report |
+| FR-12-22 | From round 6 the benchmark shall read functional correctness as one target per hidden-suite build module, met only where every check in it ran and passed; a module the trial's report lacks is not measured where the suite's revision did not hold it, and not met where it did. | Report |
+| FR-12-23 | The benchmark shall read a pilot round by the ISO radar with the targets it had before round 6, and by round 6's only where asked, refusing that request where no pilot draft would read it. | Report |
 
 ### 13 Records and archive
 

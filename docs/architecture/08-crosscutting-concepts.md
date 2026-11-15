@@ -622,8 +622,8 @@ interval of the difference against `none` lies past the axis's margin
 each radar, shown and not scored, and the appendix holds one table of
 sub-scores per axis. The decision is ADR-023.
 
-Round 6's targets read three sources the pilot's did not (FR-12-19 to
-FR-12-21):
+Round 6's targets read three sources the pilot's did not (FR-12-21 to
+FR-12-23):
 
 - **Hidden-suite modules.** Functional correctness has one target per build
   module, met where the module passes whole: no check failed, errored or
