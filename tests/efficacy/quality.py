@@ -1115,18 +1115,8 @@ def data_upgrade(seeded):
                         % place)
 
     # The new schema has to take new rows on the old file too, not only read
-    # the old ones: a column added for new tables alone fails here.
-    written = {"/jurisdictions": {"code": "U2", "name": "Upgradia Nova",
-                                  "default_rate": "0.1",
-                                  "rates": "standard=0.1"},
-               "/rules": {"rule_id": "u-pct-after", "kind": "percentage",
-                          "sku": "UPG-2", "percent": "3"}}
-    for path, body in written.items():
-        created(path, body)
-        if body["code" if path == "/jurisdictions" else "rule_id"] \
-                not in text_of(page(client, path)):
-            failures.append("a record posted to %s after the upgrade is not "
-                            "listed" % path)
+    # the old ones: a column added for new tables alone fails here. The old
+    # invoice is saved again first, before a new rule can reprice it.
     saved = saved_page(held(form_post(client, "/invoices/new", "/invoices",
                                       seeded["invoices"][0]["body"]),
                             "the save"))
@@ -1140,6 +1130,17 @@ def data_upgrade(seeded):
             failures.append("the first invoice saved again totals %r, not %r"
                             % (total, seeded["invoices"][0]["export"].get(
                                 "total")))
+    written = (("/jurisdictions", "code", {
+        "code": "U2", "name": "Upgradia Nova", "default_rate": "0.1",
+        "rates": "standard=0.1"}),
+        ("/rules", "rule_id", {"rule_id": "u-pct-after",
+                               "kind": "percentage", "sku": "UPG-2",
+                               "percent": "3"}))
+    for path, key, body in written:
+        created(path, body)
+        if body[key] not in text_of(page(client, path)):
+            failures.append("a record posted to %s after the upgrade is not "
+                            "listed" % path)
     return passed(not failures, failures=failures[:20])
 
 
@@ -2124,22 +2125,23 @@ class Client(object):
             raise LookupError(jurisdiction)
         rate = decimal.Decimal(found[2])
         if VERSION == 2:
-            caps = json.loads(found[3]) if MODE == "fragile" else (
-                json.loads(found[3] or "{}"))
-            rate = rate if caps is not None else rate
+            json.loads(found[3] if MODE == "fragile" else found[3] or "{}")
+        rules = [(kind, sku, json.loads(detail)) for kind, sku, detail
+                 in connection.execute("SELECT kind, sku, detail FROM rules")]
         net = []
         for sku, quantity in lines:
             price = connection.execute("SELECT unit_price FROM products "
                                        "WHERE sku = ?", (sku,)).fetchone()
-            net.append((sku, quantity, (decimal.Decimal(price[0])
-                                        * quantity).quantize(CENT)))
+            amount = decimal.Decimal(price[0]) * quantity
+            for kind, scope, detail in rules:
+                if kind == "percentage" and scope == sku:
+                    amount -= amount * decimal.Decimal(detail["percent"]) / 100
+            net.append((sku, quantity, amount.quantize(CENT)))
         subtotal = sum((amount for _, _, amount in net),
                        decimal.Decimal("0"))
-        for kind, detail in connection.execute("SELECT kind, detail FROM "
-                                               "rules"):
-            detail = json.loads(detail)
-            if kind == "coupon" and detail.get("code") in coupons \\
-                    and detail.get("amount"):
+        for kind, _, detail in rules:
+            if (kind == "coupon" and detail.get("code") in coupons
+                    and detail.get("amount")):
                 subtotal -= decimal.Decimal(detail["amount"])
         total = (subtotal * (1 + rate)).quantize(CENT)
         return net, str(total)
