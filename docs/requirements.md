@@ -210,7 +210,7 @@
 | FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
 | FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
 | FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
-| FR-13-11 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
+| FR-13-19 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
 
 ### 14 One run at a time
 
