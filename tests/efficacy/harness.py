@@ -136,6 +136,10 @@ ROUND5_DECLINED = [
 # Code loads skills from on demand.
 SKILLS_INTO = ".claude/skills"
 
+# Where the `lazysections` arm's section files go in the workspace: the
+# folder the emitted map names each file under, read as plain files.
+SECTIONS_INTO = ".agents/sections"
+
 # The arms, each a word, and the context file each starts with, relative to
 # `arms/`. Arm `none` carries no file: it is the bare agent. An arm's
 # vendored ref comes from its generation record. `generate_arm.py` builds
@@ -162,6 +166,13 @@ ARMS = {
                             "each",
                    "context": "lazyskills/CLAUDE.md",
                    "skills": "lazyskills/skills"},
+    "lazysections": {"label": "the emitted map, one section file per topic, "
+                              "read on demand",
+                     "context": "lazysections/CLAUDE.md",
+                     "sections": "lazysections/sections"},
+    "lazyrefold": {"label": "the templates before the one-command check, "
+                            "mapped to the work, read on demand",
+                   "context": "lazyrefold/CLAUDE.md", "vendor": VENDORED},
 }
 
 # The rounds from 6 on, each as registered: its spec, its arms, and per task
@@ -176,7 +187,7 @@ REGISTRATIONS = {
         "spec": {"name": "normal", "file": "SPEC.md",
                  "sha256": ROUND6_SPEC[1]},
         "arms": ["none", "reference", "inline", "skills", "lazyref",
-                 "lazyskills"],
+                 "lazyskills", "lazysections", "lazyrefold"],
         "tasks": {
             "build": {
                 "k": 15,
@@ -586,17 +597,23 @@ def arm_vendor(arm):
     return dict(vendor)
 
 
-def place_skills(workspace, source):
-    """Copy an arm's skills to where Claude Code loads them, kept out of the
-    workspace's index like the vendored templates, so no size or scope
-    metric counts them; return the kinds placed."""
-    target = os.path.join(workspace, *SKILLS_INTO.split("/"))
+def place_files(workspace, source, into):
+    """Copy an arm's skills or section files to `into` in the workspace,
+    kept out of its index like the vendored templates, so no size or scope
+    metric counts them; return the names placed at the top."""
+    target = os.path.join(workspace, *into.split("/"))
     shutil.copytree(source, target)
     exclude = os.path.join(workspace, ".git", "info", "exclude")
     os.makedirs(os.path.dirname(exclude), exist_ok=True)
     with io.open(exclude, "a", encoding="utf-8", newline="\n") as handle:
-        handle.write("/%s/\n" % SKILLS_INTO)
+        handle.write("/%s/\n" % into)
     return sorted(os.listdir(target))
+
+
+def place_skills(workspace, source):
+    """Copy an arm's skills to where Claude Code loads them; return the
+    kinds placed."""
+    return place_files(workspace, source, SKILLS_INTO)
 
 
 def prepare_workspace(arm, trial, root, spec=SPEC):
@@ -625,8 +642,8 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
 
 def install_arm(workspace, arm):
     """Give a workspace, not yet a repository, its arm's context: the file,
-    the vendored templates, the skills; `git init` it; return what was
-    vendored, None for an arm that vendors nothing."""
+    the vendored templates, the skills or section files; `git init` it;
+    return what was vendored, None for an arm that vendors nothing."""
     context = ARMS[arm]["context"]
     if context:
         source = os.path.join(ARMS_DIR, context)
@@ -647,6 +664,12 @@ def install_arm(workspace, arm):
             raise TrialError("arm %s needs its skills at %s, which do not "
                              "exist" % (arm, source))
         place_skills(workspace, source)
+    if ARMS[arm].get("sections"):
+        source = os.path.join(ARMS_DIR, ARMS[arm]["sections"])
+        if not os.path.isdir(source):
+            raise TrialError("arm %s needs its section files at %s, which do "
+                             "not exist" % (arm, source))
+        place_files(workspace, source, SECTIONS_INTO)
     return vendored
 
 
@@ -4095,6 +4118,34 @@ def round5_checks():
                    "the index",
                    kinds == ["review"] and os.path.isfile(placed)
                    and git(workspace, "status", "--porcelain") == ""))
+
+    # The emitted map names each section file by its path in the workspace,
+    # so the files must land there, as plain files kept out of the index.
+    sections = os.path.join(scratch, "lazysections-1")
+    os.makedirs(sections)
+    install_arm(sections, "lazysections")
+    git(sections, "add", "-A")
+    with io.open(os.path.join(sections, "CLAUDE.md"),
+                 encoding="utf-8") as handle:
+        named = re.findall(r"`(%s/[^`]+)`" % re.escape(SECTIONS_INTO),
+                           handle.read())
+    checks.append(("the lazysections arm's files land where its map names "
+                   "them, out of the index",
+                   bool(named)
+                   and all(os.path.isfile(os.path.join(sections,
+                                                       *path.split("/")))
+                           for path in named)
+                   and git(sections, "ls-files").splitlines()
+                   == ["CLAUDE.md"]))
+    record = os.path.join(ARMS_DIR, "lazyrefold", "generation.json")
+    with io.open(record, encoding="utf-8") as handle:
+        recorded = json.load(handle).get("ref")
+    checks.append(("round 6's lazyrefold vendors at its own recorded ref, "
+                   "lazysections vendors nothing",
+                   recorded is not None
+                   and arm_vendor("lazyrefold")["ref"] == recorded
+                   and arm_vendor("lazysections") is None
+                   and ARMS["lazysections"].get("skills") is None))
     remove_tree(scratch)
     return checks
 

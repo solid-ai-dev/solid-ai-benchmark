@@ -214,6 +214,9 @@
 | FR-13-18 | The benchmark shall reuse a named round's trials under a run record naming that round and its registration's digest, and never reuse trials into a root of another round, a named round's into a root of none, or another round's into a named round's; name the round and its digest in each reused trial's origin, and pair a trial reused within one named round, under one digest, with the trials run there. | Reuse, Report |
 | FR-13-19 | The benchmark shall refuse a named round's report unless the document its registration entry names exists and landed on `main` before the round's first trial, unchanged since, a trial reused within the round counting toward its start. | Report |
 | FR-13-20 | The benchmark shall verify an archive by the report's own reading of its round, through one entry point, a named round's change tasks and its reach rule included. | Archive, Report |
+| FR-13-22 | The benchmark shall build the `lazysections` arm with the templates' emitter in its sections mode, for the chain and declined list the other emitted arms take, place its section files where its map names them, out of the workspace's index, and fail its self-test where the section files' rule blocks differ from the inline root's, or the map names a section file other than once. | Arm generator, Harness |
+| FR-13-23 | The benchmark shall build the `lazyrefold` arm as `lazyref` at the parent of the templates commit that cuts the check loop to one check command, and fail its self-test where the two arms' files differ by other than that commit's lines, all within the section it changes. | Arm generator |
+| FR-13-24 | The benchmark shall refuse an on-demand arm (`lazyref`, `lazyskills`, `lazysections`, `lazyrefold`) whose files tell the agent to read everything at the start. | Arm generator |
 
 ### 14 One run at a time
 

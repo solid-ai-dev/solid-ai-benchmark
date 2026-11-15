@@ -1,0 +1,109 @@
+{
+  "arm": "lazyrefold",
+  "kind": "map",
+  "ref": "4e1de818",
+  "source": {
+    "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
+    "ref": "4e1de818",
+    "commit": "4e1de8186f91b7640e4157772f5155db862cc15d"
+  },
+  "roots": [
+    "backend-api",
+    "backend-auth",
+    "backend-database",
+    "frontend-ux",
+    "base-security",
+    "base-data-governance"
+  ],
+  "started_at": "2026-11-15T20:35:48",
+  "commit": "4e1de8186f91b7640e4157772f5155db862cc15d",
+  "resolved_files": [
+    "templates/core/quality.md",
+    "templates/core/git.md",
+    "templates/core/docs.md",
+    "templates/core/testing.md",
+    "templates/core/review.md",
+    "templates/backend/http.md",
+    "templates/backend/api.md",
+    "templates/security/security.md",
+    "templates/backend/auth.md",
+    "templates/backend/database.md",
+    "templates/frontend/ux.md",
+    "templates/data/data-modeling.md",
+    "templates/data/data-governance.md"
+  ],
+  "load": "read",
+  "moments": [
+    {
+      "skill": "base-quality",
+      "moment": "Architecture, code style, calibration, tool trust, testing",
+      "file": "templates/core/quality.md"
+    },
+    {
+      "skill": "base-git",
+      "moment": "Committer identity, branching, pull requests, CI evidence, regenerated artifacts, off-limits paths, .gitignore",
+      "file": "templates/core/git.md"
+    },
+    {
+      "skill": "base-docs",
+      "moment": "Rule language, standard documents, upkeep, line width, writing style, diagrams, generated files, agent output files",
+      "file": "templates/core/docs.md"
+    },
+    {
+      "skill": "base-testing",
+      "moment": "Test types, isolation, assertions, proving a change",
+      "file": "templates/core/testing.md"
+    },
+    {
+      "skill": "base-review",
+      "moment": "Peer review priority, MUST/SHOULD checklists, deviation rules",
+      "file": "templates/core/review.md"
+    },
+    {
+      "skill": "backend-http",
+      "moment": "Port, lifecycle, admin tasks, handlers, headers, methods, payloads, errors, auth",
+      "file": "templates/backend/http.md"
+    },
+    {
+      "skill": "backend-api",
+      "moment": "API-first, contracts, versioning, deprecation, pagination",
+      "file": "templates/backend/api.md"
+    },
+    {
+      "skill": "base-security",
+      "moment": "Application security rules \u2014 input, output, injection, auth, sessions, TLS, headers",
+      "file": "templates/security/security.md"
+    },
+    {
+      "skill": "backend-auth",
+      "moment": "Authn/authz, JWT, RBAC, sessions, API keys",
+      "file": "templates/backend/auth.md"
+    },
+    {
+      "skill": "backend-database",
+      "moment": "Migrations, transactions, parameterised queries, connection pooling",
+      "file": "templates/backend/database.md"
+    },
+    {
+      "skill": "frontend-ux",
+      "moment": "UX principles, WCAG 2.1 AA, accessibility testing, design system, browser support",
+      "file": "templates/frontend/ux.md"
+    },
+    {
+      "skill": "base-data-modeling",
+      "moment": "Schema design, naming, normalization, relationships, data types",
+      "file": "templates/data/data-modeling.md"
+    },
+    {
+      "skill": "base-data-governance",
+      "moment": "Classification, PII handling, retention, ownership, audit trail",
+      "file": "templates/data/data-governance.md"
+    }
+  ],
+  "output_leak": null,
+  "named_tooling": [],
+  "outcome": "generated",
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark-arms\\tests\\efficacy\\arms\\lazyrefold\\CLAUDE.md",
+  "output_lines": 40,
+  "output_words": 393
+}
