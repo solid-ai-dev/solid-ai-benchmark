@@ -702,8 +702,9 @@ no globs                            unmapped
 | 2 | No natural path, no class | A template with no globs, a general quality one say, is unmapped | FR-12-19 |
 | 3 | A subagent counts, apart | Its reads and loads count at the turn that delegated to it, and are reported beside the session's | FR-12-19, FR-12-20 |
 | 4 | Each task on its own | The build and the change task are timed apart, each from its own transcript | FR-12-19 |
-| 5 | Only what the text shows | A file a shell writes is placed only where the command's text names it | FR-12-19 |
-| 6 | Skills loaded, by turn | Every arm with skills lists each skill loaded; `skills` sits beside `inline` on the hidden tests and the judge's security and data-protection rows | FR-12-20 |
+| 5 | File tools only | Only a file tool's write is placed on a topic; a file written only by a shell command is not, and the share of trials that wrote by shell before their last placed write is printed as the measure's limit | FR-12-19 |
+| 6 | Inside the workspace | A path is normalised first; one outside the workspace, past it by `..`, or in the vendored templates is on no topic | FR-12-19 |
+| 7 | Skills loaded, by turn | Every arm with skills lists each skill loaded; `skills` sits beside `inline` on the hidden tests and the judge's security and data-protection rows | FR-12-20 |
 
 The tables per arm go in the appendix, the rows per trial in the record.
 
