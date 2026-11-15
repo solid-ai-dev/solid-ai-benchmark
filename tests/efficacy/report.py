@@ -5779,6 +5779,26 @@ HIDDEN_MODULES = (
     "test_nojs.py", "test_browser.py",
 )
 
+# The modules each earlier revision of the hidden suite did not hold, read
+# from its history. A module absent from a report graded by one of these was
+# never there to run; absent under any other revision, it was there and did
+# not run, as a module that fails to collect or a suite that ran out of time
+# leaves it, and that is the build's.
+SUITE_LACKS = dict(
+    [(revision, ("test_persistence.py",)) for revision in (
+        "8caaaa339c04f0af3df878c92ed8974a237e67e0",
+        "1f07e422b3b5348418a596d36c7a2d582688d49b",
+        "c987eff4c100c24f070eb1ff2f2e488539b391f5",
+        "579209412dc414b17283a9df7adf8857eb570a10",
+        "65bfb9a8590bfcd0096fdb6c0c6ae7be4d8ed5c6")]
+    + [(revision, ("test_http_signin.py", "test_http_customers.py",
+                   "test_persistence.py")) for revision in (
+        "48f47851ed43ac0734dcb72183930ae4d86055cc",
+        "00cf47533508fb26ae9bb59dd4f816a025b7ad05",
+        "f983e230de8781e0d1a3df661306cc621f4b0c81",
+        "cb66df1e4988d0b07c2528ba0a1d7f2d3d02d6eb",
+        "bdee80653e6e14256f9d20e7e763acbdf6646af1")])
+
 # The latency's cutoff in milliseconds, the worse repeat's 95th percentile.
 # It is calibrated from the reference build's repeats and a planted slowdown,
 # then frozen here before round 6 registers; until then the latency target
@@ -6056,13 +6076,16 @@ def quality_value(trial, name):
 
 def module_value(trial, module):
     """1.0 where a hidden-suite module passed whole, 0.0 where any of its
-    checks failed, errored or was skipped; None where it did not run."""
+    checks failed, errored or was skipped, or where the suite's revision
+    held it and it did not run; None where the suite did not run, or its
+    revision did not hold the module."""
     record = path(trial, "scores", "hidden_suite")
     if not isinstance(record, dict) or record.get("missing"):
         return None
     counts = path(record, "report", "modules", module)
     if not isinstance(counts, dict):
-        return None
+        revision = path(record, "report", "suite_revision")
+        return None if module in SUITE_LACKS.get(revision, ()) else 0.0
 
     # A skipped check is one nobody ran, so it cannot show the module whole.
     unproven = sum(counts.get(key) or 0
@@ -8031,19 +8054,29 @@ def iso_checks(seed):
                    "errored or was skipped",
                    got == [1.0, 0.0, 0.0, 0.0, None], got))
 
-    # A module absent from a trial's report did not run there, as in a suite
-    # that predates it: not measured, so correctness is the share of the
-    # modules that ran, 17 of 18 here, not 17 of 19.
+    # A module absent from a report graded by a revision that did not hold
+    # it is not measured, so correctness is the share of the modules that
+    # ran, 17 of 18 here, not 17 of 19. Absent under a revision that held
+    # it, it failed to collect or ran out of time, and is not met.
     ran = {module: dict(whole) for module in HIDDEN_MODULES
            if module != "test_persistence.py"}
     ran["test_browser.py"] = dict(whole, failed=1)
     trial = suite(ran)
+    trial["scores"]["hidden_suite"]["report"]["suite_revision"] = (
+        "1f07e422b3b5348418a596d36c7a2d582688d49b")
+    held = suite(ran)
+    held["scores"]["hidden_suite"]["report"]["suite_revision"] = (
+        "a8e79354eda873c72c6da7319cd0f93865a16812")
     got = (module_value(trial, "test_persistence.py"),
            round(iso_trial_scores(trial)["Functionality"][
+               "Functional correctness"], 4),
+           module_value(held, "test_persistence.py"),
+           round(iso_trial_scores(held)["Functionality"][
                "Functional correctness"], 4))
-    checks.append(("a module absent from a trial's report is not measured, "
-                   "and correctness is the share of the modules that ran",
-                   got == (None, round(17 / 18, 4)), got))
+    checks.append(("a module absent from a report is not measured only where "
+                   "the suite's revision did not hold it",
+                   got == (None, round(17 / 18, 4), 0.0, round(17 / 19, 4)),
+                   got))
 
     # A pilot round read by the ISO radar keeps the targets its drafts read
     # before round 6 added its own: the suite's pass rate, 99 % here, and
@@ -8051,6 +8084,8 @@ def iso_checks(seed):
     pilot = dict(suite(ran), quality={"probes": {
         "fuzz_robustness": {"passed": False}}})
     pilot["scores"]["hidden_suite"]["value"] = 0.99
+    pilot["scores"]["hidden_suite"]["report"]["suite_revision"] = (
+        "1f07e422b3b5348418a596d36c7a2d582688d49b")
     pilot["security"]["probes"]["error_leakage"] = {"passed": True}
     run = {"lazyref-1": pilot, "none-1": pilot}
     later = {"hybrid-1": pilot, "none-1": pilot}

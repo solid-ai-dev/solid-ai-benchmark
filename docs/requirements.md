@@ -27,6 +27,7 @@
   - **Judge:** `judge.py`, which bundles a build and has a model score it.
   - **Report:** `report.py`, which reads a round and writes its report.
   - **Archive:** `archive.py`, which carries a round to the private archive.
+  - **Reuse:** `reuse.py`, which brings an earlier round's trials into a run.
   - **Arm generator:** `generate_arm.py`, which writes a generated arm's file.
   - **Control builder:** `control/control.py`, which builds the judge's
     control trees.
@@ -192,7 +193,7 @@
 | FR-12-17 | The benchmark shall screen round 6's candidates on the ISO radar's axes: out on an axis worse, the rest ranked by axes better and then by mean cost, the top four kept; an axis no target measures shall neither hold nor move it, and an axis that lists targets but has no reading yet shall hold it. | Report |
 | FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/reports/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
 | FR-12-19 | From round 6 the benchmark shall load each trial's quality reading beside its security reading and read each quality probe as an ISO target: a lost probe fails, a missing one is not measured, and the latency target is not measured until its cutoff is registered. | Report |
-| FR-12-20 | From round 6 the benchmark shall read functional correctness as one target per hidden-suite build module, met only where every check in it ran and passed, and not measured where the trial's report lacks the module. | Report |
+| FR-12-20 | From round 6 the benchmark shall read functional correctness as one target per hidden-suite build module, met only where every check in it ran and passed; a module the trial's report lacks is not measured where the suite's revision did not hold it, and not met where it did. | Report |
 | FR-12-21 | The benchmark shall read a pilot round by the ISO radar with the targets it had before round 6, and by round 6's only where asked, refusing that request where no pilot draft would read it. | Report |
 
 ### 13 Records and archive
@@ -209,6 +210,7 @@
 | FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
 | FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
 | FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
+| FR-13-11 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
 
 ### 14 One run at a time
 
@@ -295,7 +297,7 @@
 
 | Artefact | Contents | Used by |
 | -------- | -------- | ------- |
-| Hidden suite | 534 build checks across 18 modules and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
+| Hidden suite | At revision `a8e7935`, 544 build checks across 19 modules, 5 of them browser flows that skip where no browser is installed, and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
 | Reference implementation | A build written from the spec alone, and the change task made on it from the change prompt alone. Private, beside the hidden suite. | QG-01-02 |
 | Mutation control | Fifteen spec violations, each planted alone in the reference implementation. | QG-01-02 |
 | Control fixture | The judge's control trees, built by `control/control.py` from two pinned applications; see [validation](validation.md). | QG-01-03, QG-01-04 |
@@ -330,7 +332,7 @@
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-01-01 | Functional completeness | Every name the specification requires is exported. | Specified names missing |
-| QT-01-02 | Functional correctness | Each of the hidden suite's 19 build modules passes whole, one target per module: every check ran and passed, none failed, errored or skipped. A module missing from a build's report is not measured. | Hidden suite, per module |
+| QT-01-02 | Functional correctness | Each of the hidden suite's 19 build modules passes whole, one target per module: every check ran and passed, none failed, errored or skipped. A module missing from a build's report is not measured where the suite's revision did not hold it, and not met where it did. | Hidden suite, per module |
 | QT-01-03 | Functional appropriateness | Nothing nobody asked for is delivered. | Artifacts nobody asked for |
 
 ### 02 Performance efficiency
