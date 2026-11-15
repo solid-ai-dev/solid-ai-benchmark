@@ -66,12 +66,15 @@ PROBE_TIMEOUT = 900
 #
 # It signs in as the specification has the administrator do: the password
 # from the environment, set before the package is imported because the seed
-# may run lazily, and the sign-in form's own hidden fields. Every probe reads
-# the pages behind that sign-in; one answered with the sign-in's redirect is
-# never measured, and the probe is lost.
+# may run lazily, and the sign-in form's own hidden fields. The sign-in holds
+# only where the dashboard then answers 200. Every probe reads the pages
+# behind that sign-in; a request it turns away, with its redirect, a 401 or
+# a 403, is never measured, and the probe is lost.
 QUALITY_SCRIPT = r'''
-import builtins, html, io, json, logging, math, os, platform, re, sqlite3
+import builtins, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
+from decimal import Decimal, InvalidOperation
+from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 PACKAGE = "tariff"
@@ -206,29 +209,42 @@ except Exception as error:
 
 
 class Gated(Exception):
-    """A page answered with the sign-in's redirect."""
+    """A request the sign-in turned away."""
 
 
 class Raised(Exception):
     """The application raised out of the test client."""
 
 
+class Hidden(HTMLParser):
+    """Collects every hidden input, however its attributes are quoted."""
+
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.fields = {}
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if (tag == "input" and (attributes.get("type") or "").lower()
+                == "hidden" and attributes.get("name")):
+            self.fields[attributes["name"]] = attributes.get("value") or ""
+
+
 def hidden_fields(text):
     """Every hidden input in the page, which is where a CSRF token hides."""
-    fields = {}
-    for match in re.finditer(r'<input[^>]*type="hidden"[^>]*>', text,
-                             re.IGNORECASE):
-        tag = match.group(0)
-        name = re.search(r'name="([^"]+)"', tag)
-        value = re.search(r'value="([^"]*)"', tag)
-        if name:
-            fields[html.unescape(name.group(1))] = (
-                html.unescape(value.group(1)) if value else "")
-    return fields
+    parser = Hidden()
+    parser.feed(text)
+    return parser.fields
 
 
-def gated(response):
-    """Whether the answer is the redirect to the sign-in form."""
+# A request the sign-in turns away: its redirect, a 401, or a 403 to a
+# request that carried its form's token, which no CSRF check refuses. A
+# request sent without a token may be refused 403 as a forgery, as the
+# specification allows.
+def gated(response, token=True):
+    """Whether the answer refuses the request for want of a sign-in."""
+    if response.status_code == 401 or (token and response.status_code == 403):
+        return True
     if response.status_code not in REDIRECTS:
         return False
     return urlsplit(response.headers.get("Location", "")).path == "/sign-in"
@@ -246,7 +262,8 @@ def page(who, path):
     """A page behind the sign-in, or Gated."""
     answer = ask(who, "GET", path)
     if gated(answer):
-        raise Gated("%s answered with the sign-in's redirect" % path)
+        raise Gated("%s was turned away by the sign-in: %d"
+                    % (path, answer.status_code))
     return answer
 
 
@@ -262,17 +279,21 @@ def form_post(who, form, path, body, method="POST", headers=None):
 
 def held(answer, what):
     if gated(answer):
-        raise Gated("%s answered with the sign-in's redirect" % what)
+        raise Gated("%s was turned away by the sign-in: %d"
+                    % (what, answer.status_code))
     return answer
 
 
 def sign_in(who):
-    """Whether the seeded administrator signs in and stays signed in."""
+    """Whether the seeded administrator signs in: the dashboard, which
+    only a signed-in administrator is shown, then answers 200."""
     try:
         body = {"username": USERNAME, "password": PASSWORD, "next": "/"}
         answer = form_post(who, "/sign-in", "/sign-in", body)
         report.setdefault("sign_in_status", answer.status_code)
-        return not gated(ask(who, "GET", "/"))
+        home = ask(who, "GET", "/")
+        report.setdefault("home_status", home.status_code)
+        return home.status_code == 200
     except Raised as error:
         report.setdefault("sign_in_error", str(error))
         return False
@@ -407,8 +428,32 @@ def n_plus_one():
     return passed(large <= small, one_line=small, twenty_lines=large)
 
 
+def exported(path):
+    """The saved invoice's JSON export: its lines and its total, or None."""
+    try:
+        export = json.loads(page(client, path + "/export.json").get_data(
+            as_text=True))
+        Decimal(export["total"])
+        return list(export["lines"]), str(export["total"])
+    except (ValueError, KeyError, TypeError, InvalidOperation):
+        return None
+
+
+def shows_all(answer, lines, total):
+    """Whether a page shows every line, by each sku's count, and the total
+    that only every line gives, read with any thousands separator."""
+    text = re.sub(r"(?<=\d)[,\u00a0\u202f ](?=\d{3}\b)", "",
+                  answer.get_data(as_text=True))
+    counts = {}
+    for sku, _ in lines:
+        counts[sku] = counts.get(sku, 0) + 1
+    return (all(text.count(sku) >= count for sku, count in counts.items())
+            and total in text)
+
+
 def capacity_500_lines():
-    """An invoice of 500 lines previewed, saved and rendered."""
+    """An invoice of 500 lines previewed, saved and rendered, every line
+    kept in all three."""
     lines = [(SKUS[index % len(SKUS)], 1 + index % 7) for index in range(500)]
     steps = {}
     try:
@@ -426,9 +471,25 @@ def capacity_500_lines():
                           reason="the save did not redirect to its page")
         rendered = page(client, path)
         steps["render"] = rendered.status_code
+        export = exported(path)
     except Raised as error:
         return passed(False, steps=steps, raised=str(error))
-    return passed(ok(preview) and ok(rendered), steps=steps)
+    if not (ok(preview) and ok(rendered)):
+        return passed(False, steps=steps)
+
+    # A build that quietly keeps fewer lines answers 2xx on all three, so
+    # the lines are counted: the export's, the spec's fixed form, then the
+    # preview's and the page's against it.
+    if export is None:
+        return passed(False, steps=steps,
+                      reason="the saved invoice's JSON export did not read")
+    kept = {"saved": len(export[0]) == len(lines)
+            and [(line.get("sku"), line.get("quantity")) for line in export[0]]
+            == lines,
+            "preview": shows_all(preview, lines, export[1]),
+            "render": shows_all(rendered, lines, export[1])}
+    return passed(all(kept.values()), steps=steps, kept=kept,
+                  saved_lines=len(export[0]))
 
 
 LOCKED = re.compile(r"database (table )?is locked", re.IGNORECASE)
@@ -475,8 +536,8 @@ def concurrent_writes():
         return passed(False, reason="the writes did not finish in 120 s")
     entries = [entry for outcome in outcomes for entry in outcome]
     if any(entry.get("gated") for entry in entries):
-        return lost("concurrent_writes", "a write answered with the "
-                    "sign-in's redirect")
+        return lost("concurrent_writes", "a write was turned away by the "
+                    "sign-in")
     listing = page(client, "/products").get_data(as_text=True)
     unsaved = [entry["sku"] for entry in entries
                if entry["sku"] not in listing]
@@ -692,14 +753,15 @@ def fuzz_robustness():
             entry["status"] = answer.status_code
 
             # Signed out, the sign-in's own answer may be its redirect.
-            entry["gated"] = gated(answer) and not signed_out
+            entry["gated"] = not signed_out and gated(
+                answer, token=method == "GET" or form is not None)
         except Raised as error:
             entry["raised"] = str(error)
         answers.append(entry)
     asked = [entry["request"] for entry in answers if entry.get("gated")]
     if asked:
-        return lost("fuzz_robustness", "%d malformed requests were answered "
-                    "with the sign-in's redirect" % len(asked), asked=asked)
+        return lost("fuzz_robustness", "%d malformed requests were turned "
+                    "away by the sign-in" % len(asked), asked=asked)
     failed = [entry for entry in answers if entry.get("raised")
               or (entry.get("status") or 0) >= 500]
     return passed(not failed, requests=len(answers), failed=failed)
@@ -769,7 +831,9 @@ def probe_results(payload, reason=None, lost=False, stalled=None):
             trial = stalled
         elif not payload.get("signed_in"):
             trial = ("the seeded administrator could not sign in; the "
-                     "sign-in answered %s" % payload.get("sign_in_status"))
+                     "sign-in answered %s and / %s"
+                     % (payload.get("sign_in_status"),
+                        payload.get("home_status")))
     read = payload.get("probes") or {}
     readings = {}
     for name in IN_PROCESS:
@@ -949,10 +1013,14 @@ def read_trial(area, name, scores_file, other):
 # write that overlaps another, `slow` takes 20 ms over every answer,
 # `cramped` refuses over 100 lines, `crowded` saves them and will not show
 # them, `chatty` reads each invoice line's product on its own, `shared` keeps
-# its products in one store for every instance, and `stray` writes a fixed
-# file outside its folder. `bouncing` answers a price it cannot parse with
-# the sign-in's redirect, `gated` never keeps its sign-in, `broken` will not
-# boot, and `unportable` boots on no Python but the one it names.
+# its products in one store for every instance, `stray` writes a fixed file
+# outside its folder, and `truncating` keeps the first 100 lines of an
+# invoice, answering as if it kept them all. `bouncing` answers a price it
+# cannot parse with the sign-in's redirect and `forbidding` with a 403;
+# `gated` never keeps its sign-in, and `refusing` neither keeps it nor
+# redirects, answering 401; `broken` will not boot, and `unportable` boots
+# on no Python but the one it names. Every mode's sign-in form quotes its
+# attributes with single quotes.
 FAKE_APP = '''import decimal
 import json
 import logging
@@ -965,6 +1033,7 @@ import time
 
 MODE = "__MODE__"
 TOKEN = '<input type="hidden" name="csrf_token" value="t">'
+SIGN_IN = "<form><input type='hidden' name='csrf_token' value='t'>"
 SKUS = {"WID-1": "10.00", "GAD-2": "24.50", "BOK-3": "12.00",
         "SRV-4": "80.00", "SEE-5": "3.75"}
 LOG = logging.getLogger("tariff")
@@ -988,6 +1057,17 @@ def listed(value):
     if value is None:
         return []
     return list(value) if isinstance(value, (list, tuple)) else [value]
+
+
+def table(rows):
+    """Each line's sku and quantity, and the total, from (sku, unit price,
+    quantity) rows."""
+    total = sum((decimal.Decimal(price) * quantity
+                 for _, price, quantity in rows), decimal.Decimal("0"))
+    total = str(total.quantize(decimal.Decimal("0.01")))
+    return total, "<table>%s</table><p>Total %s</p>" % ("".join(
+        "<tr><td>%s</td><td>%d</td></tr>" % (sku, quantity)
+        for sku, _, quantity in rows), total)
 
 
 def number(text):
@@ -1088,13 +1168,15 @@ class Client(object):
     def dispatch(self, path, method, data):
         if path == "/sign-in":
             if method == "GET":
-                return Response(200, "<form>" + TOKEN)
+                return Response(200, SIGN_IN)
             if (data.get("csrf_token") == "t"
                     and data.get("username") == "admin"
                     and data.get("password") == self.app.password):
-                self.signed = MODE != "gated"
+                self.signed = MODE not in ("gated", "refusing")
                 return Response(302, "", {"Location": "/"})
-            return Response(200, "wrong username or password" + TOKEN)
+            return Response(200, "wrong username or password" + SIGN_IN)
+        if not self.signed and MODE == "refusing":
+            return Response(401, "sign in first")
         if not self.signed:
             return Response(302, "", {"Location": "/sign-in"})
         pages = ("/", "/products", "/rules", "/jurisdictions", "/customers",
@@ -1135,6 +1217,8 @@ class Client(object):
             except decimal.InvalidOperation:
                 if MODE == "bouncing":
                     return Response(302, "", {"Location": "/sign-in"})
+                if MODE == "forbidding":
+                    return Response(403, "forbidden")
                 return Response(200, "unit_price is not a number" + TOKEN)
         if not price.is_finite() or price < 0 or price > 10 ** 12:
             return Response(200, "unit_price is out of range" + TOKEN)
@@ -1157,8 +1241,11 @@ class Client(object):
             lines.append((sku, int(quantity)))
         if MODE == "cramped" and len(lines) > 100:
             return Response(413, "too many lines")
+        if MODE == "truncating":
+            lines = lines[:100]
         if path == "/invoices/preview":
-            return Response(200, "<table>%d lines</table>" % len(lines))
+            return Response(200, table([(sku, SKUS.get(sku, "1.00"), quantity)
+                                        for sku, quantity in lines])[1])
         if not lines:
             return Response(400, "no lines")
         with self.app.connect() as connection:
@@ -1187,16 +1274,21 @@ class Client(object):
                     "SELECT sku, quantity FROM lines WHERE invoice = ? "
                     "ORDER BY position", (invoice,)).fetchall():
                 rows.append(connection.execute(
-                    "SELECT name, unit_price FROM products WHERE sku = ?",
+                    "SELECT sku, unit_price FROM products WHERE sku = ?",
                     (sku,)).fetchone() + (quantity,))
         else:
             rows = connection.execute(
-                "SELECT name, unit_price, quantity FROM lines JOIN products "
+                "SELECT sku, unit_price, quantity FROM lines JOIN products "
                 "USING (sku) WHERE invoice = ? ORDER BY position",
                 (invoice,)).fetchall()
         if MODE == "crowded" and len(rows) > 100:
             return Response(413, "too many lines to show")
-        return Response(200, json.dumps(rows))
+        total, shown = table(rows)
+        if parts[-1] == "export.json":
+            return Response(200, json.dumps({"lines": [
+                {"sku": sku, "quantity": quantity}
+                for sku, _, quantity in rows], "total": total}))
+        return Response(200, shown)
 
 
 def create_app(database):
@@ -1210,7 +1302,8 @@ def create_app(database):
 FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "locking": "concurrent_writes", "lossy": "concurrent_writes",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
-          "bouncing": "fuzz_robustness", "chatty": "n_plus_one",
+          "truncating": "capacity_500_lines", "bouncing": "fuzz_robustness",
+          "forbidding": "fuzz_robustness", "chatty": "n_plus_one",
           "shared": "coexistence", "stray": "coexistence"}
 
 
@@ -1239,7 +1332,7 @@ def failing(probes):
 def runtime_self_checks(scratch):
     """Each planted fault fails its own probe and no other; an app that
     keeps the probes from running loses them."""
-    modes = ["sound", "slow", "gated", "broken"] + sorted(FAULTS)
+    modes = ["sound", "slow", "gated", "refusing", "broken"] + sorted(FAULTS)
     readings = fake_readings(scratch, modes)
     probes = {mode: probe_results(*readings[mode]) for mode in modes}
     sound = probes["sound"]
@@ -1247,6 +1340,9 @@ def runtime_self_checks(scratch):
     checks = [
         ("a sound app signs in", (readings["sound"][0] or {}).get(
             "signed_in") is True),
+        ("a sign-in form quoted with single quotes signs in",
+         (readings["sound"][0] or {}).get("signed_in") is True
+         and "type='hidden'" in FAKE_APP),
         ("a sound app passes every probe", failing(sound) == []),
         ("the latency is two repeats of 30 requests each",
          latency.get("requests") == 30
@@ -1273,6 +1369,10 @@ def runtime_self_checks(scratch):
                    "capacity_500_lines",
         "bouncing": "an app answering a malformed request with the sign-in's "
                     "redirect loses fuzz_robustness",
+        "forbidding": "an app answering 403 to a malformed request loses "
+                      "fuzz_robustness",
+        "truncating": "an app keeping 100 of 500 lines fails "
+                      "capacity_500_lines",
         "chatty": "an app reading each line on its own fails n_plus_one",
         "shared": "instances sharing their data fail coexistence",
         "stray": "an app writing outside its folder fails coexistence",
@@ -1282,8 +1382,11 @@ def runtime_self_checks(scratch):
                        failing(probes[mode]) == [FAULTS[mode]]))
     checks.extend([
         ("the redirect is read as lost, not as an answer",
-         "sign-in's redirect" in probes["bouncing"]["fuzz_robustness"].get(
-             "lost", "")),
+         "turned away by the sign-in" in probes["bouncing"][
+             "fuzz_robustness"].get("lost", "")),
+        ("an app answering 401 until signed in, and never signing in, loses "
+         "every probe", all("could not sign in" in probe.get("lost", "")
+                            for probe in probes["refusing"].values())),
         ("the locked write is read as locked",
          probes["locking"]["concurrent_writes"].get("locked") is True),
         ("the stray file is named",

@@ -218,8 +218,8 @@
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-15-01 | The benchmark shall fail each of the fuzz, concurrent-write, 500-line, N+1 and co-existence probes on an app planted with the fault it guards against, and no other probe there, and pass every probe on an app built to pass them. | Quality reader |
-| FR-15-02 | The benchmark shall read every quality probe signed in as the seeded administrator, and never measure a page answered with the sign-in's redirect. | Quality reader |
+| FR-15-01 | The benchmark shall fail each of the fuzz, concurrent-write, 500-line, N+1 and co-existence probes on an app planted with the fault it guards against, and no other probe there, and pass every probe on an app built to pass them; the 500-line probe passes only where the preview, the saved invoice and its page keep every line. | Quality reader |
+| FR-15-02 | The benchmark shall read every quality probe signed in as the seeded administrator, through the sign-in form's hidden fields however they are quoted, the sign-in holding only where the dashboard then answers 200, and never measure a request the sign-in turns away with its redirect, a 401, or a 403 to a request that carried its token. | Quality reader |
 | FR-15-03 | The benchmark shall count as lost, reading failed, a quality probe the trial keeps from running, by not installing, not booting, not signing in or not finishing in time, and as missing one it could not run itself. | Quality reader |
 | FR-15-04 | The benchmark shall record the latency as two repeats of the 95th percentile over 30 requests to the main routes, with no pass threshold until one is calibrated. | Quality reader |
 | FR-15-05 | The benchmark shall read portability on Python 3.14, the trial installed, booted and serving a signed-in page there, and leave it missing where no Python 3.14 is found. | Quality reader |
