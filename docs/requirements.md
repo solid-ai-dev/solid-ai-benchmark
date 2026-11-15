@@ -208,7 +208,7 @@
 | FR-13-14 | The benchmark shall call a round of two tasks complete only with both at K for every arm, a change task counting whatever its arm's build trial did. | Harness, Report |
 | FR-13-15 | The benchmark shall start every arm's change task of block b of a named round from one fixture, the b-th qualifying build in ascending trial order, cycling when fewer qualify; record the manifest's sha256, each block's fixture and how many distinct fixtures the blocks take; refuse a change run whose manifest or block mapping differs from the root's earlier change runs; and refuse to run while the fixture manifest lists none, lists one without its baseline readings, or names a tarball whose sha256 differs, at the start and at each trial. | Harness |
 | FR-13-16 | The benchmark shall derive each change workspace from its fixture's code and tests alone, without its instructions, settings, databases, caches, environments or history, with the round's spec and only the arm's context, in one commit. | Harness |
-| FR-13-17 | The benchmark shall read a named round's change task whether or not its build trial was scored or left out for a reach, as a trial of its own whose build rows read not measured and whose change targets count on their ISO axes; and keep a pilot round's change task with its build. | Report |
+| FR-13-17 | The benchmark shall read a named round's change task whether or not its build trial was scored or left out for a reach, as a trial of its own whose build rows read not measured; count its change targets on their ISO axes whether its build is unscored, working or broken, a broken build gating only the build's own targets; and keep a pilot round's change task with its build. | Report |
 
 ### 14 One run at a time
 

@@ -5448,6 +5448,34 @@ def change_only_checks():
                    ["Modifiability"] == 1.0
                    and iso_trial_scores(dict(both("none-4"), scores={}))
                    ["Maintainability"]["Modifiability"] is None))
+
+    # One change result beside its build unscored, scored and working, and
+    # scored and broken: a named round reads it the same each time, and a
+    # pilot round's broken build still takes its change targets with it.
+    change = {"name": "none-5", "change_suite": {"value": 1.0,
+                                                 "missing": None}}
+    working = {"name": "none-5",
+               "install": {"value": True, "missing": None},
+               "boot": {"value": {"factory": True, "index_status": 200},
+                        "missing": None}}
+
+    # The broken build's own Modifiability target missed, which is read with
+    # the build and so never reaches the change's sub-score.
+    broken = dict(working, install={"value": False, "missing": None},
+                  structure={"value": {"kind_ladders": [1, 2, 3]},
+                             "missing": None})
+
+    def modifiability(scores, named="C1"):
+        trial = {"scores": scores, "change": change, "round": named}
+        if scores is None:
+            trial = change_only(dict(trial))
+        return iso_trial_scores(trial)["Maintainability"]["Modifiability"]
+    readings = [modifiability(scores) for scores in (None, working, broken)]
+    checks.append(("a named round's change result reads the same whether its "
+                   "build is unscored, working or broken",
+                   readings == [1.0, 1.0, 1.0]
+                   and modifiability(broken, None) is None
+                   and modifiability(working, None) == 1.0))
     checks.append(("a change task standing alone reads no build Python",
                    python_problem({"none-1": both("none-1"),
                                    "none-3": standing}) is None))
@@ -6181,25 +6209,31 @@ def iso_trial_scores(trial, withdrawn=()):
 
     A sub-score is the share of its targets met, over the targets measured,
     and None where none was. A broken build is scored on Reliability alone,
-    where the install target fails, and reads None on every other axis. A
-    target reading a metric in `withdrawn` is not measured.
+    where the install target fails, and reads None on every other axis; for
+    a named round, whose change task starts from a fixture, only the build's
+    own targets are, and the change targets are read whatever the build did.
+    A target reading a metric in `withdrawn` is not measured.
     """
-    # A change task standing alone had no build measured, which is not a
-    # broken one, so its change targets still count on their axes.
-    broken = works(trial) != 1.0 and not trial.get("change_only")
+    broken = works(trial) != 1.0
+
+    # A named round's change task never ran on this trial's build, so a
+    # build broken, or not scored at all, says nothing of the change.
+    apart = trial.get("round") is not None or trial.get("change_only")
     scores = {}
     for axis, subs in ISO_AXES:
         per_sub = {}
         for sub, targets in subs:
-            if broken and axis != BROKEN_AXIS:
+            if broken and axis != BROKEN_AXIS and not apart:
                 per_sub[sub] = None
                 continue
+            gated = broken and axis != BROKEN_AXIS
 
             # A withdrawn metric's number is no result, on the radar as in
             # the tables, so its target drops out rather than reads as met.
             met = [target_met(trial, source, condition, threshold)
                    for _, source, condition, threshold in targets
-                   if source not in withdrawn]
+                   if source not in withdrawn
+                   and not (gated and source not in CHANGE)]
             measured = [outcome for outcome in met if outcome is not None]
             per_sub[sub] = (sum(measured) / len(measured) if measured
                             else None)
