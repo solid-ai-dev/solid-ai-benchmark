@@ -36,7 +36,7 @@
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge. | Report |
+| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge; `main` read as the local branch, else as `origin/main`, and a clone holding neither refused with its reason. | Report |
 | FR-01-02 | The benchmark shall refuse a registration that differs from `main`'s copy or has changes not committed. | Report |
 | FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content; a named round's trials each against its entry's spec and the prompt pinned for their task. | Report |
 | FR-01-04 | The benchmark shall refuse a trial with something to score that records no spec or no prompt. | Report |

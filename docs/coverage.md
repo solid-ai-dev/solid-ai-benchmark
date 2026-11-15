@@ -31,7 +31,7 @@ when:
 
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
-| FR-01-01 | Self-test | `report.py` "one landed after the first trial is refused"<br>`report.py` "one merged after the first trial is read at the merge"<br>`report.py` "a registration landed before the first trial passes, across zones" |
+| FR-01-01 | Self-test | `report.py` "one landed after the first trial is refused"<br>`report.py` "one merged after the first trial is read at the merge"<br>`report.py` "a registration landed before the first trial passes, across zones"<br>`report.py` "the main branch is read locally, else as origin's, and a clone with neither is refused, not crashed" |
 | FR-01-02 | Self-test | `report.py` "one changed and not committed is refused"<br>`report.py` "an amendment on a branch of its own is refused" |
 | FR-01-03 | Self-test | `report.py` "a trial on another spec is refused"<br>`report.py` "a trial on another prompt is refused"<br>`report.py` "every trial on the registered spec passes"<br>`report.py` "every trial on the one prompt passes"<br>`report.py` "a named round's trial on a spec or prompt its entry does not pin is refused, each task held to its own" |
 | FR-01-04 | Self-test | `report.py` "a scorable trial recording no spec is refused"<br>`report.py` "a scorable trial recording no prompt is refused" |

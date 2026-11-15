@@ -1629,25 +1629,42 @@ def registration_problem(root, registration, repository=REPOSITORY):
     first = min(moments)
     if git(repository, "status", "--porcelain", "--", registration):
         return "%s has changes that are not committed" % registration
-    if git(repository, "diff", "--name-only", REGISTRATION_BRANCH, "--",
-           registration):
+    base = registration_base(repository)
+    if base is None:
+        return ("neither %s nor origin/%s is in %s, so %s cannot be shown to "
+                "have landed; fetch %s"
+                % (REGISTRATION_BRANCH, REGISTRATION_BRANCH, repository,
+                   registration, REGISTRATION_BRANCH))
+    if git(repository, "diff", "--name-only", base, "--", registration):
         return ("%s differs from %s's copy, so it has not landed; merge it "
-                "or pull %s" % (registration, REGISTRATION_BRANCH,
-                                REGISTRATION_BRANCH))
+                "or pull %s" % (registration, base, REGISTRATION_BRANCH))
 
     # The first-parent line is the main branch's own history, so a merge that
     # brought the registration in is read at the merge, not at the branch
     # commit beneath it. GitHub's squash and rebase merges stamp the commit
     # with the merge time; a fast-forward pushed from a clone keeps the
     # branch commit's date, which this cannot see past.
-    landed = git(repository, "log", REGISTRATION_BRANCH, "--first-parent",
-                 "-1", "--format=%cI", "--", registration)
+    landed = git(repository, "log", base, "--first-parent", "-1",
+                 "--format=%cI", "--", registration)
     if not landed:
-        return "%s is not on %s" % (registration, REGISTRATION_BRANCH)
+        return "%s is not on %s" % (registration, base)
     if datetime.datetime.fromisoformat(landed) > first:
         return ("%s landed on %s at %s, after the first trial started at %s"
-                % (registration, REGISTRATION_BRANCH, landed,
-                   first.isoformat()))
+                % (registration, base, landed, first.isoformat()))
+    return None
+
+
+def registration_base(repository):
+    """The ref the main branch is read at: its local branch, else the
+    remote's copy of it, or None where the clone holds neither."""
+
+    # A clone of one branch, as a CI checkout is, holds no local main.
+    for ref in (REGISTRATION_BRANCH, "origin/" + REGISTRATION_BRANCH):
+        try:
+            git(repository, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        except TrialError:
+            continue
+        return ref
     return None
 
 
@@ -5467,6 +5484,28 @@ def round_identity_checks():
     return checks
 
 
+# The registration a planted repository holds, landed before any planted
+# trial starts.
+PLANTED_REGISTRATION = "docs/rounds/round.md"
+
+
+def planted_registry(repository, branch=REGISTRATION_BRANCH):
+    """A git repository holding a registration committed on `branch` at
+    2026-10-01, for a self-test that must read no branch of this one."""
+    path = os.path.join(repository, *PLANTED_REGISTRATION.split("/"))
+    os.makedirs(os.path.dirname(path))
+    with io.open(path, "w", encoding="utf-8") as handle:
+        handle.write("# Round\n")
+    when = "2026-10-01T10:00:00+00:00"
+    env = dict(os.environ, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+    git(repository, "init", "-q", "-b", branch)
+    git(repository, "add", PLANTED_REGISTRATION)
+    git(repository, "-c", "user.name=self-test",
+        "-c", "user.email=self-test@example.invalid", "commit", "-q", "-m",
+        "register", env=env)
+    return repository
+
+
 def change_only_checks():
     """A named round's change task is read whether or not its build trial
     was scored or reached, on rows of its own; a pilot round's keeps
@@ -5607,9 +5646,11 @@ def change_only_checks():
                    and "inline-none" in mixed({})
                    and "inline-none" in mixed({"round": "C1",
                                                "registration": "0" * 64})))
+
     # A trial copied within C1, which started after its registration
     # landed, is when the round began; the pilot's skip of reused trials
-    # would leave the round with no first trial.
+    # would leave the round with no first trial. The registration lands in
+    # a repository planted here, so no branch of this one is read.
     began = tempfile.mkdtemp(prefix="efficacy-report-began-")
     with io.open(os.path.join(began, "run-1.json"), "w",
                  encoding="utf-8") as handle:
@@ -5617,10 +5658,31 @@ def change_only_checks():
                                "reused_from": {"round": "C1"},
                                "started_at": "2026-11-15T12:00:00+00:00"}]},
                   handle)
-    counted = registration_problem(began, ROUND5E_REGISTRATION)
-    shutil.rmtree(began, ignore_errors=True)
+    registry = planted_registry(os.path.join(began, "repository"))
+    counted = registration_problem(began, PLANTED_REGISTRATION, registry)
     checks.append(("a trial reused within its named round counts toward when "
                    "the round began", counted is None))
+
+    # The main branch read as origin's where the clone has no local one, as
+    # in a CI checkout, and a clone with neither refused with its reason.
+    remote = planted_registry(os.path.join(began, "remote"), "work")
+    git(remote, "update-ref", "refs/remotes/origin/" + REGISTRATION_BRANCH,
+        "HEAD")
+    bare = planted_registry(os.path.join(began, "bare"), "work")
+    try:
+        missing = registration_problem(began, PLANTED_REGISTRATION, bare)
+    except Exception as error:
+        missing = "crashed: %s" % error
+    checks.append(("the main branch is read locally, else as origin's, and a "
+                   "clone with neither is refused, not crashed",
+                   registration_base(registry) == REGISTRATION_BRANCH
+                   and registration_base(remote)
+                   == "origin/" + REGISTRATION_BRANCH
+                   and registration_problem(began, PLANTED_REGISTRATION,
+                                            remote) is None
+                   and registration_base(bare) is None
+                   and "neither" in (missing or "")))
+    shutil.rmtree(began, ignore_errors=True)
     checks.append(("a change task standing alone reads no build Python",
                    python_problem({"none-1": both("none-1"),
                                    "none-3": standing}) is None))
