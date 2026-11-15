@@ -3565,8 +3565,11 @@ def topic_path(path, workspace=None):
             return None
     if path == ".." or path.startswith("../"):
         return None
-    into = VENDORED["into"] + "/"
-    if path.startswith(into) or "/" + into in path:
+
+    # The topic globs match case aside, as the file system the trials ran on
+    # does, so the vendored copy is found case aside too.
+    into = VENDORED["into"].lower() + "/"
+    if path.lower().startswith(into) or "/" + into in path.lower():
         return None
     return path
 
@@ -3684,6 +3687,13 @@ def map_uses(root, trials):
         if record.get("outcome") not in SCORABLE:
             continue
         if trial_of(record) not in trials:
+            continue
+
+        # A change task is read only where its trial still carries the
+        # change reading: the re-scan takes that away from one that reached
+        # past its workspace, and keeps its clean build.
+        if (record.get("task", "build") == "change"
+                and trials[trial_of(record)].get("change") is None):
             continue
         arm = record.get("arm")
         templates = mapped_templates(arm)
@@ -8181,10 +8191,13 @@ def read_timing_checks():
     got = [topic_path(path, "C:\\pen\\w") for path in (
         "../outside/auth.py", "C:/pen/w/../outside/auth.py",
         "C:/elsewhere/auth.py", "C:/pen/w/%s/templates/auth.md" % into,
+        "C:/pen/w/%s/templates/backend/auth.md" % into.upper(),
         "C:/pen/w/src/./web/../auth.py", "/c/pen/w/src/x.py")]
     checks.append(("a file outside the workspace, past it by .., absolute or "
-                   "relative, or in the vendored templates is on no topic",
-                   got == [None, None, None, None, "src/auth.py", "src/x.py"],
+                   "relative, or in the vendored templates, case aside, is on "
+                   "no topic",
+                   got == [None, None, None, None, None, "src/auth.py",
+                           "src/x.py"],
                    got))
 
     # A skill arm: quality loaded by the session at 1, auth by a subagent
@@ -8245,7 +8258,8 @@ def read_timing_checks():
     with io.open(os.path.join(root, "run-1.json"), "w",
                  encoding="utf-8") as handle:
         json.dump({"trials": records}, handle)
-    tasks = map_uses(root, {"lazyref-1": {}})
+    tasks = map_uses(root, {"lazyref-1": {"change": {}}})
+    unchanged = sorted(map_uses(root, {"lazyref-1": {"change": None}}))
     per_task = {name: use["timing"]["templates"]["backend-database"]["class"]
                 for name, use in tasks.items()}
     rows = [(row["arm"], row["task"]) for row in read_timing_rows(tasks)]
@@ -8255,6 +8269,9 @@ def read_timing_checks():
                                 "lazyref-1" + CHANGE_TASK: "just in time"}
                    and rows == [("lazyref", "build"), ("lazyref", "change")],
                    (per_task, rows)))
+    checks.append(("a change task the re-scan left out is not timed, and its "
+                   "clean build still is",
+                   unchanged == ["lazyref-1"], unchanged))
     uses = {"lazyref-1": dict(map_use([session], "lazyref", chain, [child]),
                               timing=build),
             "lazyskills-1": dict(map_use([skilled], "lazyskills", ids,
