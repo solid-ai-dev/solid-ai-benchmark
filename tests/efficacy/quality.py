@@ -75,7 +75,7 @@ import builtins, html, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 PACKAGE = "tariff"
 USERNAME = "admin"
@@ -217,24 +217,55 @@ class Raised(Exception):
 
 
 class Hidden(HTMLParser):
-    """Collects every hidden input, however its attributes are quoted."""
+    """Collects every hidden input, however its attributes are quoted, in
+    page order, with the action of the form it sits in."""
 
     def __init__(self):
         HTMLParser.__init__(self)
-        self.fields = {}
+        self.inputs = []
+        self.forms = []
+        self.form = None
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
-        if (tag == "input" and (attributes.get("type") or "").lower()
+        if tag == "form":
+            self.form = len(self.forms)
+            self.forms.append(attributes.get("action") or "")
+        elif (tag == "input" and (attributes.get("type") or "").lower()
                 == "hidden" and attributes.get("name")):
-            self.fields[attributes["name"]] = attributes.get("value") or ""
+            self.inputs.append((self.form, attributes["name"],
+                                attributes.get("value") or ""))
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self.form = None
 
 
-def hidden_fields(text):
-    """Every hidden input in the page, which is where a CSRF token hides."""
+# A page may hold several forms, each with its own token, such as a sign-out
+# form beside the one being sent. The fields sent are those of the first form
+# whose action is the path posted to, read as the browser resolves it, its
+# query ignored, an empty action being the page's own path. A post no form's
+# action names takes every hidden field on the page, the first of each name.
+# A save control's `formaction` is not read: the builder's save is sent with
+# the builder form's fields by that fallback, which is how a browser sends it.
+def hidden_fields(text, page_path, target):
+    """The hidden fields a post to `target` carries from the page at
+    `page_path`."""
     parser = Hidden()
     parser.feed(text)
-    return parser.fields
+    base = "http://localhost" + page_path
+    wanted = urlsplit(target).path
+    for form, action in enumerate(parser.forms):
+        if urlsplit(urljoin(base, action or page_path)).path == wanted:
+            fields = {}
+            for owner, name, value in parser.inputs:
+                if owner == form:
+                    fields.setdefault(name, value)
+            return fields
+    fields = {}
+    for _, name, value in parser.inputs:
+        fields.setdefault(name, value)
+    return fields
 
 
 # A request the sign-in turns away: its redirect, a 401, or a 403 to a
@@ -272,7 +303,8 @@ def form_post(who, form, path, body, method="POST", headers=None):
     afresh, since a token may change between answers."""
     data = dict(body)
     for name, value in hidden_fields(
-            ask(who, "GET", form).get_data(as_text=True)).items():
+            ask(who, "GET", form).get_data(as_text=True), form,
+            path).items():
         data.setdefault(name, value)
     return ask(who, method, path, data=data, headers=headers)
 
@@ -374,8 +406,8 @@ def latency_p95_ms():
         if method == "POST":
             data = builder_body(WORKED, "WELCOME")
             data.update({name: value for name, value in hidden_fields(
-                page(client, "/invoices/new").get_data(as_text=True)).items()
-                if name not in data})
+                page(client, "/invoices/new").get_data(as_text=True),
+                "/invoices/new", path).items() if name not in data})
             headers = {"HX-Request": "true"}
         start = time.perf_counter()
         answer = ask(client, method, path, data=data, headers=headers)
@@ -450,10 +482,16 @@ def exported(path, lines):
     if [(line["sku"], line["quantity"]) for line in records] != lines:
         return None, ("the export holds %d lines, not the %d saved in order"
                       % (len(records), len(lines)))
+    # A total that is no finite amount, NaN or Infinity among them, is the
+    # build's malformed output, so it fails rather than goes unread.
     try:
-        return Decimal(str(export.get("total"))), None
+        total = Decimal(str(export.get("total")))
     except InvalidOperation:
-        return None, "the export's total is not a number"
+        total = None
+    if total is None or not total.is_finite():
+        return None, ("the export's total, %r, is not a finite amount"
+                      % (export.get("total"),))
+    return total, None
 
 
 # An amount as a page may write it: grouped by thousands with a comma, a
@@ -1062,7 +1100,8 @@ def read_trial(area, name, scores_file, other):
 # outside its folder, `truncating` keeps the first 100 lines of an invoice,
 # answering as if it kept them all, `miscounting` shows a total of 100 of
 # them, `nulling` exports one line as null, and `capped` prices the first
-# 100 lines alone wherever it prices them, while it keeps and exports all.
+# 100 lines alone wherever it prices them, while it keeps and exports all;
+# `unpriced` exports its total as NaN.
 # `paginating` shows 100 rows and the whole total, which is no fault. Pages
 # write amounts grouped by thousands beside the euro's sign, the preview's
 # with `&nbsp;`. `bouncing` answers a price it cannot parse with the
@@ -1084,6 +1123,19 @@ import time
 MODE = "__MODE__"
 TOKEN = '<input type="hidden" name="csrf_token" value="t">'
 SIGN_IN = "<form><input type='hidden' name='csrf_token' value='t'>"
+SIGN_OUT = ('<form method="post" action="/sign-out"><input type="hidden" '
+            'name="csrf_token" value="other-token"></form>')
+
+
+def form_page(path, body):
+    """A page whose main form posts to its own route, the builder's to its
+    preview, with a sign-out form carrying another token beside it: before
+    the main form on the products page, after it everywhere else."""
+    action = "/invoices/preview" if path == "/invoices/new" else path
+    main = '<form method="post" action="%s">%s</form>' % (action, TOKEN)
+    if path == "/products":
+        return SIGN_OUT + body + main
+    return body + main + SIGN_OUT
 SKUS = {"WID-1": "10.00", "GAD-2": "24.50", "BOK-3": "12.00",
         "SRV-4": "80.00", "SEE-5": "3.75"}
 LOG = logging.getLogger("tariff")
@@ -1253,7 +1305,7 @@ class Client(object):
         parts = path.strip("/").split("/")
         if method == "GET" and path in pages:
             listing = " ".join(self.app.skus()) if path == "/products" else ""
-            return Response(200, "<p>%s</p>%s" % (listing, TOKEN))
+            return Response(200, form_page(path, "<p>%s</p>" % listing))
         if method == "POST" and (path in posts or path.endswith("/delete")
                                  or path.endswith("/erase")):
             if data.get("csrf_token") != "t":
@@ -1356,8 +1408,9 @@ class Client(object):
                        for sku, _, quantity in rows]
             if MODE == "nulling" and len(records) > 100:
                 records[100] = None
-            return Response(200, json.dumps({"lines": records,
-                                             "total": total}))
+            return Response(200, json.dumps({
+                "lines": records,
+                "total": "NaN" if MODE == "unpriced" else total}))
         return Response(200, shown)
 
 
@@ -1375,6 +1428,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "truncating": "capacity_500_lines",
           "miscounting": "capacity_500_lines",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
+          "unpriced": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
           "forbidding": "fuzz_robustness", "chatty": "n_plus_one",
           "shared": "coexistence", "stray": "coexistence"}
@@ -1418,6 +1472,14 @@ def runtime_self_checks(scratch):
          (readings["sound"][0] or {}).get("signed_in") is True
          and "type='hidden'" in FAKE_APP),
         ("a sound app passes every probe", failing(sound) == []),
+        ("a form's own token is posted, not one from a form before it",
+         sound["concurrent_writes"].get("passed") is True
+         and sound["coexistence"].get("passed") is True
+         and "return SIGN_OUT + body + main" in FAKE_APP),
+        ("a post no form's action names carries the page's first token",
+         sound["n_plus_one"].get("passed") is True
+         and sound["capacity_500_lines"].get("passed") is True
+         and "return body + main + SIGN_OUT" in FAKE_APP),
         ("a total grouped by thousands beside a currency sign is read",
          sound["capacity_500_lines"].get("passed") is True
          and "€" in FAKE_APP and 'format(int(whole), ",")' in FAKE_APP),
@@ -1459,6 +1521,7 @@ def runtime_self_checks(scratch):
         "miscounting": "a page showing a total other than the export's "
                        "fails capacity_500_lines",
         "nulling": "an export with a null line fails capacity_500_lines",
+        "unpriced": "an export whose total is NaN fails capacity_500_lines",
         "capped": "a total over the first 100 of 500 exported lines fails "
                   "capacity_500_lines",
         "chatty": "an app reading each line on its own fails n_plus_one",
