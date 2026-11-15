@@ -1713,6 +1713,16 @@ def identity_problem(root, round_name=None, digest=None):
             run = json.load(handle)
         named, base = run.get("round"), os.path.basename(file)
 
+        # A header naming no round over trials that name one is a named
+        # round's record that lost its identity, as a copy written without
+        # it would be; read as the pilot's, it would let any run join it.
+        if named is None:
+            marked = [record for record in run.get("trials", [])
+                      if record.get("round") is not None]
+            if marked:
+                return ("%s names no round, yet its trial %s names round %s"
+                        % (base, name_of(marked[0]), marked[0]["round"]))
+
         # A root holds one round. A run naming none in a named round's root
         # would be read under the pilot's rules, and the reverse would put a
         # named round's trials beside records no registration covers.
@@ -1752,7 +1762,7 @@ def recorded_round(root):
         if named is not None:
             break
     if named is None:
-        return None, None
+        return None, identity_problem(root)
     if named not in REGISTRATIONS:
         return named, ("the run records name round %s, which is not "
                        "registered" % named)
@@ -4229,6 +4239,7 @@ def registration_checks():
     bare = planted("bare", {"round": "C1", "registration": digest},
                    [dict(whole, block=None)])
     good = planted("good", {"round": "C1", "registration": digest}, [whole])
+    unheaded = planted("unheaded", {}, [whole])
     checks += [
         ("a root holding another round's or registration's runs is refused",
          identity_problem(other, "C1", digest) is not None
@@ -4243,6 +4254,11 @@ def registration_checks():
          and recorded_round(bare)[1] is not None
          and recorded_round(good) == ("C1", None)
          and recorded_round(legacy) == (None, None)),
+        ("a run whose trials name a round under a header naming none is "
+         "refused",
+         identity_problem(unheaded) is not None
+         and identity_problem(unheaded, "C1", digest) is not None
+         and recorded_round(unheaded)[1] is not None),
     ]
     written = os.path.join(scratch, "written", "run-1.json")
     os.makedirs(os.path.dirname(written))

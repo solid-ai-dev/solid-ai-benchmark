@@ -23,9 +23,10 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
-from harness import (ARMS, PROMPT, TrialError,  # noqa: E402
-                     assert_outside_repository, canonical, now,
-                     project_folder, remove_tree, scorable_trials,
+from harness import (ARMS, PROMPT, REGISTRATIONS, TrialError,  # noqa: E402
+                     assert_outside_repository, canonical, identity_problem,
+                     now, project_folder, recorded_round,
+                     registration_digest, remove_tree, scorable_trials,
                      scoring_area, write_run)
 
 # The scoring area's per-trial readings, each a JSON file named for the
@@ -159,6 +160,20 @@ def reuse(source, target, arms):
     assert_outside_repository(target)
     chosen = select(source, arms)
 
+    # A named round's trials go on as that round's: their copy's run record
+    # names it, and they join no root of another round or of none, which
+    # would read them under rules their round never registered.
+    named, problem = recorded_round(source)
+    identity = None
+    if named is not None and not problem:
+        identity = {"round": named,
+                    "registration": registration_digest(REGISTRATIONS[named])}
+        problem = identity_problem(target, named, identity["registration"])
+    elif not problem:
+        problem = identity_problem(target)
+    if problem:
+        raise TrialError(problem)
+
     # A trial the target already offers would then be offered twice, which
     # the scorer refuses; better refused here, before anything is copied.
     try:
@@ -207,14 +222,16 @@ def reuse(source, target, arms):
     os.makedirs(target, exist_ok=True)
     run_file = os.path.join(target, "run-%s-reused.json"
                             % started_at.strftime("%Y-%m-%dT%H-%M-%S"))
-    write_run(run_file, started_at, records, "build", PROMPT)
+    write_run(run_file, started_at, records, "build", PROMPT,
+              identity=identity)
     return sorted(chosen), run_file
 
 
-def plant_source(scratch):
+def plant_source(scratch, name="earlier", identity=None):
     """A source root of an earlier round: one trial per arm, each scored,
-    judged and read for security, with a transcript and a lock."""
-    source = os.path.join(scratch, "earlier")
+    judged and read for security, with a transcript and a lock; a named
+    round's where `identity` names one."""
+    source = os.path.join(scratch, name)
     area = scoring_area(source)
     records = []
     for arm, index in (("none", 1), ("inline", 1), ("hand", 1)):
@@ -240,7 +257,8 @@ def plant_source(scratch):
                 json.dump({"name": old, "arm": arm, "trial": index,
                            "suite_revision": "planted"}, handle)
     write_run(os.path.join(source, "run-planted.json"),
-              datetime.datetime(2026, 9, 15, 12, 0, 0), records)
+              datetime.datetime(2026, 9, 15, 12, 0, 0), records,
+              identity=identity)
     os.makedirs(os.path.join(area, "judge"))
     blind = {"hand-1": "T1", "inline-1": "T2", "none-1": "T3"}
     for old, label in blind.items():
@@ -330,6 +348,29 @@ def self_test():
     checks.append(("a trial copied on keeps the root it ran in as its origin",
                    carried["reused_from"]["root"] == os.path.abspath(source)
                    and carried["reused_from"]["name"] == "inline-1"))
+
+    # A named round's trials keep their round in the copy's header, and go
+    # into no root of none.
+    digest = registration_digest(REGISTRATIONS["C1"])
+    named = plant_source(scratch, "named",
+                         {"round": "C1", "registration": digest})
+    _, kept = reuse(named, os.path.join(scratch, "named-later"), ["inline"])
+    header = loaded(kept)
+    checks.append(("a named round's trials copied on keep its round in the "
+                   "run record's header",
+                   header.get("round") == "C1"
+                   and header.get("registration") == digest
+                   and recorded_round(os.path.dirname(kept)) == ("C1", None)))
+    joined = []
+    for origin, into in ((named, target),
+                         (source, os.path.dirname(kept))):
+        try:
+            reuse(origin, into, ["none"])
+            joined.append(True)
+        except TrialError:
+            joined.append(os.path.exists(os.path.join(into, "none-1.tar")))
+    checks.append(("a reuse never mixes a named round's trials with others",
+                   joined == [False, False]))
 
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))

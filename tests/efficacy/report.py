@@ -5327,7 +5327,7 @@ def round_identity_checks():
     trial = {"round": "C1", "task": "build", "arm": "none", "block": 1,
              "trial": 1, "outcome": "completed"}
 
-    def refused(name, runs):
+    def refused(name, runs, why="round"):
         root = os.path.join(scratch, name)
         scores = os.path.join(scoring_area(root), "scores")
         os.makedirs(scores)
@@ -5346,7 +5346,7 @@ def round_identity_checks():
             printed = sys.stdout.getvalue()
         finally:
             sys.stdout = saved
-        return code == 2 and "refused" in printed and "round" in printed
+        return code == 2 and "refused" in printed and why in printed
 
     good = {"round": "C1", "registration": digest, "trials": [trial]}
     checks += [
@@ -5356,6 +5356,9 @@ def round_identity_checks():
         ("a named round's record missing its identity is refused, not read "
          "as the pilot's",
          refused("bare", [dict(good, trials=[dict(trial, block=None)])])),
+        ("a run whose trials name a round under a header naming none is "
+         "refused, not read as the pilot's",
+         refused("unheaded", [{"trials": [trial]}], "yet its trial")),
     ]
     shutil.rmtree(scratch, ignore_errors=True)
     return checks
