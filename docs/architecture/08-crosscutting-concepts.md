@@ -622,6 +622,24 @@ interval of the difference against `none` lies past the axis's margin
 each radar, shown and not scored, and the appendix holds one table of
 sub-scores per axis. The decision is ADR-023.
 
+Round 6's targets read three sources the pilot's did not (FR-12-19 to
+FR-12-21):
+
+- **Hidden-suite modules.** Functional correctness has one target per build
+  module, met where the module passes whole: no check failed, errored or
+  skipped. A module missing from a build's report is not measured. The
+  sub-characteristic is still one share among three on its axis, however
+  many modules it holds.
+- **Quality probes.** Each pass-or-fail probe is one target: fault
+  tolerance, availability, capacity, resource use, co-existence and
+  portability. A lost probe fails; a missing one is not measured.
+- **Latency.** Its target reads a cutoff calibrated from the reference
+  build and a planted slowdown, frozen before round 6 registers. Until then
+  it is not measured.
+
+A pilot round read by the ISO radar keeps the targets it had before round 6,
+and reads round 6's only when `--round6-targets` asks for them.
+
 **Each approach in plain words** (FR-12-07):
 
 - What it did better and worse than `none`, by radar axis.
