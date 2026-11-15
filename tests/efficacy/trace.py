@@ -31,7 +31,7 @@ COVERAGE = os.path.join(ROOT, "docs", "coverage.md")
 # is looked up only in the output of the module its row names.
 MODULES = ("harness.py", "generate_arm.py", "score.py", "judge.py",
            "report.py", "archive.py", "reuse.py", "progress.py", "probes.py",
-           "security.py", "control/control.py")
+           "security.py", "quality.py", "control/control.py")
 
 ROW = re.compile(r"^\| (FR-(\d{2})-(\d{2})) \| (.+?) \| (.+?) \|$")
 TOPIC = re.compile(r"^#{2,3} (\d{2}) ")

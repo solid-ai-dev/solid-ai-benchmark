@@ -22,6 +22,8 @@
   - **Harness:** `harness.py`, which runs the trials.
   - **Scorer:** `score.py`, which scores a frozen build.
   - **Security reader:** `security.py`, which runs the probes.
+  - **Quality reader:** `quality.py`, which runs the reliability, performance
+    and portability probes.
   - **Judge:** `judge.py`, which bundles a build and has a model score it.
   - **Report:** `report.py`, which reads a round and writes its report.
   - **Archive:** `archive.py`, which carries a round to the private archive.
@@ -209,8 +211,19 @@
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-14-01 | The benchmark shall refuse a second scoring, judging or security run that finds a live claim on its root. | Scorer, Judge, Security reader |
+| FR-14-01 | The benchmark shall refuse a second scoring, judging, security or quality run that finds a live claim on its root. | Scorer, Judge, Security reader, Quality reader |
 | FR-14-02 | The benchmark shall take over a claim naming a process that has ended, and say so. | Harness |
+
+### 15 Quality probes
+
+| ID | Requirement | Delivered by |
+| -- | ----------- | ------------ |
+| FR-15-01 | The benchmark shall fail each of the fuzz, concurrent-write, 500-line, N+1 and co-existence probes on an app planted with the fault it guards against, and no other probe there, and pass every probe on an app built to pass them. | Quality reader |
+| FR-15-02 | The benchmark shall read every quality probe signed in as the seeded administrator, and never measure a page answered with the sign-in's redirect. | Quality reader |
+| FR-15-03 | The benchmark shall count as lost, reading failed, a quality probe the trial keeps from running, by not installing, not booting, not signing in or not finishing in time, and as missing one it could not run itself. | Quality reader |
+| FR-15-04 | The benchmark shall record the latency as two repeats of the 95th percentile over 30 requests to the main routes, with no pass threshold until one is calibrated. | Quality reader |
+| FR-15-05 | The benchmark shall read portability on Python 3.14, the trial installed, booted and serving a signed-in page there, and leave it missing where no Python 3.14 is found. | Quality reader |
+| FR-15-06 | The benchmark shall read the quality probes in a fresh environment per trial on the spec's Python, and remove every environment once it is read. | Quality reader |
 
 ## Quality requirements
 

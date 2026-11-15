@@ -201,5 +201,16 @@ when:
 
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
-| FR-14-01 | Self-test | `score.py` "a live score.py run refuses a second"<br>`judge.py` "a live judge.py run refuses a second"<br>`security.py` "a live security.py run refuses a second" |
+| FR-14-01 | Self-test | `score.py` "a live score.py run refuses a second"<br>`judge.py` "a live judge.py run refuses a second"<br>`security.py` "a live security.py run refuses a second"<br>`quality.py` "a live quality.py run refuses a second" |
 | FR-14-02 | Self-test | `harness.py` "an ended run is taken over"<br>`harness.py` "a live pid that is not the tool is taken over" |
+
+## 15 Quality probes
+
+| ID | Kind | Checked by |
+| -- | ---- | ---------- |
+| FR-15-01 | Self-test | `quality.py` "a sound app passes every probe"<br>`quality.py` "an app answering 500 on bad input fails fuzz_robustness, and no other probe"<br>`quality.py` "an app raising out of the client fails fuzz_robustness, and no other probe"<br>`quality.py` "an app whose writes lock fails concurrent_writes, and no other probe"<br>`quality.py` "an app dropping an overlapping write fails concurrent_writes, and no other probe"<br>`quality.py` "the locked write is read as locked"<br>`quality.py` "an app refusing 500 lines fails capacity_500_lines, and no other probe"<br>`quality.py` "an app that cannot show 500 lines fails capacity_500_lines, and no other probe"<br>`quality.py` "an app reading each line on its own fails n_plus_one, and no other probe"<br>`quality.py` "statements are counted per page, and did not grow"<br>`quality.py` "instances sharing their data fail coexistence, and no other probe"<br>`quality.py` "an app writing outside its folder fails coexistence, and no other probe"<br>`quality.py` "the stray file is named" |
+| FR-15-02 | Self-test | `quality.py` "a sound app signs in"<br>`quality.py` "an app that never keeps its sign-in loses every probe, passing none"<br>`quality.py` "an app answering a malformed request with the sign-in's redirect loses fuzz_robustness, and no other probe"<br>`quality.py` "the redirect is read as lost, not as an answer" |
+| FR-15-03 | Self-test | `quality.py` "an app that will not boot loses every probe"<br>`quality.py` "a trial that did not install loses every probe"<br>`quality.py` "no report from the probe is missing, not lost"<br>`quality.py` "a stalled run keeps what it read and loses the rest"<br>`quality.py` "a run that stalled booting loses every probe" |
+| FR-15-04 | Self-test | `quality.py` "the latency is two repeats of 30 requests each"<br>`quality.py` "a slowed app reads slower by its delay" |
+| FR-15-05 | Self-test | `quality.py` "a build that serves its page on the other Python passes portability"<br>`quality.py` "a build that boots on its own Python only fails portability"<br>`quality.py` "a build whose sign-in fails on the other Python fails portability"<br>`quality.py` "a build the other Python will not install fails portability"<br>`quality.py` "no other Python is missing, not passed" |
+| FR-15-06 | Self-test | `quality.py` "a reading's environment is gone once it is read" |
