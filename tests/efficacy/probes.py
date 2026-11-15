@@ -481,6 +481,7 @@ print(json.dumps(report))
 # routes, the CSRF refusal, the escaping of what a form stored.
 WEB_SCRIPT = r'''
 import json, os, re, sys, tempfile
+from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 PACKAGE = "tariff"
@@ -505,6 +506,20 @@ except Exception as error:
     raise SystemExit(0)
 
 
+class Hidden(HTMLParser):
+    """Collects every hidden input, however its attributes are quoted."""
+
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.fields = {}
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if (tag == "input" and (attributes.get("type") or "").lower()
+                == "hidden" and attributes.get("name")):
+            self.fields[attributes["name"]] = attributes.get("value") or ""
+
+
 def hidden_fields(html):
     """Every hidden input in the page, which is where a CSRF token hides.
 
@@ -512,15 +527,9 @@ def hidden_fields(html):
     visible fields and leaves the rest -- so the probe carries whatever the
     form carries rather than guessing a name.
     """
-    fields = {}
-    for match in re.finditer(r'<input[^>]*type="hidden"[^>]*>', html,
-                             re.IGNORECASE):
-        tag = match.group(0)
-        name = re.search(r'name="([^"]+)"', tag)
-        value = re.search(r'value="([^"]*)"', tag)
-        if name:
-            fields[name.group(1)] = value.group(1) if value else ""
-    return fields
+    parser = Hidden()
+    parser.feed(html)
+    return parser.fields
 
 
 def gated(response):
@@ -1027,11 +1036,15 @@ def total():
 # its token and escapes what it shows; `locked` never signs anyone in, so
 # every page is the sign-in's redirect; `raw` signs in, takes a post without
 # a token and shows a stored name as it came; `unstored` signs in and
-# refuses every post, the one with its token too.
+# refuses every post, the one with its token too. The sign-in form quotes
+# its attributes singly.
 FAKE_WEB_APP = '''import os
 
 MODE = "__MODE__"
 TOKEN = '<input type="hidden" name="csrf_token" value="t">'
+
+# The sign-in form quotes its attributes singly, which is valid HTML too.
+SIGN_IN_TOKEN = "<input type='hidden' name='csrf_token' value='t'>"
 PAGE = ('<!doctype html><html lang="en"><head><title>%s</title></head>'
         '<body><main><h1>%s</h1>%s</main></body></html>')
 
@@ -1059,7 +1072,7 @@ class Client(object):
     def get(self, path):
         if path == "/sign-in":
             return Response(200, PAGE % ("Sign in", "Sign in", "<form>"
-                                         + TOKEN + "</form>"))
+                                         + SIGN_IN_TOKEN + "</form>"))
         if not self.signed:
             return Response(302, location="/sign-in?next=" + path)
         names = "".join("<li>%s %s</li>" % (sku, name if MODE == "raw"
