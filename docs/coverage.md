@@ -185,7 +185,7 @@ when:
 | ID | Kind | Checked by |
 | -- | ---- | ---------- |
 | FR-13-01 | Self-test | `harness.py` "the record is written as every trial starts and ends"<br>`harness.py` "every trial records the CLI's version, read as it starts" |
-| FR-13-02 | Self-test | `generate_arm.py` "every built arm's file has its generation record beside it" |
+| FR-13-02 | Self-test | `generate_arm.py` "every built arm's file has its generation record beside it"<br>`report.py` "a pilot arm no script builds keeps its record for the report, and its vendored templates" |
 | FR-13-03 | Self-test | `archive.py` "readings, judgings, map and lock come; bundles do not"<br>`archive.py` "the original tarball's hash is recorded"<br>`archive.py` "the revisions are recorded"<br>`archive.py` "a reading changed in the archive fails the verify" |
 | FR-13-04 | Self-test | `archive.py` "a reading changed after the stamp is a problem"<br>`archive.py` "the report refuses docs/audits/ without a current stamp"<br>`report.py` "a report into a templates source's docs/audits needs the stamp" |
 | FR-13-05 | Self-test | `archive.py` "the restored root reads as the original does"<br>`archive.py` "a restored record points at the restored tarball and void"<br>`archive.py` "a restored transcript keeps its time" |

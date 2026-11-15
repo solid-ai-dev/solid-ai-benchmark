@@ -57,6 +57,12 @@ GENERATED = {
     "lazyskills": {"dir": "lazyskills", "kind": "map", "load": "skill"},
 }
 
+# Every arm with a generation record under `arms/`, by its directory: the
+# arms built here, and the pilot's written arms, whose records stay so a
+# pilot round's report still cites how each was made and what it vendored.
+RECORDED = dict({arm: entry["dir"] for arm, entry in GENERATED.items()},
+                hybrid="hybrid", short="short")
+
 
 def output_path(arm):
     """Where an arm's generated file is committed."""
@@ -72,8 +78,7 @@ def record_path(arm):
     """The record of the generation behind an arm's file, committed beside
     it. The report cites it, and a scratch directory would not outlive the
     run."""
-    return os.path.join(HERE, "arms", GENERATED[arm]["dir"],
-                        "generation.json")
+    return os.path.join(HERE, "arms", RECORDED[arm], "generation.json")
 
 
 # The output scan. No arm is handed `SPEC.md`, so only arbitrary data the
