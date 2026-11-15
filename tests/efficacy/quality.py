@@ -428,27 +428,46 @@ def n_plus_one():
     return passed(large <= small, one_line=small, twenty_lines=large)
 
 
-def exported(path):
-    """The saved invoice's JSON export: its lines and its total, or None."""
+def exported(path, lines):
+    """The saved invoice's JSON export read against the lines saved: its
+    total, or None and why it does not hold them."""
     try:
         export = json.loads(page(client, path + "/export.json").get_data(
             as_text=True))
-        Decimal(export["total"])
-        return list(export["lines"]), str(export["total"])
-    except (ValueError, KeyError, TypeError, InvalidOperation):
-        return None
+    except ValueError:
+        return None, "the saved invoice's JSON export is not JSON"
+    if not isinstance(export, dict) or not isinstance(export.get("lines"),
+                                                      list):
+        return None, "the saved invoice's JSON export lists no lines"
+    records = export["lines"]
+    malformed = [index for index, line in enumerate(records)
+                 if not isinstance(line, dict)
+                 or not isinstance(line.get("sku"), str)
+                 or type(line.get("quantity")) is not int]
+    if malformed:
+        return None, ("the export's line %d is not a record with a sku and "
+                      "an integer quantity" % (malformed[0] + 1))
+    if [(line["sku"], line["quantity"]) for line in records] != lines:
+        return None, ("the export holds %d lines, not the %d saved in order"
+                      % (len(records), len(lines)))
+    try:
+        return Decimal(str(export.get("total"))), None
+    except InvalidOperation:
+        return None, "the export's total is not a number"
 
 
-def shows_all(answer, lines, total):
-    """Whether a page shows every line, by each sku's count, and the total
-    that only every line gives, read with any thousands separator."""
-    text = re.sub(r"(?<=\d)[,\u00a0\u202f ](?=\d{3}\b)", "",
-                  answer.get_data(as_text=True))
-    counts = {}
-    for sku, _ in lines:
-        counts[sku] = counts.get(sku, 0) + 1
-    return (all(text.count(sku) >= count for sku, count in counts.items())
-            and total in text)
+# An amount as a page may write it: grouped by thousands with a comma, a
+# point, a space or an apostrophe, and two decimals after a point or a comma.
+AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:[,.\u00a0\u202f' ]\d{3})+"
+                    r"|\d+)[.,](\d{2})(?!\d)")
+
+
+def shows_total(answer, total):
+    """Whether a page shows the amount `total`, however it is grouped and
+    whatever currency sign stands beside it."""
+    return any(Decimal(re.sub(r"\D", "", whole) + "." + cents) == total
+               for whole, cents in AMOUNT.findall(
+                   answer.get_data(as_text=True)))
 
 
 def capacity_500_lines():
@@ -471,25 +490,26 @@ def capacity_500_lines():
                           reason="the save did not redirect to its page")
         rendered = page(client, path)
         steps["render"] = rendered.status_code
-        export = exported(path)
+        total, reason = exported(path, lines)
     except Raised as error:
         return passed(False, steps=steps, raised=str(error))
     if not (ok(preview) and ok(rendered)):
         return passed(False, steps=steps)
 
-    # A build that quietly keeps fewer lines answers 2xx on all three, so
-    # the lines are counted: the export's, the spec's fixed form, then the
-    # preview's and the page's against it.
-    if export is None:
-        return passed(False, steps=steps,
-                      reason="the saved invoice's JSON export did not read")
-    kept = {"saved": len(export[0]) == len(lines)
-            and [(line.get("sku"), line.get("quantity")) for line in export[0]]
-            == lines,
-            "preview": shows_all(preview, lines, export[1]),
-            "render": shows_all(rendered, lines, export[1])}
+    # A build that quietly keeps fewer lines answers 2xx on all three. The
+    # export, in the spec's fixed form, must list every line saved, each a
+    # well-formed record; a malformed one is the build's output, so it fails.
+    if reason:
+        return passed(False, steps=steps, reason=reason)
+
+    # The preview and the page are read by their total alone, which only all
+    # 500 lines give, since every line adds to it. A page that paginates its
+    # rows but shows the whole invoice's total keeps every line, so it is no
+    # capacity failure; counting rows in HTML is left alone.
+    kept = {"preview": shows_total(preview, total),
+            "render": shows_total(rendered, total)}
     return passed(all(kept.values()), steps=steps, kept=kept,
-                  saved_lines=len(export[0]))
+                  total=str(total))
 
 
 LOCKED = re.compile(r"database (table )?is locked", re.IGNORECASE)
@@ -1014,8 +1034,11 @@ def read_trial(area, name, scores_file, other):
 # `cramped` refuses over 100 lines, `crowded` saves them and will not show
 # them, `chatty` reads each invoice line's product on its own, `shared` keeps
 # its products in one store for every instance, `stray` writes a fixed file
-# outside its folder, and `truncating` keeps the first 100 lines of an
-# invoice, answering as if it kept them all. `bouncing` answers a price it
+# outside its folder, `truncating` keeps the first 100 lines of an invoice,
+# answering as if it kept them all, `miscounting` shows a total of 100 of
+# them, and `nulling` exports one line as null. `paginating` shows 100 rows
+# and the whole total, which is no fault. Pages write amounts grouped by
+# thousands beside the euro's sign. `bouncing` answers a price it
 # cannot parse with the sign-in's redirect and `forbidding` with a 403;
 # `gated` never keeps its sign-in, and `refusing` neither keeps it nor
 # redirects, answering 401; `broken` will not boot, and `unportable` boots
@@ -1059,15 +1082,31 @@ def listed(value):
     return list(value) if isinstance(value, (list, tuple)) else [value]
 
 
-def table(rows):
-    """Each line's sku and quantity, and the total, from (sku, unit price,
-    quantity) rows."""
+def summed(rows):
     total = sum((decimal.Decimal(price) * quantity
                  for _, price, quantity in rows), decimal.Decimal("0"))
-    total = str(total.quantize(decimal.Decimal("0.01")))
+    return str(total.quantize(decimal.Decimal("0.01")))
+
+
+def written(amount, style):
+    """An amount as a page writes it: `12,345.67 EUR` grouped by commas in
+    English, `12.345,67 EUR` by points otherwise, with the euro's sign."""
+    whole, cents = amount.split(".")
+    grouped = format(int(whole), ",")
+    if style == "en":
+        return "\u20ac" + grouped + "." + cents
+    return grouped.replace(",", ".") + "," + cents + "\u00a0\u20ac"
+
+
+def table(rows, style):
+    """The export's total, and the page: each line's sku and quantity, and
+    the total, from (sku, unit price, quantity) rows."""
+    total = summed(rows)
+    shown = rows[:100] if MODE in ("paginating", "miscounting") else rows
+    page_total = summed(shown) if MODE == "miscounting" else total
     return total, "<table>%s</table><p>Total %s</p>" % ("".join(
         "<tr><td>%s</td><td>%d</td></tr>" % (sku, quantity)
-        for sku, _, quantity in rows), total)
+        for sku, _, quantity in shown), written(page_total, style))
 
 
 def number(text):
@@ -1245,7 +1284,7 @@ class Client(object):
             lines = lines[:100]
         if path == "/invoices/preview":
             return Response(200, table([(sku, SKUS.get(sku, "1.00"), quantity)
-                                        for sku, quantity in lines])[1])
+                                        for sku, quantity in lines], "eu")[1])
         if not lines:
             return Response(400, "no lines")
         with self.app.connect() as connection:
@@ -1283,11 +1322,14 @@ class Client(object):
                 (invoice,)).fetchall()
         if MODE == "crowded" and len(rows) > 100:
             return Response(413, "too many lines to show")
-        total, shown = table(rows)
+        total, shown = table(rows, "en")
         if parts[-1] == "export.json":
-            return Response(200, json.dumps({"lines": [
-                {"sku": sku, "quantity": quantity}
-                for sku, _, quantity in rows], "total": total}))
+            records = [{"sku": sku, "quantity": quantity}
+                       for sku, _, quantity in rows]
+            if MODE == "nulling" and len(records) > 100:
+                records[100] = None
+            return Response(200, json.dumps({"lines": records,
+                                             "total": total}))
         return Response(200, shown)
 
 
@@ -1302,7 +1344,9 @@ def create_app(database):
 FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "locking": "concurrent_writes", "lossy": "concurrent_writes",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
-          "truncating": "capacity_500_lines", "bouncing": "fuzz_robustness",
+          "truncating": "capacity_500_lines",
+          "miscounting": "capacity_500_lines",
+          "nulling": "capacity_500_lines", "bouncing": "fuzz_robustness",
           "forbidding": "fuzz_robustness", "chatty": "n_plus_one",
           "shared": "coexistence", "stray": "coexistence"}
 
@@ -1332,7 +1376,8 @@ def failing(probes):
 def runtime_self_checks(scratch):
     """Each planted fault fails its own probe and no other; an app that
     keeps the probes from running loses them."""
-    modes = ["sound", "slow", "gated", "refusing", "broken"] + sorted(FAULTS)
+    modes = (["sound", "slow", "paginating", "gated", "refusing", "broken"]
+             + sorted(FAULTS))
     readings = fake_readings(scratch, modes)
     probes = {mode: probe_results(*readings[mode]) for mode in modes}
     sound = probes["sound"]
@@ -1344,6 +1389,11 @@ def runtime_self_checks(scratch):
          (readings["sound"][0] or {}).get("signed_in") is True
          and "type='hidden'" in FAKE_APP),
         ("a sound app passes every probe", failing(sound) == []),
+        ("a total grouped by thousands beside a currency sign is read",
+         sound["capacity_500_lines"].get("passed") is True
+         and "€" in FAKE_APP and 'format(int(whole), ",")' in FAKE_APP),
+        ("a page showing fewer rows but the whole total passes "
+         "capacity_500_lines", failing(probes["paginating"]) == []),
         ("the latency is two repeats of 30 requests each",
          latency.get("requests") == 30
          and len(latency.get("repeats") or []) == 2
@@ -1373,13 +1423,17 @@ def runtime_self_checks(scratch):
                       "fuzz_robustness",
         "truncating": "an app keeping 100 of 500 lines fails "
                       "capacity_500_lines",
+        "miscounting": "a page showing a total other than the export's "
+                       "fails capacity_500_lines",
+        "nulling": "an export with a null line fails capacity_500_lines",
         "chatty": "an app reading each line on its own fails n_plus_one",
         "shared": "instances sharing their data fail coexistence",
         "stray": "an app writing outside its folder fails coexistence",
     }
     for mode, label in sorted(labels.items()):
         checks.append(("%s, and no other probe" % label,
-                       failing(probes[mode]) == [FAULTS[mode]]))
+                       failing(probes[mode]) == [FAULTS[mode]]
+                       and probes[mode][FAULTS[mode]].get("passed") is False))
     checks.extend([
         ("the redirect is read as lost, not as an answer",
          "turned away by the sign-in" in probes["bouncing"][
