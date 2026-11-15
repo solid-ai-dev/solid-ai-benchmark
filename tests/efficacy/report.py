@@ -38,12 +38,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import RECORDED, record_path  # noqa: E402
-from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
-                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, ROUND5E_ARMS,
-                     SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING, TrialError,
-                     canonical, git, reach, read_transcripts, scoring_area,
-                     split_name, transcript_files,
-                     trial_name)
+from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
+                     ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
+                     ROUND5E_ARMS, SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING,
+                     TrialError, canonical, git, reach, read_transcripts,
+                     recorded_round, registration_digest, scoring_area,
+                     split_name, transcript_files, trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -660,23 +660,35 @@ def ordered(names):
         else len(position), index_of(name)))
 
 
+def named_round(trials):
+    """The round the run records name for these trials, or None for a run
+    from before rounds were named."""
+    return next((trial.get("round") for trial in trials.values()
+                 if trial.get("round")), None)
+
+
+# A round from 6 on may reuse a pilot arm's name, so the pilot's rounds are
+# inferred from the arms only for a run whose records name no round.
 def is_round5(trials):
     """Whether the run holds a round-5 arm, so that round's registration,
     its K and its margins, governs it."""
-    return (any(arm_of(name) in ROUND5_ARMS for name in trials)
-            or is_round5d(trials) or is_round5e(trials))
+    return (named_round(trials) is None
+            and (any(arm_of(name) in ROUND5_ARMS for name in trials)
+                 or is_round5d(trials) or is_round5e(trials)))
 
 
 def is_round5d(trials):
     """Whether the run holds a round-5d arm, so that round's registration
     and its verdict rules govern it."""
-    return any(arm_of(name) in ROUND5D_ARMS for name in trials)
+    return (named_round(trials) is None
+            and any(arm_of(name) in ROUND5D_ARMS for name in trials))
 
 
 def is_round5e(trials):
     """Whether the run holds a round-5e arm, so that round's registration
     governs it, under round 5d's verdict rules."""
-    return any(arm_of(name) in ROUND5E_ARMS for name in trials)
+    return (named_round(trials) is None
+            and any(arm_of(name) in ROUND5E_ARMS for name in trials))
 
 
 def later_rules_of(trials):
@@ -692,17 +704,29 @@ ROUND5_RUN = ("none", "inline", "hybrid", "reference", "skills")
 
 def round_arms(trials):
     """The arms the run's round registers as fresh trials."""
+    if named_round(trials) is not None:
+        return tuple(REGISTRATIONS[named_round(trials)]["arms"])
     if is_round5e(trials):
         return ROUND5E_ARMS
     return ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
 
 
 def owed_blocks(trials):
-    """The blocks of round 5's K that still miss a registered arm's trial,
-    in order."""
+    """The blocks of the round's K that still miss a registered arm's trial,
+    of any task the round registers, in order."""
     run = round_arms(trials)
-    return [block for block in range(1, ROUND5_K + 1)
-            if any(trial_name(arm, block) not in trials for arm in run)]
+    if named_round(trials) is None:
+        return [block for block in range(1, ROUND5_K + 1)
+                if any(trial_name(arm, block) not in trials for arm in run)]
+
+    # A round of two tasks is complete only with both at K for every arm.
+    tasks = REGISTRATIONS[named_round(trials)]["tasks"]
+    k = max(task["k"] for task in tasks.values())
+    return [block for block in range(1, k + 1)
+            if any(trial_name(arm, block) not in trials
+                   or ("change" in tasks
+                       and not trials[trial_name(arm, block)].get("change"))
+                   for arm in run)]
 
 
 def blocks_named(blocks):
@@ -5248,6 +5272,73 @@ def record_checks():
     return checks
 
 
+def round_identity_checks():
+    """A run whose records name a round is read as that round, both tasks
+    counted; records missing its identity are refused, not read as the
+    pilot's; records naming none are read by their arms, as before."""
+    arms = REGISTRATIONS["C1"]["arms"]
+    blocks = range(1, REGISTRATIONS["C1"]["tasks"]["build"]["k"] + 1)
+
+    def run(change):
+        return {trial_name(arm, block): {
+            "scores": {}, "round": "C1",
+            "change": {"name": trial_name(arm, block)} if change else None}
+            for arm in arms for block in blocks}
+    named, legacy = run(False), run(False)
+    for trial in legacy.values():
+        trial.pop("round")
+    whole = run(True)
+    gap = run(True)
+    gap[trial_name("lazyref", 4)]["change"] = None
+    checks = [
+        ("a run its records name C1 does not read as a pilot round",
+         not is_round5(named) and not is_round5d(named)
+         and not is_round5e(named) and iso_rules(named)
+         and is_round5(legacy) and is_round5e(legacy)),
+        ("a C1 round owes a block until both tasks are in for every arm",
+         owed_blocks(named) == list(blocks) and owed_blocks(whole) == []
+         and owed_blocks(gap) == [4]),
+    ]
+
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-identity-")
+    digest = registration_digest(REGISTRATIONS["C1"])
+    trial = {"round": "C1", "task": "build", "arm": "none", "block": 1,
+             "trial": 1, "outcome": "completed"}
+
+    def refused(name, runs):
+        root = os.path.join(scratch, name)
+        scores = os.path.join(scoring_area(root), "scores")
+        os.makedirs(scores)
+        os.makedirs(root)
+        with io.open(os.path.join(scores, "none-1.json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"name": "none-1"}, handle)
+        for index, header in enumerate(runs):
+            with io.open(os.path.join(root, "run-%d.json" % index), "w",
+                         encoding="utf-8") as handle:
+                json.dump(header, handle)
+        saved, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            code = main(["--root", root, "--out-dir",
+                         os.path.join(scratch, "out")])
+            printed = sys.stdout.getvalue()
+        finally:
+            sys.stdout = saved
+        return code == 2 and "refused" in printed and "round" in printed
+
+    good = {"round": "C1", "registration": digest, "trials": [trial]}
+    checks += [
+        ("a root mixing a named round's records with others is refused",
+         refused("mixed", [good, {"trials": [{"arm": "none", "trial": 1}]}])
+         and refused("other", [good, dict(good, registration="0" * 64)])),
+        ("a named round's record missing its identity is refused, not read "
+         "as the pilot's",
+         refused("bare", [dict(good, trials=[dict(trial, block=None)])])),
+    ]
+    shutil.rmtree(scratch, ignore_errors=True)
+    return checks
+
+
 def context_lines(arm):
     """The line count of the context file an arm's trials received, None
     where the arm receives none."""
@@ -8300,6 +8391,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in spec_checks())
     checks.extend((label, ok, ok) for label, ok in prompt_checks())
     checks.extend((label, ok, ok) for label, ok in python_checks())
+    checks.extend((label, ok, ok) for label, ok in round_identity_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -8370,6 +8462,17 @@ def main(argv):
         print("no scores under %s; score.py writes them"
               % scoring_area(options.root))
         return 2
+
+    # A round its run records name is read as that round, never under the
+    # pilot's rules its arms' names would suggest, and records missing its
+    # identity are refused rather than read as the pilot's.
+    named, problem = recorded_round(options.root)
+    if problem:
+        print("refused: %s" % problem)
+        return 2
+    if named is not None:
+        for trial in trials.values():
+            trial["round"] = named
 
     out_dir = options.out_dir
     if out_dir is None:

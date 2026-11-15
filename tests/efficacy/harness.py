@@ -164,6 +164,41 @@ ARMS = {
                    "skills": "lazyskills/skills"},
 }
 
+# The rounds from 6 on, each as registered: its spec, its arms, and per task
+# its K and the digest of the prompt every arm is given. A run names its round
+# with `--round` and is held to this entry rather than to what its arm names
+# suggest, since a round may reuse a pilot arm's name. The pilot rounds have no
+# entry and keep the checks they ran under.
+REGISTRATIONS = {
+    "C1": {
+        "spec": {"name": "normal", "file": "SPEC.md",
+                 "sha256": ROUND6_SPEC[1]},
+        "arms": ["none", "reference", "inline", "skills", "lazyref",
+                 "lazyskills"],
+        "tasks": {
+            "build": {
+                "k": 15,
+                "prompt_sha256": "e6ca96707fb227d9053eeffcca344963803a2b34"
+                                 "2ca8dddab5951e26b914724b"},
+
+            # Every arm's change task of a block starts from the same build,
+            # one arm `none` made in round 5e, so the change measures the
+            # file and not the build the arm happened to leave. The manifest,
+            # beside this module, lists the builds that qualified, each with
+            # its tarball's hash, so a fixture swapped later no longer matches.
+            "change": {
+                "k": 15,
+                "prompt_sha256": "52f053c49e0103535e3e966bbcf8f27915be5a7c"
+                                 "412283e61b7799cabbdaf829",
+                "fixtures": {
+                    "manifest": "change-fixtures.json",
+                    "from": {"round": "5e", "arm": "none"},
+                    "order": "ascending trial number, block b takes the b-th "
+                             "qualifying build, cycling when fewer qualify"}},
+        },
+    },
+}
+
 def trial_name(arm, block):
     """A trial's name: the arm's word, a hyphen, the block it runs in."""
     return "%s-%d" % (arm, int(block))
@@ -581,6 +616,15 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
     os.makedirs(workspace)
 
     shutil.copyfile(spec, os.path.join(workspace, "SPEC.md"))
+    vendored = install_arm(workspace, arm)
+    commit_start(workspace, "start: %s arm %s" % (ARMS[arm]["label"], arm))
+    return workspace, vendored
+
+
+def install_arm(workspace, arm):
+    """Give a workspace, not yet a repository, its arm's context: the file,
+    the vendored templates, the skills; `git init` it; return what was
+    vendored, None for an arm that vendors nothing."""
     context = ARMS[arm]["context"]
     if context:
         source = os.path.join(ARMS_DIR, context)
@@ -601,11 +645,15 @@ def prepare_workspace(arm, trial, root, spec=SPEC):
             raise TrialError("arm %s needs its skills at %s, which do not "
                              "exist" % (arm, source))
         place_skills(workspace, source)
+    return vendored
+
+
+def commit_start(workspace, message):
+    """Commit everything in the workspace as its starting state."""
     git(workspace, "add", "-A")
     git(workspace, "-c", "user.name=efficacy",
         "-c", "user.email=efficacy@example.invalid",
-        "commit", "-q", "-m", "start: %s arm %s" % (ARMS[arm]["label"], arm))
-    return workspace, vendored
+        "commit", "-q", "-m", message)
 
 
 # The one thing the scratch home must inherit. Credentials live under the
@@ -1557,17 +1605,75 @@ def prepare_change_workspace(arm, trial, root, build):
 
 
 def spec_digest(path):
+    """The sha256 of a file's bytes, read in chunks, so a tarball of a build's
+    virtualenv is hashed without being held in memory."""
+    digest = hashlib.sha256()
     with io.open(path, "rb") as handle:
-        return hashlib.sha256(handle.read()).hexdigest()
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def spec_problem(arms, spec_name, digest):
+def text_digest(text):
+    """The sha256 of a text as UTF-8."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def registration_digest(entry):
+    """The sha256 of a registration entry, its keys sorted, so one entry has
+    one digest whatever order it is written in."""
+    return text_digest(json.dumps(entry, sort_keys=True,
+                                  separators=(",", ":")))
+
+
+def round_problem(round_name, arms, k, task):
+    """Why a run of these arms, at this K, on this task, may not run as the
+    named round, or None."""
+    entry = REGISTRATIONS.get(round_name)
+    if entry is None:
+        return ("round %s is not registered; the registered rounds are %s"
+                % (round_name, ", ".join(sorted(REGISTRATIONS))))
+    stray = [arm for arm in arms if arm not in entry["arms"]]
+    if stray:
+        return ("round %s does not register the arm %s; its arms are %s"
+                % (round_name, ", ".join(stray), ", ".join(entry["arms"])))
+    registered = entry["tasks"].get(task)
+    if registered is None:
+        return "round %s registers no %s task" % (round_name, task)
+    if k > registered["k"]:
+        return ("--k %d is past round %s's registered K = %d for its %s task"
+                % (k, round_name, registered["k"], task))
+    return None
+
+
+def prompt_problem(round_name, task, prompt):
+    """Why a task's prompt is not the one the named round registers, or
+    None."""
+    registered = REGISTRATIONS[round_name]["tasks"][task]["prompt_sha256"]
+    digest = text_digest(prompt)
+    if digest != registered:
+        return ("the %s prompt is not the one round %s registers: sha256 %s, "
+                "registered %s" % (task, round_name, digest, registered))
+    return None
+
+
+def spec_problem(arms, spec_name, digest, round_name=None):
     """Why a run of these arms may not build from this spec, or None.
 
-    A run holding a round-5, round-5d or round-5e arm builds from the spec
-    round 5 registers, at the content it registers; any other run is not
-    checked here.
+    A run naming a round builds from the spec that round's entry registers.
+    A run naming none, holding a round-5, round-5d or round-5e arm, builds
+    from the spec round 5 registers; any other run is not checked here.
     """
+    if round_name is not None:
+        spec = REGISTRATIONS[round_name]["spec"]
+        if spec_name != spec["name"]:
+            return ("round %s registers the %s spec, and this run names %s"
+                    % (round_name, spec["name"], spec_name))
+        if digest != spec["sha256"]:
+            return ("the %s spec is not the content round %s registers: "
+                    "sha256 %s, registered %s"
+                    % (spec_name, round_name, digest, spec["sha256"]))
+        return None
     if not set(arms) & set(ROUND5_ARMS + ROUND5D_ARMS + ROUND5E_ARMS):
         return None
     name, registered = ROUND5_SPEC
@@ -1576,19 +1682,311 @@ def spec_problem(arms, spec_name, digest):
                 % (name, spec_name))
     if digest != registered:
         return ("the %s spec is not the content round 5 registers: sha256 %s, "
-                "registered %s" % (name, digest, registered))
+                "registered %s; a round from 6 on is named with --round"
+                % (name, digest, registered))
     return None
+
+
+def run_files(root):
+    """Every run record in a root, by path, in time order."""
+    if not os.path.isdir(root):
+        return []
+    return sorted(os.path.join(root, entry) for entry in os.listdir(root)
+                  if entry.startswith("run-") and entry.endswith(".json"))
+
+
+# What every trial record of a named round carries, so a record read on its
+# own, copied or reused, still says which round, task, arm and block it was.
+IDENTITY = ("round", "task", "arm", "block")
+
+
+def identity_problem(root, round_name=None, digest=None):
+    """Why the run records in `root` do not fit a run of `round_name` under
+    the registration at `digest`, or None. With no round named, no record
+    may name one."""
+    for file in run_files(root):
+        with io.open(file, encoding="utf-8") as handle:
+            run = json.load(handle)
+        named, base = run.get("round"), os.path.basename(file)
+
+        # A root holds one round. A run naming none in a named round's root
+        # would be read under the pilot's rules, and the reverse would put a
+        # named round's trials beside records no registration covers.
+        if named is None and round_name is not None:
+            return ("%s names no round, so this root is not round %s's"
+                    % (base, round_name))
+        if named is not None and round_name is None:
+            return ("%s is round %s's, so a run in this root names it with "
+                    "--round %s" % (base, named, named))
+        if named is None:
+            continue
+        if named != round_name:
+            return ("%s is round %s's, and this run names round %s"
+                    % (base, named, round_name))
+        if run.get("registration") != digest:
+            return ("%s ran under round %s's registration at sha256 %s, and "
+                    "the registration now reads %s"
+                    % (base, named, run.get("registration"), digest))
+        for record in run.get("trials", []):
+            missing = [key for key in IDENTITY if record.get(key) is None]
+            if missing or record["round"] != named:
+                return ("%s holds trial %s with %s, so it cannot be shown to "
+                        "be round %s's"
+                        % (base, name_of(record),
+                           "no %s" % ", ".join(missing) if missing
+                           else "round %s" % record["round"], named))
+    return None
+
+
+def recorded_round(root):
+    """The round a root's run records name, and why they do not hold it
+    whole: (None, None) for records from before rounds were named."""
+    named = None
+    for file in run_files(root):
+        with io.open(file, encoding="utf-8") as handle:
+            named = json.load(handle).get("round")
+        if named is not None:
+            break
+    if named is None:
+        return None, None
+    if named not in REGISTRATIONS:
+        return named, ("the run records name round %s, which is not "
+                       "registered" % named)
+    return named, identity_problem(root, named,
+                                   registration_digest(REGISTRATIONS[named]))
+
+
+def owed_by_task(entry, records):
+    """The blocks each task of a registered round still owes, by task.
+
+    A block is owed until every registered arm has a scorable trial of that
+    task in it. A change task counts whatever its arm's build trial did,
+    since it starts from a fixture and not from that build.
+    """
+    owed = {}
+    for task, registered in sorted(entry["tasks"].items()):
+        done = {(record.get("arm"), record.get("trial")) for record in records
+                if record.get("task", "build") == task
+                and record.get("outcome") in SCORABLE}
+        owed[task] = [block for block in range(1, registered["k"] + 1)
+                      if any((arm, block) not in done
+                             for arm in entry["arms"])]
+    return owed
+
+
+def manifest_path(entry):
+    """Where a round's fixture manifest is, beside this module."""
+    return os.path.join(HERE, entry["tasks"]["change"]["fixtures"]["manifest"])
+
+
+def read_fixtures(entry, directory):
+    """The fixtures a round's change task starts from, each checked against
+    its tarball in `directory`, in the order the blocks take them."""
+    path = manifest_path(entry)
+    try:
+        with io.open(path, encoding="utf-8") as handle:
+            listed = json.load(handle).get("fixtures") or []
+    except (OSError, ValueError) as error:
+        raise TrialError("cannot read the fixture manifest %s: %s"
+                         % (path, error))
+
+    # No fixture means no change task can start the same for every arm, and
+    # falling back to each arm's own build would mix the build into the change.
+    if not listed:
+        raise TrialError("the fixture manifest %s lists no fixture, so no "
+                         "change task can start; a build is listed once it "
+                         "qualifies" % path)
+    source = entry["tasks"]["change"]["fixtures"]["from"]["arm"]
+    fixtures = []
+    for fixture in listed:
+        trial = fixture.get("trial") or ""
+        if split_name(trial)[0] != source:
+            raise TrialError("fixture %s is not a build of arm %s"
+                             % (trial, source))
+
+        # The readings that qualified a build are what its change tasks are
+        # read against, so one listed without them has not qualified.
+        if not isinstance(fixture.get("baseline"), dict) \
+                or not fixture["baseline"]:
+            raise TrialError("fixture %s carries no baseline readings, so it "
+                             "has not qualified" % trial)
+        tarball = os.path.join(directory, "%s.tar" % trial)
+        if not os.path.isfile(tarball):
+            raise TrialError("fixture %s has no tarball at %s"
+                             % (trial, tarball))
+        digest = spec_digest(tarball)
+        if digest != fixture.get("sha256"):
+            raise TrialError("fixture %s's tarball %s has sha256 %s, and the "
+                             "manifest lists %s"
+                             % (trial, tarball, digest, fixture.get("sha256")))
+        fixtures.append(dict(fixture, tarball=tarball))
+    return sorted(fixtures, key=lambda fixture: split_name(fixture["trial"])[1])
+
+
+def fixture_for(fixtures, block):
+    """The fixture a block's change tasks start from: the block-th in
+    order, cycling when fewer qualified than the round has blocks."""
+    return fixtures[(block - 1) % len(fixtures)]
+
+
+def run_fixtures(options):
+    """A named round's change run's fixtures, checked, and what its run
+    record says of them: the manifest's hash, how many qualified, how many
+    distinct ones its blocks start from, and which each block takes."""
+    entry = REGISTRATIONS[options.round]
+    if not getattr(options, "fixtures", None):
+        raise TrialError("round %s's change task starts from its fixtures; "
+                         "name the directory holding their tarballs with "
+                         "--fixtures" % options.round)
+    fixtures = read_fixtures(entry, options.fixtures)
+    blocks = {block: fixture_for(fixtures, block)["trial"]
+              for block in range(1, options.k + 1)}
+    return fixtures, {"manifest_sha256": spec_digest(manifest_path(entry)),
+                      "qualified": len(fixtures),
+                      "distinct": len(set(blocks.values())),
+                      "blocks": {str(block): trial
+                                 for block, trial in blocks.items()}}
+
+
+def round_records(root):
+    """Every trial record in a root's run records, in time order."""
+    records = []
+    for file in run_files(root):
+        with io.open(file, encoding="utf-8") as handle:
+            records.extend(json.load(handle).get("trials", []))
+    return records
+
+
+def registered_run(options, arms):
+    """Hold a run to the round it names and its root to that round; return
+    the identity its run record carries, None for a run naming no round."""
+    round_name = getattr(options, "round", None)
+    if round_name is None:
+        problem = identity_problem(options.root)
+        if problem:
+            raise TrialError(problem)
+        return None
+    problem = round_problem(round_name, arms, options.k, options.task)
+    if problem:
+        raise TrialError(problem)
+    prompt = PROMPT if options.task == "build" else read_change_prompt()
+    digest = registration_digest(REGISTRATIONS[round_name])
+    problem = (prompt_problem(round_name, options.task, prompt)
+               or spec_problem(arms, options.spec,
+                               spec_digest(SPECS[options.spec]), round_name)
+               or identity_problem(options.root, round_name, digest))
+    if problem:
+        raise TrialError(problem)
+    return {"round": round_name, "registration": digest}
+
+
+# What a fixture's tree loses before an arm's change task starts from it:
+# what its builder was told or read, its settings, its databases, its caches
+# and environments, and its history. Each would hand every arm the build
+# trial's context or state, and the arm's own context is installed after.
+FIXTURE_DROPPED_DIRS = (".git", ".claude", "__pycache__", ".pytest_cache",
+                        ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox",
+                        ".nox", ".cache", "node_modules", "htmlcov", ".vscode",
+                        ".idea")
+FIXTURE_DROPPED_FILES = ("claude.md", "claude.local.md", "agents.md",
+                         ".coverage")
+FIXTURE_DROPPED_SUFFIXES = (".sqlite", ".sqlite3", ".db", ".pyc", ".pyo",
+                            ".jsonl")
+
+
+def kept_from_fixture(relative, environments):
+    """Whether a path in a fixture's tree, relative to its top, is code or a
+    test the change task starts from; `environments` names the virtualenvs
+    in the tree."""
+    parts = relative.split("/")
+    lowered = [part.lower() for part in parts]
+    if any(part in FIXTURE_DROPPED_DIRS or part.endswith(".egg-info")
+           for part in lowered):
+        return False
+    if lowered[:2] == VENDORED["into"].lower().split("/"):
+        return False
+    if any("/".join(parts[:index]) in environments
+           for index in range(1, len(parts) + 1)):
+        return False
+
+    # The round's spec replaces the one the build was given.
+    if lowered == ["spec.md"]:
+        return False
+    return not (lowered[-1] in FIXTURE_DROPPED_FILES
+                or lowered[-1].endswith(FIXTURE_DROPPED_SUFFIXES))
+
+
+def unpack_fixture(tarball, target):
+    """Unpack the code and tests of a fixture's tree into `target`."""
+    with tarfile.open(tarball) as archive:
+        members = archive.getmembers()
+        tops = {member.name.split("/")[0] for member in members}
+        if len(tops) != 1:
+            raise TrialError("%s does not hold one directory: %s"
+                             % (tarball, ", ".join(sorted(tops))))
+        prefix = tops.pop() + "/"
+        inside = [member for member in members
+                  if member.name.startswith(prefix)
+                  and (member.isfile() or member.isdir())]
+        for member in inside:
+            member.name = member.name[len(prefix):]
+
+        # A virtualenv is known by the file every one carries at its root.
+        environments = {member.name.rpartition("/")[0] for member in inside
+                        if member.isfile()
+                        and member.name.rpartition("/")[2] == "pyvenv.cfg"}
+        environments.discard("")
+        kept = [member for member in inside
+                if kept_from_fixture(member.name, environments)]
+        archive.extractall(target, members=kept, filter="data")
+
+
+def prepare_fixture_workspace(arm, block, root, fixture, spec):
+    """Lay out an arm's change task of a block on its fixture: the build's
+    code and tests, the round's spec, the arm's context, one commit.
+
+    Returns the workspace, its starting commit and what was vendored.
+    """
+    if arm not in ARMS:
+        raise TrialError("unknown arm %r; the arms are %s"
+                         % (arm, ", ".join(sorted(ARMS))))
+    workspace = trial_workspace(root, "change-%s" % trial_name(arm, block))
+    if os.path.exists(pen_of(workspace)):
+        raise TrialError("workspace %s already exists; a trial never reuses "
+                         "one" % workspace)
+
+    # Checked again here, as the tarball is the one unpacked, so a fixture
+    # replaced after the run started refuses the trials after it.
+    digest = spec_digest(fixture["tarball"])
+    if digest != fixture["sha256"]:
+        raise TrialError("fixture %s's tarball %s has sha256 %s, and the "
+                         "manifest lists %s" % (fixture["trial"],
+                                                fixture["tarball"], digest,
+                                                fixture["sha256"]))
+    os.makedirs(workspace)
+    try:
+        unpack_fixture(fixture["tarball"], workspace)
+    except (OSError, tarfile.TarError) as error:
+        remove_tree(pen_of(workspace))
+        raise TrialError("could not unpack %s: %s"
+                         % (fixture["tarball"], error))
+    shutil.copyfile(spec, os.path.join(workspace, "SPEC.md"))
+    vendored = install_arm(workspace, arm)
+    commit_start(workspace, "start: change task on %s, %s arm %s"
+                 % (fixture["trial"], ARMS[arm]["label"], arm))
+    return workspace, git(workspace, "rev-parse", "HEAD"), vendored
 
 
 def run_trial(arm, trial, root, home, options):
     """Run one build trial and return its record."""
     spec_name = getattr(options, "spec", "normal")
     spec = SPECS[spec_name]
+    round_name = getattr(options, "round", None)
 
     # Read again for every trial, so an edit made after the run started
     # refuses the trials after it rather than building them from a new spec.
     arms = getattr(options, "arm_list", ())
-    problem = spec_problem(arms, spec_name, spec_digest(spec))
+    problem = spec_problem(arms, spec_name, spec_digest(spec), round_name)
     if problem:
         raise TrialError(problem)
     workspace, vendored = prepare_workspace(arm, trial, root, spec)
@@ -1597,13 +1995,15 @@ def run_trial(arm, trial, root, home, options):
     # check above and the copy, so the copy is what is checked and recorded.
     # A refused workspace is removed, so the trial's slot stays free.
     digest = spec_digest(os.path.join(workspace, "SPEC.md"))
-    problem = spec_problem(arms, spec_name, digest)
+    problem = spec_problem(arms, spec_name, digest, round_name)
     if problem:
         remove_tree(pen_of(workspace))
         raise TrialError(problem)
     record = {"arm": arm, "label": ARMS[arm]["label"], "trial": trial,
               "task": "build", "vendored": vendored,
               "spec": {"file": os.path.basename(spec), "sha256": digest}}
+    if round_name is not None:
+        record.update(round=round_name, block=trial)
     return run_agent(workspace, trial_name(arm, trial), PROMPT, record, root,
                      home, options)
 
@@ -1617,6 +2017,37 @@ def run_change_trial(arm, trial, root, home, options, build):
               "vendored": build.get("vendored")}
     return run_agent(workspace, "change-%s" % trial_name(arm, trial),
                      read_change_prompt(), record, root, home, options)
+
+
+def run_fixture_change_trial(arm, block, root, home, options, fixture):
+    """Run one registered round's change task on its block's fixture; return
+    its record."""
+    round_name = options.round
+    spec_name = REGISTRATIONS[round_name]["spec"]["name"]
+    spec = SPECS[spec_name]
+    prompt = read_change_prompt()
+
+    # Both read again for every trial, as a build trial's spec is.
+    problem = (prompt_problem(round_name, "change", prompt)
+               or spec_problem(options.arm_list, spec_name, spec_digest(spec),
+                               round_name))
+    if problem:
+        raise TrialError(problem)
+    workspace, base, vendored = prepare_fixture_workspace(arm, block, root,
+                                                          fixture, spec)
+    digest = spec_digest(os.path.join(workspace, "SPEC.md"))
+    problem = spec_problem(options.arm_list, spec_name, digest, round_name)
+    if problem:
+        remove_tree(pen_of(workspace))
+        raise TrialError(problem)
+    record = {"arm": arm, "label": ARMS[arm]["label"], "trial": block,
+              "block": block, "round": round_name, "task": "change",
+              "base": base, "vendored": vendored,
+              "fixture": {key: fixture[key]
+                          for key in ("trial", "sha256", "tarball")},
+              "spec": {"file": os.path.basename(spec), "sha256": digest}}
+    return run_agent(workspace, "change-%s" % trial_name(arm, block), prompt,
+                     record, root, home, options)
 
 
 # The endings a trial is scored on. A blocked trial was voided and its re-run
@@ -1867,10 +2298,11 @@ def pending_trials(arms, k, start=None):
 
 
 def write_run(run_file, started_at, records, task="build", prompt=PROMPT,
-              arms=(), k=None):
+              arms=(), k=None, identity=None):
     """Rewrite the run record with every trial so far. The run's arms and
     its K are written from the start, so a reader knows the whole run
-    before its first trial of each arm is in."""
+    before its first trial of each arm is in. `identity` names the round
+    and its registration's digest, for a run that names a round."""
 
     # Written to a sibling and swapped in, so a run killed mid-write leaves
     # the previous record whole rather than half of a new one.
@@ -1881,6 +2313,15 @@ def write_run(run_file, started_at, records, task="build", prompt=PROMPT,
         header["arms"] = list(arms)
     if k is not None:
         header["k"] = k
+
+    # Every trial record of a named round carries its identity, the running
+    # and refused ones too, so none reads as a record of no round.
+    if identity:
+        header.update(identity)
+        for record in records:
+            record.setdefault("round", identity["round"])
+            record.setdefault("task", task)
+            record.setdefault("block", record.get("trial"))
     with io.open(partial, "w", encoding="utf-8") as handle:
         json.dump(dict(header, trials=records), handle, indent=2)
     os.replace(partial, run_file)
@@ -3697,6 +4138,337 @@ def spec_checks():
     return checks
 
 
+def registration_checks():
+    """A run naming a round is held to its entry: its arms, K, spec and
+    prompts; its root holds that round alone, every record naming it."""
+    entry = REGISTRATIONS["C1"]
+    change = read_change_prompt()
+    checks = [
+        ("C1 pins SPEC.md, both prompts and its fixtures by content",
+         entry["spec"]["sha256"] == spec_digest(SPEC) == ROUND6_SPEC[1]
+         and entry["tasks"]["build"]["prompt_sha256"] == text_digest(PROMPT)
+         and entry["tasks"]["change"]["prompt_sha256"] == text_digest(change)
+         and os.path.isfile(manifest_path(entry))),
+        ("an unknown round is refused",
+         round_problem("C9", ["none"], 3, "build") is not None
+         and round_problem("C1", ["none"], 3, "build") is None),
+        ("an arm the round does not register is refused",
+         round_problem("C1", ["none", "hand"], 3, "build") is not None
+         and round_problem("C1", ["none", "lazyskills"], 3, "change")
+         is None),
+        ("a K past the round's registered K is refused",
+         round_problem("C1", ["none"], 16, "change") is not None
+         and round_problem("C1", ["none"], 15, "change") is None),
+
+        # C1 runs pilot arms' names on round 6's spec, which the pilot's
+        # check, going by those names, would refuse.
+        ("a C1 run reads its spec from its entry, not its arms' names",
+         spec_problem(["inline", "lazyref"], "normal", ROUND6_SPEC[1], "C1")
+         is None
+         and spec_problem(["inline"], "normal", ROUND5_SPEC[1], "C1")
+         is not None
+         and spec_problem(["inline"], "thin", ROUND6_SPEC[1], "C1")
+         is not None),
+        ("a build or change prompt the round does not pin is refused",
+         prompt_problem("C1", "build", PROMPT) is None
+         and prompt_problem("C1", "build", PROMPT + " ") is not None
+         and prompt_problem("C1", "change", change) is None
+         and prompt_problem("C1", "change", change + " ") is not None),
+    ]
+
+    scratch = tempfile.mkdtemp(prefix="efficacy-registration-")
+    digest = registration_digest(entry)
+    stamp = datetime.datetime.now().astimezone()
+
+    def planted(name, header, trials):
+        root = os.path.join(scratch, name)
+        os.makedirs(root, exist_ok=True)
+        with io.open(os.path.join(root, "run-%d.json" % len(os.listdir(root))),
+                     "w", encoding="utf-8") as handle:
+            json.dump(dict(header, trials=trials), handle)
+        return root
+
+    whole = {"round": "C1", "task": "build", "arm": "none", "block": 1,
+             "trial": 1, "outcome": "completed"}
+    legacy = planted("legacy", {}, [{"arm": "none", "trial": 1}])
+    other = planted("other", {"round": "C2", "registration": digest},
+                    [dict(whole, round="C2")])
+    stale = planted("stale", {"round": "C1", "registration": "0" * 64},
+                    [whole])
+    bare = planted("bare", {"round": "C1", "registration": digest},
+                   [dict(whole, block=None)])
+    good = planted("good", {"round": "C1", "registration": digest}, [whole])
+    checks += [
+        ("a root holding another round's or registration's runs is refused",
+         identity_problem(other, "C1", digest) is not None
+         and identity_problem(stale, "C1", digest) is not None
+         and identity_problem(good, "C1", digest) is None),
+        ("a named round and records naming none never share a root",
+         identity_problem(legacy, "C1", digest) is not None
+         and "--round C1" in (identity_problem(good) or "")
+         and identity_problem(legacy) is None),
+        ("a named round's trial record missing its identity is refused",
+         identity_problem(bare, "C1", digest) is not None
+         and recorded_round(bare)[1] is not None
+         and recorded_round(good) == ("C1", None)
+         and recorded_round(legacy) == (None, None)),
+    ]
+    written = os.path.join(scratch, "written", "run-1.json")
+    os.makedirs(os.path.dirname(written))
+    write_run(written, stamp, [{"arm": "none", "trial": 2,
+                                "outcome": "refused"}],
+              "change", change, ["none"], 2,
+              {"round": "C1", "registration": digest})
+    with io.open(written, encoding="utf-8") as handle:
+        run = json.load(handle)
+    checks.append(("every trial record of a named round names its round, "
+                   "task, arm and block",
+                   run["round"] == "C1" and run["registration"] == digest
+                   and {key: run["trials"][0].get(key) for key in IDENTITY}
+                   == {"round": "C1", "task": "change", "arm": "none",
+                       "block": 2}
+                   and identity_problem(os.path.dirname(written), "C1",
+                                        digest) is None))
+
+    # A round of two tasks, two arms and two blocks: the change tasks come
+    # after the builds, and one build lost leaves its change task counted.
+    small = {"arms": ["none", "inline"],
+             "tasks": {"build": {"k": 2}, "change": {"k": 2}}}
+    builds = [{"arm": arm, "trial": block, "task": "build",
+               "outcome": "completed"} for arm in small["arms"]
+              for block in (1, 2)]
+    changes = [dict(record, task="change") for record in builds]
+    failed = [dict(record, outcome="blocked")
+              if (record["arm"], record["trial"]) == ("inline", 2) else record
+              for record in builds]
+    checks += [
+        ("a round of two tasks is complete only with both at K for every arm",
+         owed_by_task(small, builds) == {"build": [], "change": [1, 2]}
+         and owed_by_task(small, builds + changes[:3])
+         == {"build": [], "change": [2]}
+         and owed_by_task(small, builds + changes)
+         == {"build": [], "change": []}),
+        ("a change task counts though its arm's build trial failed",
+         owed_by_task(small, failed + changes)
+         == {"build": [2], "change": []}),
+    ]
+    try:
+        checks += fixture_checks(scratch)
+    finally:
+        REGISTRATIONS.pop("T1", None)
+        PINNED_CLI["path"] = None
+        remove_tree(scratch)
+    return checks
+
+
+def fixture_checks(scratch):
+    """A named round's change task starts every arm of a block from one
+    fixture whose hash matches, cleaned of what its builder was given."""
+    entry = json.loads(json.dumps(REGISTRATIONS["C1"]))
+    manifest = os.path.join(scratch, "change-fixtures.json")
+    entry["tasks"]["change"]["fixtures"]["manifest"] = manifest
+    REGISTRATIONS["T1"] = entry
+
+    # One build, as a `none` trial leaves it: its code and tests, and beside
+    # them all a change task must not inherit.
+    build = os.path.join(scratch, "build")
+    planted = {
+        "tariff/app.py": "built = True\n",
+        "tests/test_app.py": "def test_built():\n    assert True\n",
+        "pyproject.toml": "[project]\nname = 'tariff'\n",
+        ".gitignore": "*.db\n",
+        "CLAUDE.md": "inherited\n", "AGENTS.md": "inherited\n",
+        "tariff/CLAUDE.md": "inherited\n",
+        ".claude/settings.json": "{}\n",
+        ".claude/skills/inherited/SKILL.md": "---\nname: inherited\n---\n",
+        "docs/solid-ai-templates/templates/base.md": "vendored\n",
+        ".venv312/pyvenv.cfg": "home = x\n",
+        ".venv312/Lib/site-packages/thing.py": "x = 1\n",
+        "tariff/__pycache__/app.cpython-312.pyc": "",
+        ".pytest_cache/README.md": "cache\n",
+        "tariff.egg-info/PKG-INFO": "Name: tariff\n",
+        "data.sqlite": "", "tariff/app.db": "", "session.jsonl": "{}\n",
+        "SPEC.md": "the build's own spec\n",
+    }
+    for relative, text in planted.items():
+        path = os.path.join(build, *relative.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+    git(build, "init", "-q")
+    commit_start(build, "build")
+    tarballs = os.path.join(scratch, "fixtures")
+    os.makedirs(tarballs)
+    hashes = {}
+    for name in ("none-7", "none-2", "none-11"):
+        hashes[name] = spec_digest(freeze(build, tarballs, name)["tarball"])
+
+    def listing_as(fixtures):
+        with io.open(manifest, "w", encoding="utf-8") as handle:
+            json.dump({"fixtures": fixtures}, handle)
+
+    def refused(*args):
+        try:
+            read_fixtures(*args)
+            return False
+        except TrialError:
+            return True
+
+    listed = [{"trial": name, "sha256": hashes[name],
+               "baseline": {"build_suite": 1.0}} for name in hashes]
+    listing_as([])
+    checks = [("an empty fixture manifest refuses a named round's change "
+               "task", refused(entry, tarballs))]
+    listing_as([dict(listed[0], sha256="0" * 64)] + listed[1:])
+    mismatched = refused(entry, tarballs)
+    listing_as([dict(listed[0], baseline={})] + listed[1:])
+    checks.append(("a fixture listed without its baseline readings is "
+                   "refused", refused(entry, tarballs)))
+    listing_as(listed)
+    fixtures = read_fixtures(entry, tarballs)
+    order = [fixture_for(fixtures, block)["trial"] for block in range(1, 5)]
+    checks.append(("block b starts from the b-th qualifying build, ascending, "
+                   "cycling", order == ["none-2", "none-7", "none-11",
+                                        "none-2"]))
+    import argparse as _argparse
+    two = run_fixtures(_argparse.Namespace(round="T1", fixtures=tarballs, k=2))
+    five = run_fixtures(_argparse.Namespace(round="T1", fixtures=tarballs,
+                                            k=5))
+    checks.append(("a named round's change run records how many distinct "
+                   "fixtures its blocks take",
+                   two[1]["distinct"] == 2 and two[1]["qualified"] == 3
+                   and five[1]["distinct"] == 3
+                   and five[1]["blocks"]["4"] == "none-2"))
+
+    root = os.path.join(scratch, "root")
+    os.makedirs(root)
+    first = fixtures[0]
+    prepared = {arm: prepare_fixture_workspace(arm, 1, root, first, SPEC)
+                for arm in ("none", "inline", "skills")}
+    files = {arm: git(workspace, "ls-files").splitlines()
+             for arm, (workspace, _, _) in prepared.items()}
+    inline = prepared["inline"][0]
+    skills = os.path.join(prepared["skills"][0], *SKILLS_INTO.split("/"))
+
+    def read(path):
+        try:
+            with io.open(path, "rb") as handle:
+                return handle.read()
+        except OSError:
+            return None
+
+    kept = ("tariff/app.py", "tests/test_app.py", "pyproject.toml",
+            ".gitignore")
+    dropped = [relative for relative in planted
+               if relative not in kept + ("CLAUDE.md", "SPEC.md")]
+    checks.append(("a change workspace keeps its fixture's code and tests",
+                   all(os.path.isfile(os.path.join(inline, *path.split("/")))
+                       for path in kept)))
+    checks.append(("a change workspace drops the fixture's instructions, "
+                   "settings, databases, caches, environments and history",
+                   not any(os.path.exists(os.path.join(workspace,
+                                                       *path.split("/")))
+                           for workspace, _, _ in prepared.values()
+                           for path in dropped + [".venv312", "__pycache__"])
+                   and not os.path.exists(os.path.join(
+                       prepared["none"][0], "CLAUDE.md"))
+                   and all(git(workspace, "rev-list", "--count", "HEAD")
+                           == "1" for workspace, _, _ in prepared.values())))
+    checks.append(("a change workspace carries the round's spec and only its "
+                   "arm's context",
+                   read(os.path.join(inline, "SPEC.md")) == read(SPEC)
+                   and read(os.path.join(inline, "CLAUDE.md"))
+                   == read(os.path.join(ARMS_DIR, ARMS["inline"]["context"]))
+                   and sorted(os.listdir(skills)) == sorted(os.listdir(
+                       os.path.join(ARMS_DIR, ARMS["skills"]["skills"])))))
+    checks.append(("a change workspace starts from one commit, with nothing "
+                   "uncommitted",
+                   all(git(workspace, "status", "--porcelain") == ""
+                       and git(workspace, "rev-parse", "HEAD") == base
+                       for workspace, base, _ in prepared.values())))
+    checks.append(("every arm's change workspace of a block holds the same "
+                   "code",
+                   files["none"] == [path for path in files["inline"]
+                                     if path != "CLAUDE.md"]
+                   == [path for path in files["skills"]
+                       if path != "CLAUDE.md"]))
+
+    # Replaced after the run checked it, the tarball refuses its trial.
+    replaced = os.path.join(scratch, "replaced.tar")
+    shutil.copyfile(first["tarball"], replaced)
+    with io.open(replaced, "ab") as handle:
+        handle.write(b"\0" * 1024)
+    try:
+        prepare_fixture_workspace("none", 2, root,
+                                  dict(first, tarball=replaced), SPEC)
+        swapped = False
+    except TrialError:
+        swapped = not os.path.exists(os.path.join(root, "change-none-2"))
+    checks.append(("a fixture whose tarball differs from its listed hash is "
+                   "refused, at the start and at each trial",
+                   mismatched and swapped))
+    return checks + fixture_run_checks(scratch, tarballs)
+
+
+def fixture_run_checks(scratch, tarballs):
+    """A named round's change run needs no build trial, and its root takes
+    no run naming another round or none; the CLI is a stand-in."""
+    stand_in = os.path.join(scratch, "bin",
+                            "claude.cmd" if os.name == "nt" else "claude")
+    os.makedirs(os.path.dirname(stand_in))
+    with io.open(stand_in, "w", encoding="utf-8") as handle:
+        handle.write("@echo off\r\necho 0.0.1 (stand-in)\r\n"
+                     if os.name == "nt"
+                     else '#!/bin/sh\necho "0.0.1 (stand-in)"\n')
+    os.chmod(stand_in, 0o755)
+    root = os.path.join(scratch, "change-root")
+    argv = ["--root", root, "--round", "T1", "--task", "change", "--arms",
+            "none,inline", "--k", "1", "--fixtures", tarballs, "--cli",
+            stand_in, "--dry-run"]
+    saved = {key: os.environ.get(key) for key in ("HOME", "USERPROFILE")}
+    os.environ["HOME"] = os.environ["USERPROFILE"] = os.path.join(scratch,
+                                                                  "me")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = main(argv)
+        dry = dry_run_area(root)
+        runs = run_files(dry)
+        run = {}
+        if runs:
+            with io.open(runs[0], encoding="utf-8") as handle:
+                run = json.load(handle)
+        trials = run.get("trials", [])
+        prepared = os.path.isdir(os.path.join(dry, "change-inline-1"))
+        os.makedirs(root, exist_ok=True)
+        planted = os.path.join(root, "run-planted.json")
+        write_run(planted, datetime.datetime.now().astimezone(), [])
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            mixed = main(argv)
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    return [
+        ("a named round's change task needs no build trial of its arm",
+         code == 0 and prepared
+         and [trial.get("outcome") for trial in trials]
+         == ["dry-run", "dry-run"]),
+        ("a named round's run record names its round, registration and "
+         "fixtures",
+         run.get("round") == "T1"
+         and run.get("registration")
+         == registration_digest(REGISTRATIONS["T1"])
+         and (run.get("fixtures") or {}).get("distinct") == 1
+         and all(trial.get("fixture", {}).get("trial") == "none-2"
+                 and trial.get("block") == 1 for trial in trials)),
+        ("a named round's run refuses a root whose records name none",
+         mixed == 2 and "names no round" in printed.getvalue()),
+    ]
+
+
 def self_test():
     """Prove the naming, isolation, outcome, resume, change and vendoring
     rules before a trial."""
@@ -3710,7 +4482,7 @@ def self_test():
               + claim_checks() + leftover_checks() + reach_checks() + outside_checks()
               + vendor_checks() + denial_checks() + kill_checks()
               + recover_checks() + round5_checks() + spec_checks()
-              + pen_checks())
+              + registration_checks() + pen_checks())
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     passed = sum(1 for _, ok in checks if ok)
@@ -3735,13 +4507,22 @@ def parse_args(argv):
                              % TEMPLATES_ENV)
     parser.add_argument("--task", choices=("build", "change"),
                         default="build",
-                        help="run the build trials, or the change task on "
-                             "each scorable build trial")
+                        help="run the build trials, or the change task: on "
+                             "each scorable build trial, or for a named "
+                             "round on its block's fixture")
+    parser.add_argument("--round",
+                        help="the registered round the run belongs to, as "
+                             "C1, from %s; the run is held to its entry"
+                             % ", ".join(sorted(REGISTRATIONS)))
+    parser.add_argument("--fixtures",
+                        help="the directory holding the fixtures' tarballs, "
+                             "for a named round's change task")
     parser.add_argument("--arms",
                         help="which arms to run, as words separated by "
                              "commas, from %s; their order is block 1's. "
                              "Required for a run, so a run names the arms "
-                             "it holds" % ",".join(ARMS))
+                             "it holds, unless it names a round, whose arms "
+                             "it then runs" % ",".join(ARMS))
     parser.add_argument("--k", type=int, default=K_DEFAULT,
                         help="trials per arm (default %d; at most %d, the K a "
                              "round registers)" % (K_DEFAULT, ROUND5_K))
@@ -3820,6 +4601,8 @@ def main(argv):
 
     arms = [arm.strip() for arm in (options.arms or "").split(",")
             if arm.strip()]
+    if not arms and options.round in REGISTRATIONS:
+        arms = list(REGISTRATIONS[options.round]["arms"])
     unknown = [arm for arm in arms if arm not in ARMS]
     if not arms or unknown:
         print("--arms names %s; the arms are %s"
@@ -3828,11 +4611,12 @@ def main(argv):
         return 2
     try:
         pending = pending_trials(arms, options.k, options.start)
+        identity = registered_run(options, arms)
     except TrialError as error:
         print("refused: %s" % error)
         return 2
     options.arm_list = arms
-    if options.task == "build":
+    if options.task == "build" and identity is None:
         problem = spec_problem(arms, options.spec,
                                spec_digest(SPECS[options.spec]))
         if problem:
@@ -3852,11 +4636,16 @@ def main(argv):
 
     # The change task needs its prompt and its build trials before anything
     # runs, so a design or a run root that cannot supply them refuses here.
-    builds, prompt = {}, PROMPT
+    # A named round's change task needs its fixtures instead, every one
+    # matching its hash, and none of its arm's build trials.
+    builds, fixtures, prompt = {}, [], PROMPT
     if options.task == "change":
         try:
             prompt = read_change_prompt()
-            builds = scorable_trials(options.root, task="build")
+            if identity is None:
+                builds = scorable_trials(options.root, task="build")
+            else:
+                fixtures, identity["fixtures"] = run_fixtures(options)
         except TrialError as error:
             print("refused: %s" % error)
             return 2
@@ -3906,6 +4695,11 @@ def main(argv):
         if options.task == "build":
             with credential_watch(home):
                 return run_trial(arm, trial, work, home, options)
+        if identity is not None:
+            with credential_watch(home):
+                return run_fixture_change_trial(arm, trial, work, home,
+                                                options,
+                                                fixture_for(fixtures, trial))
         name = trial_name(arm, trial)
         if name not in builds:
             raise TrialError("build trial %s has no scorable outcome, so it "
@@ -3916,7 +4710,7 @@ def main(argv):
 
     def write():
         write_run(run_file, started_at, records, options.task, prompt,
-                  arms, options.k)
+                  arms, options.k, identity)
 
     def probe():
         refresh_credentials(home)
@@ -3934,6 +4728,15 @@ def main(argv):
                    for arm, trial in pending)
     write()
     print("\nRun record: %s" % run_file)
+
+    # A round of two tasks is complete only with both at K for every arm.
+    if identity is not None:
+        owed = owed_by_task(REGISTRATIONS[options.round],
+                            round_records(work))
+        print("round %s: %s" % (options.round, "; ".join(
+            "%s owes %s" % (task, "nothing" if not blocks else
+                            "blocks %s" % ", ".join(map(str, blocks)))
+            for task, blocks in owed.items())))
 
     refused = sum(1 for r in records if r["outcome"] == "refused")
     blocked = sum(1 for r in records if r["outcome"] == "blocked")
