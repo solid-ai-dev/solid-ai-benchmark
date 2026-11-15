@@ -98,7 +98,7 @@ when:
 | FR-06-03 | Self-test | `security.py` "an application that will not boot loses every runtime probe"<br>`security.py` "an administrator that cannot sign in loses what needs one"<br>`security.py` "the lost probes count against the rate" |
 | FR-06-04 | Self-test | `security.py` "no report from the probe is missing, not lost"<br>`security.py` "an audit of nothing is missing, not zero"<br>`security.py` "a report that is not JSON is missing"<br>`security.py` "no roots is missing, not zero" |
 | FR-06-05 | Self-test | `report.py` "an unmeasured column reads not measured"<br>`report.py` "an unmeasured run answers Not measured in every cell" |
-| FR-06-06 | Self-test | `probes.py` "the web probe signs in and reads the pages behind it"<br>`probes.py` "a post without a token and a raw name are findings once signed in"<br>`probes.py` "a refusal says nothing about the token until a post with it is stored"<br>`probes.py` "a sign-in that does not hold fails the form rows and measures nothing" |
+| FR-06-06 | Self-test | `probes.py` "the web probe signs in and reads the pages behind it"<br>`probes.py` "a post without a token and a raw name are findings once signed in"<br>`probes.py` "a refusal says nothing about the token until a post with it is stored"<br>`probes.py` "a sign-in that does not hold fails the form rows and measures nothing"<br>`probes.py` "a page refused for want of a sign-in is withheld, not measured" |
 | FR-06-07 | Self-test | `probes.py` "axe counts the WCAG 2.1 A and AA rules, not its best practice" |
 
 ## 07 Maintainability
