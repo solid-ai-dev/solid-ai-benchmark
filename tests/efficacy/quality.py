@@ -71,7 +71,7 @@ PROBE_TIMEOUT = 900
 # behind that sign-in; a request it turns away, with its redirect, a 401 or
 # a 403, is never measured, and the probe is lost.
 QUALITY_SCRIPT = r'''
-import builtins, io, json, logging, math, os, platform, re, sqlite3
+import builtins, html, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -457,23 +457,37 @@ def exported(path, lines):
 
 
 # An amount as a page may write it: grouped by thousands with a comma, a
-# point, a space or an apostrophe, and two decimals after a point or a comma.
+# point, a space, a no-break or narrow no-break space, or an apostrophe, and
+# two decimals after a point or a comma. The page is read with its character
+# references resolved, so `&nbsp;` and `&#8239;` group as the characters do.
 AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:[,.\u00a0\u202f' ]\d{3})+"
                     r"|\d+)[.,](\d{2})(?!\d)")
 
 
-def shows_total(answer, total):
-    """Whether a page shows the amount `total`, however it is grouped and
-    whatever currency sign stands beside it."""
-    return any(Decimal(re.sub(r"\D", "", whole) + "." + cents) == total
-               for whole, cents in AMOUNT.findall(
-                   answer.get_data(as_text=True)))
+def shows_total(answer, total, tolerance=Decimal("0")):
+    """Whether a page shows an amount within `tolerance` of `total`, however
+    it is grouped and whatever currency sign stands beside it."""
+    return any(abs(Decimal(re.sub(r"\D", "", whole) + "." + cents) - total)
+               <= tolerance for whole, cents in AMOUNT.findall(
+                   html.unescape(answer.get_data(as_text=True))))
+
+
+# Every line is the seed's Seed pack, SEE-5, so the invoice's total scales
+# with its lines: it is zero-rated, so no tax rounds per line; its one rule
+# is a bulk rule read per line; a quantity of 6, 12, 18, 24 or 30 makes each
+# line's net a whole multiple of 15.00; no coupon is sent; and the one rule
+# over the whole invoice is a percentage. 500 lines, five times the first
+# 100, then cost five times what those 100 cost, to the cent; a cent per 100
+# lines is allowed for rounding all the same.
+LINES = [("SEE-5", 6 * (1 + index % 5)) for index in range(500)]
+SAMPLE = 100
+CENT_PER_SAMPLE = Decimal("0.01")
 
 
 def capacity_500_lines():
     """An invoice of 500 lines previewed, saved and rendered, every line
-    kept in all three."""
-    lines = [(SKUS[index % len(SKUS)], 1 + index % 7) for index in range(500)]
+    kept in all three, and priced five times its first 100."""
+    lines = LINES
     steps = {}
     try:
         preview = held(form_post(client, "/invoices/new", "/invoices/preview",
@@ -481,6 +495,11 @@ def capacity_500_lines():
                                  headers={"HX-Request": "true"}),
                        "the preview")
         steps["preview"] = preview.status_code
+        sample = held(form_post(client, "/invoices/new", "/invoices/preview",
+                                builder_body(lines[:SAMPLE]),
+                                headers={"HX-Request": "true"}),
+                      "the preview of %d lines" % SAMPLE)
+        steps["preview_%d" % SAMPLE] = sample.status_code
         saved = held(form_post(client, "/invoices/new", "/invoices",
                                builder_body(lines)), "the save")
         steps["save"] = saved.status_code
@@ -493,7 +512,7 @@ def capacity_500_lines():
         total, reason = exported(path, lines)
     except Raised as error:
         return passed(False, steps=steps, raised=str(error))
-    if not (ok(preview) and ok(rendered)):
+    if not (ok(preview) and ok(rendered) and ok(sample)):
         return passed(False, steps=steps)
 
     # A build that quietly keeps fewer lines answers 2xx on all three. The
@@ -508,8 +527,14 @@ def capacity_500_lines():
     # capacity failure; counting rows in HTML is left alone.
     kept = {"preview": shows_total(preview, total),
             "render": shows_total(rendered, total)}
+
+    # The total the export states is the build's own, so a calculation that
+    # reads only the first 100 lines would agree with itself everywhere. The
+    # first 100 lines priced alone must cost a fifth of it.
+    share = total * SAMPLE / len(lines)
+    kept["scales"] = shows_total(sample, share, CENT_PER_SAMPLE)
     return passed(all(kept.values()), steps=steps, kept=kept,
-                  total=str(total))
+                  total=str(total), expected_sample=str(share))
 
 
 LOCKED = re.compile(r"database (table )?is locked", re.IGNORECASE)
@@ -1036,10 +1061,12 @@ def read_trial(area, name, scores_file, other):
 # its products in one store for every instance, `stray` writes a fixed file
 # outside its folder, `truncating` keeps the first 100 lines of an invoice,
 # answering as if it kept them all, `miscounting` shows a total of 100 of
-# them, and `nulling` exports one line as null. `paginating` shows 100 rows
-# and the whole total, which is no fault. Pages write amounts grouped by
-# thousands beside the euro's sign. `bouncing` answers a price it
-# cannot parse with the sign-in's redirect and `forbidding` with a 403;
+# them, `nulling` exports one line as null, and `capped` prices the first
+# 100 lines alone wherever it prices them, while it keeps and exports all.
+# `paginating` shows 100 rows and the whole total, which is no fault. Pages
+# write amounts grouped by thousands beside the euro's sign, the preview's
+# with `&nbsp;`. `bouncing` answers a price it cannot parse with the
+# sign-in's redirect and `forbidding` with a 403;
 # `gated` never keeps its sign-in, and `refusing` neither keeps it nor
 # redirects, answering 401; `broken` will not boot, and `unportable` boots
 # on no Python but the one it names. Every mode's sign-in form quotes its
@@ -1089,19 +1116,20 @@ def summed(rows):
 
 
 def written(amount, style):
-    """An amount as a page writes it: `12,345.67 EUR` grouped by commas in
-    English, `12.345,67 EUR` by points otherwise, with the euro's sign."""
+    """An amount as a page writes it: `EUR12,345.67` grouped by commas in
+    English, `12&nbsp;345,67&nbsp;EUR` by no-break spaces otherwise, with
+    the euro's sign."""
     whole, cents = amount.split(".")
     grouped = format(int(whole), ",")
     if style == "en":
         return "\u20ac" + grouped + "." + cents
-    return grouped.replace(",", ".") + "," + cents + "\u00a0\u20ac"
+    return grouped.replace(",", "&nbsp;") + "," + cents + "&nbsp;\u20ac"
 
 
 def table(rows, style):
     """The export's total, and the page: each line's sku and quantity, and
     the total, from (sku, unit price, quantity) rows."""
-    total = summed(rows)
+    total = summed(rows[:100] if MODE == "capped" else rows)
     shown = rows[:100] if MODE in ("paginating", "miscounting") else rows
     page_total = summed(shown) if MODE == "miscounting" else total
     return total, "<table>%s</table><p>Total %s</p>" % ("".join(
@@ -1346,7 +1374,8 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
           "truncating": "capacity_500_lines",
           "miscounting": "capacity_500_lines",
-          "nulling": "capacity_500_lines", "bouncing": "fuzz_robustness",
+          "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
+          "bouncing": "fuzz_robustness",
           "forbidding": "fuzz_robustness", "chatty": "n_plus_one",
           "shared": "coexistence", "stray": "coexistence"}
 
@@ -1392,6 +1421,10 @@ def runtime_self_checks(scratch):
         ("a total grouped by thousands beside a currency sign is read",
          sound["capacity_500_lines"].get("passed") is True
          and "€" in FAKE_APP and 'format(int(whole), ",")' in FAKE_APP),
+        ("a total grouped by no-break-space references, with a decimal "
+         "comma, is read",
+         sound["capacity_500_lines"].get("kept", {}).get("preview") is True
+         and "&nbsp;" in FAKE_APP),
         ("a page showing fewer rows but the whole total passes "
          "capacity_500_lines", failing(probes["paginating"]) == []),
         ("the latency is two repeats of 30 requests each",
@@ -1426,6 +1459,8 @@ def runtime_self_checks(scratch):
         "miscounting": "a page showing a total other than the export's "
                        "fails capacity_500_lines",
         "nulling": "an export with a null line fails capacity_500_lines",
+        "capped": "a total over the first 100 of 500 exported lines fails "
+                  "capacity_500_lines",
         "chatty": "an app reading each line on its own fails n_plus_one",
         "shared": "instances sharing their data fail coexistence",
         "stray": "an app writing outside its folder fails coexistence",
