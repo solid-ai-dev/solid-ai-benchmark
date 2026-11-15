@@ -14,7 +14,8 @@ does and how to read its results, with no programming needed.
 | `docs/journeys/` | A person walked through each task, with its findings |
 | `docs/diagrams/` | Every diagram, as draw.io source beside its PNG |
 | `docs/rounds/` | Each round's registration, fixed before its first trial, and [every round's report](docs/rounds/README.md#reports) |
-| [The assessment](https://github.com/solid-ai-dev/solid-ai-templates/blob/main/docs/audits/2026-09-27-efficacy-assessment.md) | What rounds 1 to 3 showed, beside the reports in `solid-ai-templates` |
+| `docs/reports/` | Every round's dated report, with its appendix, record and radars |
+| [The assessment](docs/reports/2026-09-27-efficacy-assessment.md) | What rounds 1 to 3 showed, beside their reports |
 | `tests/efficacy/` | The harness, scorer, judge and report |
 | `tests/lib.py` | Shared helpers the harness imports |
 
@@ -56,8 +57,7 @@ Moved here with its history from `Imbra-Ltd/imbra-ai-templates`
 - Build the arms with the templates' generation tool, not the interview
 - Run every arm fresh, and report the spread beside the mean
 
-Results are reported in the templates repository, under `docs/audits/`,
-and [listed here by round](docs/rounds/README.md#reports).
+Results are reported in this repository, under `docs/reports/`, and [listed here by round](docs/rounds/README.md#reports).
 
 ## License
 

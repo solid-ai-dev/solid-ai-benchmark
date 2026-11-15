@@ -199,7 +199,7 @@ the scoring area.
 Three blind readings per trial, then an archive that is verified by
 restoring it, then the report.
 
-![Judging, archiving and reporting. For each trial, until it holds three readings, judge.py builds a blind bundle by stripping the context file, masking markers and shuffling, sends the rubric schema and the bundle to the judge CLI, gets scores from 1 to 5 with quoted lines, and looks up every quote. Then archive.py writes the records, tarballs and readings to tariff-runs, restores them, recomputes and compares the figures, and writes the archived.json stamp. report.py computes pairs, intervals and verdicts, checks the stamp and writes the dated report to docs/audits](../diagrams/runtime-report.png)
+![Judging, archiving and reporting. For each trial, until it holds three readings, judge.py builds a blind bundle by stripping the context file, masking markers and shuffling, sends the rubric schema and the bundle to the judge CLI, gets scores from 1 to 5 with quoted lines, and looks up every quote. Then archive.py writes the records, tarballs and readings to tariff-runs, restores them, recomputes and compares the figures, and writes the archived.json stamp. report.py computes pairs, intervals and verdicts, checks the stamp and writes the dated report to docs/reports](../diagrams/runtime-report.png)
 
 | Step | What happens | See |
 | ---- | ------------ | ------ |
@@ -209,7 +209,7 @@ restoring it, then the report.
 | 5 | Run records, tarballs without their environments, transcripts and every reading go to a fresh directory of `braboj/tariff-runs` | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 6-7 | The archive is restored into a temporary root and the report's table, contrasts, withdrawals, blocks, reach scan and lost trials are computed from both. Any difference fails | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 8 | K paired differences per contrast, a 10,000-resample bootstrap interval at a recorded seed, the registered verdict rule, and how many of the registered blocks are in | [ch. 8.1](08-crosscutting-concepts.md) |
-| 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/audits/` | [ADR-019](../decisions/019-archive-before-the-report.md) |
+| 9 | Without the stamp, or once any reading changed since it was written, the report refuses to write under `docs/reports/` | [ADR-019](../decisions/019-archive-before-the-report.md) |
 | 10 | The finding table first, then the record behind every cell | [ch. 8.7.3](08-crosscutting-concepts.md) |
 
 ### 6.4.1 Judging notes

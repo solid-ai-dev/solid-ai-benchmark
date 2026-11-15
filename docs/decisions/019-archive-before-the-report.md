@@ -18,7 +18,7 @@ kept a copy of them. Round 3's were deleted with nothing kept.
 
 A round is archived to the private `braboj/tariff-runs`, verified by restoring
 it and recomputing the report's figures, before the report is written under
-`docs/audits/`.
+`docs/reports/`.
 
 ## Rationale
 
@@ -35,8 +35,11 @@ What round 3's loss left behind:
 
 ## History
 
-Every change to this decision, oldest first:
+Every change to this decision, oldest first. An issue `solid-ai-templates#N`
+is in `solid-ai-dev/solid-ai-templates`, where the benchmark lived until the
+split; `#N` is in this repository; a dash means none.
 
 | Date | Change | Why | Issue |
 | ---- | ------ | --- | ----- |
 | 2026-10-15 | A round is archived to the private `braboj/tariff-runs`, verified by restoring it and recomputing the report's figures, before the report is written under `docs/audits/` | Round 3's run root and scoring area were deleted with nothing kept, so none of its readings can be re-run, re-judged or cross-checked | solid-ai-templates#1904 |
+| 2026-11-15 | The report is written under this repository's `docs/reports/`, no longer the templates source's `docs/audits/` | The templates repository removes `docs/audits/` (solid-ai-templates#2448), and ADR-025 keeps the reports here | #170 |

@@ -588,7 +588,7 @@ The decision is ADR-015.
 
 ### 8.7.3 Report documents
 
-A round writes three documents to `docs/audits/`, one per reader, plus the
+A round writes three documents to `docs/reports/`, one per reader, plus the
 radar's two images (FR-12-05):
 
 | File | Reader | Holds |
@@ -691,7 +691,7 @@ traced to its inputs and re-run.
 | Judge | Each judging with its model, effort and seed |
 | Archive | All of the above, in the private archive with a hash per file (FR-13-03) |
 
-The report refuses to write under `docs/audits/` once any reading changed
+The report refuses to write under `docs/reports/` once any reading changed
 since the archive was verified (FR-13-04). The decision is ADR-019.
 
 ## 8.9 Concurrent runs

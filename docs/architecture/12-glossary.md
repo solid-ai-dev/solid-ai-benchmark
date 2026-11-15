@@ -43,7 +43,7 @@ under [`docs/rounds/`](../rounds/).
 | Reach | A tool call in a trial's transcript that names this repository, the hidden suite, the scoring area or another trial. A reached trial is voided and re-run once |
 | Reference model | A context file that only names the templates to read. Round 5's `reference` arm tests it |
 | Registered | Committed to a round's registration before the first trial it governs. Only a registered check can decide |
-| Round | One run of the experiment under one set of rules, reported once under `docs/audits/` |
+| Round | One run of the experiment under one set of rules, reported once under `docs/reports/` |
 | Rubric | The judge's rows: SRP, OCP, LSP, ISP, DIP, naming and abstraction, error design, readability, maintainability, test quality, security and data protection. The primaries are anchored at 1, 3 and 5 |
 | Run record | `run-*.json` in the run root: every trial an invocation ran, with its outcome, cost, revisions and the environment names removed |
 | Run root | The directory a round's trials live in, outside this repository |
@@ -53,7 +53,7 @@ under [`docs/rounds/`](../rounds/).
 | Skills | Round 5's arm: a root file of facts and every-turn rules, a trigger table, and one skill per kind of task, loaded when the task needs it |
 | Smallest change that matters | The size of effect a metric must show to count as a real change, such as 0.5 judge points |
 | Spec | `SPEC.md`: what the app must do, never how it is engineered. The thin spec keeps the contract and drops the practices |
-| Templates source | A git clone of `solid-ai-templates` or a fork, named by `--templates`. The arms are built from it and the reports land in it |
+| Templates source | A git clone of `solid-ai-templates` or a fork, named by `--templates`. The arms are built from it |
 | Tool lock | `tool-lock.txt`: the scoring tools' versions, frozen from the first trial scored and installed for every other |
 | Trial | One agent session on one arm in one block, named `<arm>-<block>`, such as `short-2` |
 | Undecided | The primer's word for no improvement shown: the likely range covers zero, so neither better nor worse can be claimed |

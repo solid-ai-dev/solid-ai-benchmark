@@ -7,7 +7,7 @@ reads, and what a later scoring or judging needs, into a directory kept in
 the private repository `braboj/tariff-runs`. An archive is verified by
 restoring it and reading the report's figures from both roots. Only a
 verified archive stamps the scoring area, and the report refuses to write
-under `docs/audits/` without a current stamp.
+under `docs/reports/` without a current stamp.
 """
 
 import argparse
@@ -566,8 +566,8 @@ def self_test():
     dump_json(score, dict(load_json(score), planted=True))
     checks.append(("a reading changed after the stamp is a problem",
                    "scores/none-1.json" in (stamp_problem(root) or "")))
-    out = os.path.join(scratch, "audits")
-    checks.append(("the report refuses docs/audits/ without a current stamp",
+    out = os.path.join(scratch, "draft")
+    checks.append(("the report refuses docs/reports/ without a current stamp",
                    report.main(["--root", root]) == 2))
     checks.append(("the report still writes elsewhere",
                    report.main(["--root", root, "--out-dir", out]) == 0

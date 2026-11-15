@@ -76,6 +76,7 @@ kept.
 | [ADR-020](../decisions/020-trial-isolation.md) | A trial is fenced by deny rules and excluded by its transcript, in a pen of its own; a reach voids it | Accepted |
 | [ADR-021](../decisions/021-rescore-after-an-instrument-fault.md) | An instrument fault is fixed, validated and every reading round re-scored in full, its report replaced with a dated note keeping the old verdicts | Accepted |
 | [ADR-022](../decisions/022-round-names.md) | From round 6 a round is named by the knob it turns, `C`, `S`, `M` or `T`, and the count of rounds of that knob, as `C1`; trials keep their names | Accepted |
+| [ADR-025](../decisions/025-where-a-report-is-kept.md) | A round's report is kept in this repository, under `docs/reports/`, and the stamp guard protects that folder | Accepted |
 
 ## 9.6 Decisions about the templates
 

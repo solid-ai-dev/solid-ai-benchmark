@@ -20,8 +20,8 @@ with its protocol.
 | Playwright browser | The browser scoring installs | The suite's browser flows and the accessibility probe | Scoring installs one, and refuses the trial where it cannot |
 | Run root | A directory outside this repository, such as `C:/efficacy/2026-10-27-round-5` | Every trial | The harness refuses a root inside the repository |
 | Scoring area | `<run root>-scoring`, beside the root | Every score, reading and judging | |
-| Templates clone | A git working copy of `solid-ai-templates` or a fork, named by `--templates` | Generating arms, vendoring templates, writing reports | Every run refuses |
-| Archive clone | A working copy of `braboj/tariff-runs` | Archiving a round before its report | The report refuses to write under `docs/audits/` |
+| Templates clone | A git working copy of `solid-ai-templates` or a fork, named by `--templates` | Generating arms, vendoring templates | Every run refuses |
+| Archive clone | A working copy of `braboj/tariff-runs` | Archiving a round before its report | The report refuses to write under `docs/reports/` |
 
 A missing piece shows up as a refusal or a missing metric, not a crash.
 `score.py --no-web` skips both browser-side probes and installs no browser.
