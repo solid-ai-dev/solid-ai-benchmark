@@ -3706,16 +3706,23 @@ def iso_screen(trials, table, iso):
             continue
         moves = iso_axis_moves(iso, "%s-%s" % (arm, BARE))
 
-        # An axis with no reading, such as one no target measures, is
-        # neither better nor worse. It cannot hold the screen, since an axis
-        # the instruments do not reach would hold it for good; a short run
-        # still holds it through what the run owes.
-        rows.append({"arm": arm, "unread": [],
+        # An axis with no reading is neither better nor worse. One that
+        # lists targets is waiting on its measurements, so it holds the
+        # screen; one with no target, which the instruments do not reach,
+        # would hold it for good, so it does not.
+        rows.append({"arm": arm,
+                     "unread": [axis for axis, move in moves
+                                if move is None and iso_targeted(axis)],
                      "worse": [axis for axis, move in moves if move == -1.0],
                      "better": sum(1 for _, move in moves if move == 1.0),
                      "cost": arm_mean(table, "cost_usd", arm),
                      "rank": None, "round6": False})
     return screen_ranked(trials, rows, missing)
+
+
+def iso_targeted(axis):
+    """Whether any sub-characteristic of an ISO axis lists a target."""
+    return any(targets for _, targets in dict(ISO_AXES)[axis])
 
 
 def screen_ranked(trials, rows, missing):
@@ -4533,6 +4540,24 @@ def round5e_checks():
                    "and `lazyref`." in iso_text
                    and "out: Maintainability worse" in iso_text,
                    iso_text.splitlines()[-1]))
+
+    # The security scores not in yet: Security lists targets, so the
+    # screen waits on it and names no arm, though every trial is in.
+    pending = {key: {label: dict(contrast) for label, contrast
+                     in by_label.items()} for key, by_label in axes.items()}
+    for contrast in pending["iso:Security"].values():
+        contrast["verdict"] = "not computed"
+    pending_iso = ({}, pending, ())
+    pending_rows, _ = round6_screen(held, table, results, pending_iso)
+    pending_text = "\n".join(screen_lines(held, table, results, pending_iso))
+    checks.append(("an axis that lists targets but has no reading yet holds "
+                   "the ISO screen",
+                   not any(row["round6"] for row in pending_rows)
+                   and "`hybrid`'s Security" in pending_text
+                   and "names no arms for round 6 yet" in pending_text
+                   and all(row["unread"] in ([], ["Security"])
+                           for row in pending_rows),
+                   pending_text.splitlines()[-1]))
 
     # Skills holds every deciding row but is better on an ISO axis, so the
     # two rules part on it; a contrast no axis reads is not measured.
