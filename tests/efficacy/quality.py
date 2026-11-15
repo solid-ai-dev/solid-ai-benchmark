@@ -856,32 +856,68 @@ FUZZ = (
 )
 
 
+# Each case is sent to an instance of its own, on a fresh database and
+# signed in afresh, so no case meets what another stored. A case sent with
+# its form's token needs that form first: a form page that does not answer
+# 200 gives no token, and a refusal for want of one would read as handled,
+# so the case fails as its form not reached. A case sent without a token on
+# purpose fetches no form.
+def fuzz_case(method, path, form, body, signed_out):
+    """One malformed request's outcome, on a fresh instance."""
+    entry = {}
+    try:
+        own = package.create_app(os.path.join(folder(), "fuzz.sqlite"))
+    except Exception as error:
+        entry["reason"] = "a fresh instance would not boot: %s" % (
+            repr(error)[:200])
+        return entry
+    who = own.test_client()
+    if not signed_out and not sign_in(who):
+        entry["gated"] = True
+        return entry
+    try:
+        data = body
+        if form:
+            sent_from = ask(who, "GET", form)
+            if not signed_out and gated(sent_from):
+                entry["gated"] = True
+                return entry
+            if sent_from.status_code != 200:
+                entry["reason"] = ("the form could not be reached: %s "
+                                   "answered %d"
+                                   % (form, sent_from.status_code))
+                return entry
+            data = dict(body)
+            for name, value in hidden_fields(
+                    sent_from.get_data(as_text=True), form, path).items():
+                data.setdefault(name, value)
+        answer = ask(who, method, path, data=data)
+        entry["status"] = answer.status_code
+
+        # Signed out, the sign-in's own answer may be its redirect.
+        entry["gated"] = not signed_out and gated(
+            answer, token=method == "GET" or form is not None)
+    except Raised as error:
+        entry["raised"] = str(error)
+    return entry
+
+
 def fuzz_robustness():
-    """Malformed requests to the specification's routes, none answered 500
-    and none raising out of the client."""
-    stranger = app.test_client()
+    """Malformed requests to the specification's routes, each reaching
+    its route, none answered 500 and none raising out of the client."""
     answers = []
     for label, method, path, form, body, signed_out in FUZZ:
-        who = stranger if signed_out else client
         entry = {"request": label}
-        try:
-            answer = (form_post(who, form, path, body, method=method)
-                      if form else ask(who, method, path, data=body))
-            entry["status"] = answer.status_code
-
-            # Signed out, the sign-in's own answer may be its redirect.
-            entry["gated"] = not signed_out and gated(
-                answer, token=method == "GET" or form is not None)
-        except Raised as error:
-            entry["raised"] = str(error)
+        entry.update(fuzz_case(method, path, form, body, signed_out))
         answers.append(entry)
     asked = [entry["request"] for entry in answers if entry.get("gated")]
     if asked:
         return lost("fuzz_robustness", "%d malformed requests were turned "
                     "away by the sign-in" % len(asked), asked=asked)
     failed = [entry for entry in answers if entry.get("raised")
-              or (entry.get("status") or 0) >= 500]
-    return passed(not failed, requests=len(answers), failed=failed)
+              or entry.get("reason") or (entry.get("status") or 0) >= 500]
+    return passed(not failed, requests=len(answers), failed=failed,
+                  statuses=[entry.get("status") for entry in answers])
 
 
 report["signed_in"] = sign_in(client)
@@ -1141,7 +1177,8 @@ def read_trial(area, name, scores_file, other):
 # it keeps and exports all; `unpriced` exports its total as NaN, `free`
 # prices every line at nothing, `poisoned` stores a price it cannot then
 # list, so its products page answers 500 once fuzzing has stored one, which
-# is no fault of any probe's, and `hanging` holds one concurrent write,
+# is no fault of any probe's, `unformed` answers 500 on its rules page, and
+# `hanging` holds one concurrent write,
 # and its lock, for a minute. Every mode opens its database by a `file:` URI
 # with a query. `bouncing` answers a price it cannot parse with the
 # sign-in's redirect and `forbidding` with a 403;
@@ -1346,6 +1383,8 @@ class Client(object):
             listing = " ".join(self.app.skus()) if path == "/products" else ""
             if path == "/products" and MODE == "poisoned":
                 self.app.prices()
+            if path == "/rules" and MODE == "unformed":
+                raise RuntimeError("the rules page is broken")
             return Response(200, form_page(path, "<p>%s</p>" % listing))
         if method == "POST" and (path in posts or path.endswith("/delete")
                                  or path.endswith("/erase")):
@@ -1468,7 +1507,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "locking": "concurrent_writes", "lossy": "concurrent_writes",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
           "truncating": "capacity_500_lines",
-          "hanging": "concurrent_writes",
+          "hanging": "concurrent_writes", "unformed": "fuzz_robustness",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
           "unpriced": "capacity_500_lines", "free": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
@@ -1557,6 +1596,8 @@ def runtime_self_checks(scratch):
         "truncating": "an app keeping 100 of 500 lines fails "
                       "capacity_500_lines",
         "hanging": "a writer the app hangs fails concurrent_writes",
+        "unformed": "an app whose form page answers 500 fails "
+                    "fuzz_robustness",
         "nulling": "an export with a null line fails capacity_500_lines",
         "unpriced": "an export whose total is NaN fails capacity_500_lines",
         "free": "an app pricing every line at nothing fails "
@@ -1574,6 +1615,18 @@ def runtime_self_checks(scratch):
     checks.extend([
         ("a product a malformed request stored does not reach the "
          "concurrent writes", failing(probes["poisoned"]) == []),
+        ("a value one malformed request stored reaches no other case",
+         probes["poisoned"]["fuzz_robustness"].get("passed") is True
+         and len(sound["fuzz_robustness"].get("statuses") or [])
+         == sound["fuzz_robustness"].get("requests", 0) > 0
+         and [index for index, (poisoned, clean) in enumerate(zip(
+             probes["poisoned"]["fuzz_robustness"].get("statuses") or [],
+             sound["fuzz_robustness"]["statuses"]))
+             if poisoned == 400 and clean != 400] == []),
+        ("a form that cannot be reached is no handled request",
+         any("could not be reached" in entry.get("reason", "")
+             for entry in probes["unformed"]["fuzz_robustness"].get(
+                 "failed", []))),
         ("a hung writer stops the run, every reading before it kept",
          "hung it" in probes["hanging"]["concurrent_writes"].get(
              "reason", "")
