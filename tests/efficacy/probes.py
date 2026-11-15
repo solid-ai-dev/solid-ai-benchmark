@@ -533,8 +533,10 @@ def hidden_fields(html):
 
 
 def gated(response):
-    """Whether the answer is the redirect to the sign-in form, which is
-    the sign-in's page and not the one asked for."""
+    """Whether a page was withheld for want of a sign-in: the redirect to
+    the sign-in form, or a refusal in its place."""
+    if response.status_code in (401, 403):
+        return True
     if response.status_code not in REDIRECTS:
         return False
     return urlsplit(response.headers.get("Location", "")).path == "/sign-in"
@@ -578,7 +580,7 @@ try:
     body.update({name: value for name, value in hidden_fields(form).items()
                  if name not in body})
     report["sign_in_status"] = client.post("/sign-in", data=body).status_code
-    report["signed_in"] = not gated(client.get("/"))
+    report["signed_in"] = client.get("/").status_code == 200
 except Exception as error:
     report["signed_in"] = False
     report["sign_in_error"] = repr(error)[:300]
@@ -1037,7 +1039,8 @@ def total():
 # every page is the sign-in's redirect; `raw` signs in, takes a post without
 # a token and shows a stored name as it came; `unstored` signs in and
 # refuses every post, the one with its token too. The sign-in form quotes
-# its attributes singly.
+# its attributes singly. `refusing` never signs anyone in and answers 401 in
+# place of each page.
 FAKE_WEB_APP = '''import os
 
 MODE = "__MODE__"
@@ -1073,6 +1076,8 @@ class Client(object):
         if path == "/sign-in":
             return Response(200, PAGE % ("Sign in", "Sign in", "<form>"
                                          + SIGN_IN_TOKEN + "</form>"))
+        if not self.signed and MODE == "refusing":
+            return Response(401, "sign in first")
         if not self.signed:
             return Response(302, location="/sign-in?next=" + path)
         names = "".join("<li>%s %s</li>" % (sku, name if MODE == "raw"
@@ -1086,7 +1091,8 @@ class Client(object):
         if path == "/sign-in":
             if data.get("csrf_token") != "t":
                 return Response(400, "missing token")
-            if MODE != "locked" and data.get("password") == self.app.password:
+            if (MODE not in ("locked", "refusing")
+                    and data.get("password") == self.app.password):
                 self.signed = True
                 return Response(302, location=data.get("next") or "/")
             return Response(200, "wrong username or password")
@@ -1120,7 +1126,7 @@ def create_app(database):
 def web_readings(scratch):
     """Run the web probe against the stand-in application in every mode."""
     readings = {}
-    for mode in ("gated", "locked", "raw", "unstored"):
+    for mode in ("gated", "locked", "raw", "unstored", "refusing"):
         workspace = os.path.join(scratch, "web-" + mode)
         package = os.path.join(workspace, "tariff")
         os.makedirs(package)
@@ -1187,6 +1193,11 @@ def web_checks(scratch):
                                        or "")
          and "asked for a sign-in" in (locked["html_validity"]["missing"]
                                        or "")),
+        ("a page refused for want of a sign-in is withheld, not measured",
+         values["refusing"].get("signed_in") is False
+         and values["refusing"].get("xss_inert") is False
+         and "builder_bytes" not in values["refusing"]
+         and readings["refusing"][0]["accessibility"]["missing"]),
         ("axe counts the WCAG 2.1 A and AA rules, not its best practice",
          counted == {"a.html": ["image-alt"], "b.html": ["color-contrast"],
                      "c.html": []}
