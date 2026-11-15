@@ -137,11 +137,11 @@ ROUND5_DECLINED = [
 SKILLS_INTO = ".claude/skills"
 
 # The arms, each a word, and the context file each starts with, relative to
-# `arms/`. Arm `none` carries no file: it is the bare agent. `hand` is a
-# person's file, kept verbatim. `inline`, `reference` and `skills` are round
-# 5's; `hybrid` was regenerated for it, and an arm's vendored ref comes from
-# its generation record. `short` was made again from round 5's chain, under a
-# 40-line budget.
+# `arms/`. Arm `none` carries no file: it is the bare agent. An arm's
+# vendored ref comes from its generation record. `generate_arm.py` builds
+# every arm a round may run; `hand`, `short` and `hybrid` are the pilot
+# rounds' arms, a person's file and two a model wrote, kept as they are for
+# the pilot rounds' reports, and no script rebuilds them.
 ARMS = {
     "none": {"label": "no context file", "context": None},
     "short": {"label": "the templates' file, inline, 40 lines",
@@ -152,7 +152,7 @@ ARMS = {
              "context": "hand/CLAUDE.md"},
     "reference": {"label": "the templates, named only",
                   "context": "reference/CLAUDE.md", "vendor": VENDORED},
-    "inline": {"label": "the templates' file, inline from agents.md",
+    "inline": {"label": "the emitted root file, every rule inline",
                "context": "inline/CLAUDE.md"},
     "skills": {"label": "the emitted root file and task skills",
                "context": "skills/CLAUDE.md", "skills": "skills/skills"},
@@ -3569,12 +3569,12 @@ def round5_checks():
          and spec_problem(["lazyref"], "thin", ROUND5_SPEC[1]) is not None
          and spec_problem(["lazyskills"], *ROUND5_SPEC) is None),
     ]
-    record = os.path.join(ARMS_DIR, "hybrid", "generation.json")
+    record = os.path.join(ARMS_DIR, "lazyref", "generation.json")
     with io.open(record, encoding="utf-8") as handle:
         recorded = json.load(handle).get("ref")
     checks.append(("a vendoring arm vendors at its recorded ref",
                    recorded is not None
-                   and arm_vendor("hybrid")["ref"] == recorded))
+                   and arm_vendor("lazyref")["ref"] == recorded))
 
     scratch = os.path.join(tempfile.gettempdir(), "efficacy-skills-self-test")
     remove_tree(scratch)

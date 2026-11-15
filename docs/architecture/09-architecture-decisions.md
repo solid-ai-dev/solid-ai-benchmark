@@ -62,6 +62,7 @@ report shows first.
 | [ADR-015](../decisions/015-contrasts-and-verdicts.md) | A contrast gets a verdict only when both its arms run in the same round | Accepted |
 | [ADR-023](../decisions/023-the-iso-radar.md) | From round 6 the radar reads ISO/IEC 25010:2023: eight axes, each the share of its targets met against `none`, a marker only past the axis's margin, the cost shown above | Accepted |
 | [ADR-024](../decisions/024-verdicts-read-the-iso-radar.md) | From round 6 an arm's verdict and round 6's screen read the ISO radar's axes; a pilot round read by them is a post-hoc draft | Accepted |
+| [ADR-025](../decisions/025-every-arm-is-built-by-a-script.md) | From round 6 every arm is built by a script with no model call, `inline` by the emitter's `--inline-skills`; `hybrid`, `short` and `hand` run no more | Accepted |
 
 ## 9.5 Running and keeping a round
 

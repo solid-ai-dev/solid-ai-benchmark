@@ -1,27 +1,24 @@
-"""Generate one round-5 arm's context file, once, with nobody answering.
+"""Build one arm's context file from one chain of the templates, by script.
 
-Every round-5 arm is made from one chain of the templates at one commit, so
-the arms differ only in how they deliver it. This module makes them:
+Every arm is made from one chain of the templates at one commit, so the arms
+differ only in how they deliver it, and no model writes any of them:
 
 - `reference` is fixed text naming each template of the chain
-- `inline` and `hybrid` are one non-interactive generation each, following
-  `templates/core/agents.md` with no interview
-- `short` is the same generation in the inline model, held to 40 lines of
-  88 characters
-- `skills` is what `resolve_chain.py --emit` builds, the facts filled from
-  the brief
+- `inline` is what `resolve_chain.py --emit --inline-skills` builds: one root
+  file holding every adopted rule, the facts filled from the brief
+- `skills` is what `resolve_chain.py --emit` builds: the root file and one
+  skill per kind of task, the facts filled from the brief
 - `lazyref` and `lazyskills` are fixed text too: a map from the topics the
   manifest gives each template of the chain to that template, read as a file
   or loaded as a skill the first time the work touches one of them, and for
   `lazyskills` one skill per template, holding it verbatim
 
 It writes `arms/<arm>/CLAUDE.md` (and, for an arm with skills, the skills
-beside it), and refuses to keep a result the specification leaked into, or
-one over its arm's budget.
+beside it), and refuses to keep a result the specification leaked into.
 
-Run it once per arm. Re-running it produces a different file and therefore
-a different arm, so it refuses to overwrite an existing one without
-`--replace`, and the record it writes is what the report cites.
+The same ref gives the same bytes, so the self-test rebuilds every committed
+arm and fails on any difference. It still refuses to overwrite an existing
+file without `--replace`, since a new ref is a new arm.
 """
 
 import argparse
@@ -35,14 +32,11 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 
 from harness import (ROUND5_DECLINED, ROUND5_REF,  # noqa: E402
                      ROUND5_ROOTS,
                      TEMPLATES_ENV, VENDORED, TrialError, source_record,
-                     templates_root, agent_environment, agent_executable,
-                     assert_authenticated, assert_outside_repository,
-                     prepare_home, read_input)
+                     templates_root, assert_outside_repository, read_input)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -51,18 +45,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BRIEF = os.path.join(HERE, "brief.txt")
 
 # The arms this module makes, each with the directory under `arms/` its file
-# and record live in, and how it is made: fixed text, a model generation in
-# one of `agents.md`'s models, the emitter, or a map of the chain's topics
-# read as files or loaded as skills, and a model arm's budget as (lines,
-# width) where it has one. `hand` is a person's file, kept verbatim with no
-# record, so it is not made here.
+# and record live in, and how it is made: fixed text, the templates' emitter
+# with its skills apart or inlined, or a map of the chain's topics read as
+# files or loaded as skills. An arm a model or a person writes would change
+# with every writing, so none is made here.
 GENERATED = {
     "reference": {"dir": "reference", "kind": "fixed"},
-    "inline": {"dir": "inline", "kind": "model", "model": "inline"},
-    "hybrid": {"dir": "hybrid", "kind": "model", "model": "hybrid"},
-    "skills": {"dir": "skills", "kind": "emit"},
-    "short": {"dir": "short", "kind": "model", "model": "inline",
-              "budget": (40, 88)},
+    "inline": {"dir": "inline", "kind": "emit", "inline_skills": True},
+    "skills": {"dir": "skills", "kind": "emit", "inline_skills": False},
     "lazyref": {"dir": "lazyref", "kind": "map", "load": "read"},
     "lazyskills": {"dir": "lazyskills", "kind": "map", "load": "skill"},
 }
@@ -86,29 +76,10 @@ def record_path(arm):
                         "generation.json")
 
 
-# Two lists, because the prompt and the output are different questions.
-#
-# The PROMPT scan is a wiring check: a generation is never handed
-# `SPEC.md`, so any of these appearing in the prompt means the plumbing is
-# wrong. It can afford to be broad, since a false positive costs a look
-# rather than a generation.
-PROMPT_TOKENS = [
-    "half-even", "ROUND_HALF_EVEN", "n-for-m",
-    "WID-1", "GAD-2", "BOK-3", "SRV-4", "SEE-5",
-    "r-tier-wid", "r-bulk-see", "r-pct-bok", "r-pct-all",
-    "c-welcome", "c-tenoff", "WELCOME", "TENOFF",
-    "PricedInvoice", "TariffError",
-    "/invoices/preview", "/invoices/new", "export.csv", "export.json",
-    "228.35", "227.07", "195.24", "0.135",
-    "TARIFF_ADMIN_PASSWORD", "/sign-in", "/sign-out",
-    "Ada Example", "ada@example.com",
-]
-
-# The OUTPUT scan asks something narrower, and the prompt scan is what
-# earns it: once the prompt is clean, the model demonstrably never read the
-# specification, so anything specification-shaped in the output was
-# *inferred*. Only arbitrary data can survive that argument — a seed sku, a
-# rule id, a figure from the worked example. Nothing derives those.
+# The output scan. No arm is handed `SPEC.md`, so only arbitrary data the
+# specification alone supplies counts as a leak: a seed sku, a rule id, a
+# figure from the worked example. A name the templates' own rules imply,
+# such as an error base called after the package, is no leak.
 NON_INVENTABLE = [
     "WID-1", "GAD-2", "BOK-3", "SRV-4", "SEE-5",
     "r-tier-wid", "r-bulk-see", "r-pct-bok", "r-pct-all",
@@ -116,70 +87,6 @@ NON_INVENTABLE = [
     "228.35", "227.07", "195.24",
     "Ada Example", "ada@example.com",
 ]
-
-# Two tokens taught this the hard way.
-#
-# `HX-Request` came off the prompt list: the templates document the header
-# themselves, as any HTMX guidance would, so the scan fired on a clean
-# prompt. `/customers/` came off it the same way, from the templates' REST
-# rule, whose example nests `/customers/{id}/orders`. Every other token was then checked the same way against the chain
-# at the release and appears nowhere in it.
-#
-# `TariffError` came off the *output* list on the first real generation. The
-# prompt had already scanned clean, so the model could not have read it —
-# it named the error base after the package, which is exactly what the
-# templates' one-hierarchy rule asks of a package called `tariff`. The
-# specification chose the same name for the same reason. `PricedInvoice`,
-# the routes, the coupon codes and `half-even` are all derivable the same
-# way and stay out of the output list for the same reason.
-
-INSTRUCTION = """\
-You generate one project's `CLAUDE.md` from the solid-ai-templates, with no
-person to answer questions.
-
-Follow `templates/core/agents.md`, given in full below, for what the file
-holds and how it is written. The project brief below is the whole of what
-the project has said about itself. Adopt every rule of the chain below that
-applies to the project the brief describes, and leave out every rule that
-does not. Where the brief does not settle something, choose what the rules
-already imply and move on; do not ask.
-
-The brief names no tools, and the project has chosen none. Where a rule asks
-for a type checker, a linter, a formatter, a test runner or a package
-manager, or a template shows a command as a placeholder, say what the check
-must do and name no tool and no command: that choice is the project's.
-
-Output the finished `CLAUDE.md` and nothing else: no preamble, no
-explanation, no code fence around the whole document.
-
-%s
-## Project brief
-
-%s
-
-## templates/core/agents.md
-
-%s
-
-## The rules this project's chain resolves
-
-%s
-"""
-
-# What each output model's clause tells the generation. The hybrid clause
-# names where the templates sit in the workspace, because the harness
-# vendors them there rather than adding a submodule, and a file telling its
-# reader to add one would be wrong from its first line.
-MODELS = {
-    "inline": "Use the inline model of `agents.md`.",
-    "hybrid": ("Use the hybrid model of `agents.md`. The templates are "
-               "present in the project at `%s/%s/`, the repository's `%s/` "
-               "directory at the same revision as the rules below, as a "
-               "vendored copy rather than a submodule: point there, list the "
-               "template files to read by their paths under it, and do not "
-               "tell anyone to add a submodule."
-               % (VENDORED["into"], VENDORED["path"], VENDORED["path"])),
-}
 
 # The `reference` arm's whole file: the brief, then the chain named, no rule
 # copied in. Every arm's root states the same project facts, so the arms
@@ -199,12 +106,11 @@ at the revision the project adopted.
 
 # The facts the emitted root file leaves as slots, each filled from the
 # brief and nothing else. A slot the brief does not settle says so rather
-# than inventing an answer.
+# than inventing an answer. The description slot, under the title, takes
+# the brief whole, so an emitted root opens as every other arm's does.
+BRIEF_SLOT = "{{one-sentence description}}"
 FACTS = {
     "{{project-name}}": "tariff",
-    "{{one-sentence description}}":
-        "A pricing and invoicing web application: a product catalog, "
-        "discount rules, tax jurisdictions, customers and invoices.",
     "{{owner}}": "Imbra Ltd",
     "{{repository}}": "this repository",
     "{{the commands to build, test and run the project}}":
@@ -217,37 +123,11 @@ FACTS = {
 SLOT = re.compile(r"\{\{[^}]+\}\}")
 
 
-# The budget clause. The width keeps a line from carrying a paragraph. The
-# closing check adds no content; it asks the model to hold a bound it is
-# already given, since a file over it is refused whole.
-BUDGET = """\
-The finished `CLAUDE.md` MUST be at most {lines} lines, blank lines counted,
-and no line may be longer than {width} characters. Keep the rules that matter
-most for this project and leave the rest out; a rule that does not fit is left
-out, not squeezed onto another rule's line.
-
-Before you answer, measure every line against {width} characters and shorten
-or split each one over it, then count the lines again. A file over either
-bound is refused whole, never trimmed."""
-
-
-def arm_clause(arm):
-    """The model and budget paragraphs for one model arm's instruction."""
-    entry = GENERATED[arm]
-    lines = ["## The output model", "", MODELS[entry["model"]]]
-    if entry.get("budget"):
-        count, width = entry["budget"]
-        lines.extend(["", "## The budget", "",
-                      BUDGET.format(lines=count, width=width)])
-    return "\n".join(lines) + "\n"
-
-
 # The tools a Python project most often chooses. Neither the brief nor the
-# templates name one, so a generated file that does invented it, and an arm
-# told a tool gets checks the other arms were never told to run. The list is
-# a guard against the common case, not a proof: a rarer tool is caught by
-# reading the generated file, which is committed and reviewed. It can afford
-# to be broad, since a false positive costs one more generation.
+# templates name one, so a built file that does carries a tool the chain
+# took in, and an arm told a tool gets checks the other arms were never told
+# to run. The list is a guard against the common case, not a proof: a rarer
+# tool is caught by reading the built file, which is committed and reviewed.
 TOOLING = re.compile(r"\b(mypy|pyright|ruff|flake8|pylint|black|isort|"
                      r"pytest|tox|nox|bandit|uv|pip|pipenv|poetry|hatch)\b",
                      re.IGNORECASE)
@@ -258,23 +138,6 @@ def named_tooling(texts):
     they name none."""
     return sorted({match.lower() for text in texts
                    for match in TOOLING.findall(text)})
-
-
-def over_budget(document, budget):
-    """Every way a file exceeds its (lines, width) budget, as sentences;
-    empty where it fits or has no budget."""
-    if not budget:
-        return []
-    lines, width = budget
-    text = document.rstrip("\n").split("\n")
-    findings = []
-    if len(text) > lines:
-        findings.append("%d lines, over the budget of %d" % (len(text), lines))
-    widest = max((len(line) for line in text), default=0)
-    if widest > width:
-        findings.append("a line of %d characters, over the width of %d"
-                        % (widest, width))
-    return findings
 
 
 def read_brief(path=BRIEF):
@@ -336,33 +199,12 @@ def resolve_union(tree, roots):
     return union
 
 
-def read_chain(tree, files):
-    """Concatenate the resolved templates, each under its own path."""
-    parts = []
-    for name in files:
-        path = os.path.join(tree, name)
-        if not os.path.exists(path):
-            raise TrialError("resolved file %s is not in the tree" % name)
-        with io.open(path, encoding="utf-8") as handle:
-            parts.append("<!-- %s -->\n%s" % (name, handle.read()))
-    return "\n\n".join(parts)
-
-
 def scan(text, label, tokens):
     """Every listed token this text carries, or None if it carries none."""
     hits = {token: text.count(token) for token in tokens if token in text}
     if not hits:
         return None
     return {"where": label, "hits": hits}
-
-
-def build_prompt(tree, arm, files):
-    """The model arm's prompt: its model, the brief, agents.md, the chain."""
-    with io.open(os.path.join(tree, "templates", "core", "agents.md"),
-                 encoding="utf-8") as handle:
-        agents = handle.read()
-    return INSTRUCTION % (arm_clause(arm), read_brief(), agents,
-                          read_chain(tree, files))
 
 
 def reference_text(files, brief):
@@ -492,8 +334,10 @@ def template_skills(tree, rows):
     return skills
 
 
-def fill_facts(text):
-    """The emitted root file with every fact slot filled from the brief."""
+def fill_facts(text, brief):
+    """The emitted root file with every fact slot filled from the brief, the
+    description slot with the brief itself."""
+    text = text.replace(BRIEF_SLOT, brief.strip())
     for slot, value in FACTS.items():
         text = text.replace(slot, value)
     left = SLOT.findall(text)
@@ -503,9 +347,10 @@ def fill_facts(text):
     return text
 
 
-def emit_arm(tree, roots):
-    """The `skills` arm, built by the templates' emitter: the root file with
-    its facts filled, and {kind: SKILL.md text}."""
+def emit_arm(tree, roots, brief, inline_skills):
+    """An arm the templates' emitter builds: the root file with its facts
+    filled, and {kind: SKILL.md text}, empty where the skills are inlined
+    into the root."""
     out = tempfile.mkdtemp(prefix="efficacy-emit-")
     declined = os.path.join(out, "declined.txt")
     with io.open(declined, "w", encoding="utf-8", newline="\n") as handle:
@@ -513,14 +358,15 @@ def emit_arm(tree, roots):
     try:
         proc = subprocess.run(
             [sys.executable, "tools/resolve_chain.py", "--emit",
-             os.path.join(out, "emitted"), "--declined", declined] + roots,
+             os.path.join(out, "emitted"), "--declined", declined]
+            + (["--inline-skills"] if inline_skills else []) + roots,
             cwd=tree, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
             raise TrialError("the emitter failed: %s"
                              % (proc.stdout + proc.stderr).strip())
         with io.open(os.path.join(out, "emitted", "AGENTS.md"),
                      encoding="utf-8") as h:
-            root = fill_facts(h.read())
+            root = fill_facts(h.read(), brief)
         skills = {}
         base = os.path.join(out, "emitted", ".agents", "skills")
         for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
@@ -532,44 +378,67 @@ def emit_arm(tree, roots):
         shutil.rmtree(out, ignore_errors=True)
 
 
-def agent_command(home, model, effort, budget):
-    """The generator invocation: isolated, offline, non-interactive."""
-    argv = [
-        agent_executable(), "-p",
-        "--output-format", "json",
-        "--model", model,
-        "--effort", effort,
-        "--permission-mode", "bypassPermissions",
-        "--setting-sources", "",
-        "--settings", os.path.join(home, "settings.json"),
-        "--strict-mcp-config",
-        "--disallowed-tools", "WebSearch", "WebFetch",
-    ]
-    if budget is not None:
-        argv.extend(["--max-budget-usd", str(budget)])
-    return argv
+def build_arm(arm, ref, brief):
+    """One arm's files at a templates ref: (document, {kind: SKILL.md text},
+    what the record says of how they were built). The same arm, ref and
+    brief always give the same files."""
+    entry = GENERATED[arm]
+    tree = worktree_at(ref)
+    try:
+        files = resolve_union(tree, ROUND5_ROOTS)
+        details = {"commit": subprocess.run(
+            ["git", "-C", tree, "rev-parse", "HEAD"], capture_output=True,
+            text=True, encoding="utf-8").stdout.strip(),
+            "resolved_files": files}
+        skills = {}
+        if entry["kind"] == "fixed":
+            document = reference_text(files, brief)
+        elif entry["kind"] == "emit":
+            document, skills = emit_arm(tree, ROUND5_ROOTS, brief,
+                                        entry["inline_skills"])
+            details["declined"] = ROUND5_DECLINED
+            details["inline_skills"] = entry["inline_skills"]
+        else:
+            rows = moments(tree, files)
+            document = map_text(rows, entry["load"], brief)
+            if entry["load"] == "skill":
+                skills = template_skills(tree, rows)
+            details["load"] = entry["load"]
+            details["moments"] = [{"skill": kind, "moment": description,
+                                   "file": name}
+                                  for kind, description, name in rows]
+    finally:
+        remove_worktree(tree)
+    return document.rstrip() + "\n", skills, details
 
 
-def extract_document(payload, raw):
-    """The generated file, from the CLI's JSON envelope or its raw output."""
-    if isinstance(payload, dict):
-        for key in ("result", "text", "content"):
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return raw.strip()
+def committed_arm(arm):
+    """An arm's committed files: (document, {kind: SKILL.md text}), or None
+    where the arm has no committed file."""
+    path = output_path(arm)
+    if not os.path.isfile(path):
+        return None
+    with io.open(path, encoding="utf-8", newline="") as handle:
+        document = handle.read()
+    skills = {}
+    base = skills_path(arm)
+    for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        with io.open(os.path.join(base, kind, "SKILL.md"), encoding="utf-8",
+                     newline="") as handle:
+            skills[kind] = handle.read()
+    return document, skills
 
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
-        description="Generate one round-5 arm's context file.")
+        description="Build one arm's context file from the templates.")
     parser.add_argument("--arm", choices=sorted(GENERATED),
-                        help="the arm to generate; required for everything "
+                        help="the arm to build; required for everything "
                              "but --self-test")
     parser.add_argument("--root",
-                        help="scratch directory for the isolated home and the "
-                             "record; MUST be outside this repository. "
-                             "Required for everything but --self-test")
+                        help="scratch directory for the record; MUST be "
+                             "outside this repository. Required for "
+                             "everything but --self-test")
     parser.add_argument("--ref", default=ROUND5_REF,
                         help="the templates commit to resolve the chain at "
                              "(default %s, the registered one)" % ROUND5_REF)
@@ -577,39 +446,37 @@ def parse_args(argv):
                         help="a git clone of the templates repository, "
                              "upstream or a fork; overrides %s"
                              % TEMPLATES_ENV)
-    parser.add_argument("--model", default="claude-sonnet-5")
-    parser.add_argument("--effort", default="high")
-    parser.add_argument("--budget", type=float, default=None)
-    parser.add_argument("--timeout", type=int, default=3600)
     parser.add_argument("--replace", action="store_true",
                         help="overwrite the arm's existing file; the arm "
                              "changes when you do")
     parser.add_argument("--dry-run", action="store_true",
-                        help="build and scan the prompt, call no model")
+                        help="build and scan the files, write nothing under "
+                             "arms/")
     parser.add_argument("--self-test", action="store_true",
                         help="prove the scans, the fixed text and the facts "
-                             "can fail, then exit")
+                             "can fail, rebuild every committed arm, then "
+                             "exit")
     return parser.parse_args(argv)
 
 
 def self_test():
     """A scan that cannot fail is not a control, and neither is a fill or a
-    budget.
+    build said to be the same twice.
 
     Plants a specification-only token and requires the scan to report it,
     and a clean text to scan clean. Requires the reference text to name
     every file under the vendored path and to be the same twice. Requires a
     fact slot the brief does not fill to be refused, and every known slot
-    filled. Requires a file one line over the budget, and one a character
-    too wide, refused, and a file at both bounds kept.
+    filled. Rebuilds every committed arm at its recorded ref and requires
+    the same bytes, and requires every root to open with the brief.
     """
     clean = "A pricing and invoicing web application with discount rules."
-    if scan(clean, "clean", PROMPT_TOKENS) is not None:
+    if scan(clean, "clean", NON_INVENTABLE) is not None:
         print("FAIL: the scan fired on text carrying no specification token")
         return 1
-    planted = clean + " Rounding is half-even to two places."
-    found = scan(planted, "planted", PROMPT_TOKENS)
-    if found is None or "half-even" not in found["hits"]:
+    planted = clean + " The seed product WID-1 costs 228.35."
+    found = scan(planted, "planted", NON_INVENTABLE)
+    if found is None or "WID-1" not in found["hits"]:
         print("FAIL: the scan missed a planted specification token")
         return 1
     print("the leak scan reports a planted token and passes clean text")
@@ -617,7 +484,8 @@ def self_test():
     # The brief and the emitter's facts name the stack the spec fixes and no
     # tooling: a tool the project chose would reach only the arms that copy
     # it, and the arms would then differ in what they were told.
-    told = [read_brief()] + list(FACTS.values())
+    brief = read_brief()
+    told = [brief] + list(FACTS.values())
     named = named_tooling(told)
     if named or "Python 3.12" not in told[0]:
         print("FAIL: the brief or the facts name tooling, or drop the "
@@ -625,8 +493,8 @@ def self_test():
         return 1
     print("the brief and the facts name the stack and no tooling")
 
-    # A model arm may still fill a template's command placeholder with a
-    # tool of its own choosing; such a file is refused.
+    # A chain that took in a tool's name would hand it to the arms that
+    # copy the chain's text; such a file is refused.
     if (named_tooling(["Run `mypy --strict .` and `uv run pytest`."])
             != ["mypy", "pytest", "uv"]
             or named_tooling(["Use Ruff for linting and Pyright for types."])
@@ -634,13 +502,11 @@ def self_test():
             or named_tooling(["Run black --check . and isort --check ."])
             != ["black", "isort"]
             or named_tooling(["Type-check at the strictest setting; "
-                              "lint and format clean."])
-            or "name no tool and no command" not in INSTRUCTION):
-        print("FAIL: a generated file naming a tool is not caught, a clean "
-              "one is, or the prompt does not forbid naming tools")
+                              "lint and format clean."])):
+        print("FAIL: a built file naming a tool is not caught, or a clean "
+              "one is")
         return 1
-    print("a generated file naming a tool is refused, and the prompt forbids "
-          "one")
+    print("a built file naming a tool is refused")
 
     files = ["templates/core/quality.md", "templates/backend/api.md"]
     planted_brief = "`tariff` - a planted brief - Python 3.12 / Flask 3\n"
@@ -680,15 +546,18 @@ def self_test():
         reading = map_text(rows, "read", planted_brief)
         loading = map_text(rows, "skill", planted_brief)
 
-        # Every root the generator builds from fixed text states the same
-        # project facts as the model arms are given: the brief, verbatim,
-        # under the title and before any rule.
+        # Every root the generator builds states the same project facts:
+        # the brief, verbatim, under the title and before any rule. The
+        # emitter's own head is filled the same way.
         opening = "# tariff\n\n%s\n" % planted_brief.strip()
+        emitted = fill_facts("# {{project-name}}\n\n%s\n\n- Owner: {{owner}}\n"
+                             % BRIEF_SLOT, planted_brief)
         if not all(root.startswith(opening)
-                   for root in (text, reading, loading)):
-            print("FAIL: a fixed-text root does not open with the brief")
+                   for root in (text, reading, loading, emitted)):
+            print("FAIL: a built root does not open with the brief")
             return 1
-        print("every fixed-text root opens with the brief, verbatim")
+        print("every built root opens with the brief, verbatim, the "
+              "emitted ones too")
         first = [line.split(" | ")[0] for line in reading.splitlines()
                  if line.startswith("| ") and not line.startswith("| ---")]
         second = [line.split(" | ")[0] for line in loading.splitlines()
@@ -730,57 +599,58 @@ def self_test():
     finally:
         shutil.rmtree(tree, ignore_errors=True)
 
-    known = " ".join(FACTS)
-    if SLOT.search(fill_facts(known)):
+    known = " ".join([BRIEF_SLOT] + list(FACTS))
+    if SLOT.search(fill_facts(known, planted_brief)):
         print("FAIL: a known fact slot was left unfilled")
         return 1
     try:
-        fill_facts(known + " {{unknown}}")
+        fill_facts(known + " {{unknown}}", planted_brief)
         print("FAIL: a slot the brief does not fill was kept")
         return 1
     except TrialError:
         pass
     print("every known fact slot is filled, and an unknown one is refused")
 
-    budget = GENERATED["short"]["budget"]
-    lines, width = budget
-    at_bounds = "\n".join(["x" * width] * lines) + "\n"
-    if over_budget(at_bounds, budget):
-        print("FAIL: a file at both bounds was refused")
-        return 1
-    long = "\n".join(["x"] * (lines + 1)) + "\n"
-    wide = "\n".join(["x" * (width + 1)] + ["x"] * (lines - 1)) + "\n"
-    if not over_budget(long, budget) or not over_budget(wide, budget):
-        print("FAIL: a file over the budget was kept")
-        return 1
-    if over_budget(long, None):
-        print("FAIL: an arm with no budget refused a file")
-        return 1
-    print("the budget keeps a file at %d lines of %d characters and refuses "
-          "one over either" % (lines, width))
-    if "MUST be at most %d lines" % lines not in arm_clause("short") \
-            or "measure every line against %d" % width \
-            not in arm_clause("short") \
-            or "budget" in arm_clause("inline").lower():
-        print("FAIL: the budget clause is not in short's instruction alone")
-        return 1
-    print("the budget is stated in short's instruction and no other")
-
-    # A generated file without its record cannot say which source, model and
-    # ref made it, so the report could not cite how its arm was built.
+    # A file without its record cannot say which source and ref made it, so
+    # the report could not cite how its arm was built.
+    records = {}
     for arm in GENERATED:
-        path = record_path(arm)
-        if not os.path.isfile(output_path(arm)):
+        if committed_arm(arm) is None:
             continue
         try:
-            with io.open(path, encoding="utf-8") as handle:
-                record = json.load(handle)
+            with io.open(record_path(arm), encoding="utf-8") as handle:
+                records[arm] = json.load(handle)
         except (OSError, ValueError):
-            record = {}
-        if record.get("arm") != arm or record.get("outcome") != "generated":
+            records[arm] = {}
+        if records[arm].get("arm") != arm \
+                or records[arm].get("outcome") != "generated":
             print("FAIL: %s has no generation record beside it" % arm)
             return 1
-    print("every generated arm's file has its generation record beside it")
+    print("every built arm's file has its generation record beside it")
+
+    # The committed files are what the script builds now at their recorded
+    # ref, byte for byte: a hand edit, or a build that varies, fails here.
+    # The first arm is built twice, so a build that varies from one run to
+    # the next fails even where nothing is committed yet.
+    for index, arm in enumerate(sorted(records)):
+        ref = records[arm].get("ref")
+        built = build_arm(arm, ref, brief)
+        if index == 0 and build_arm(arm, ref, brief) != built:
+            print("FAIL: %s built twice at %s gave different files"
+                  % (arm, ref))
+            return 1
+        document, skills = committed_arm(arm)
+        if (document, skills) != built[:2]:
+            print("FAIL: %s's committed files are not what the script builds "
+                  "at %s" % (arm, ref))
+            return 1
+        if not document.startswith("# tariff\n\n%s\n" % brief.strip()):
+            print("FAIL: %s's committed root does not open with the brief"
+                  % arm)
+            return 1
+    print("every committed arm is what the script builds at its recorded "
+          "ref, byte for byte, the same twice")
+    print("every committed arm's root opens with the brief, verbatim")
     return 0
 
 
@@ -804,78 +674,37 @@ def main(argv):
     arm, entry = options.arm, GENERATED[options.arm]
     output = output_path(arm)
     if os.path.exists(output) and not options.replace:
-        print("refused: %s already exists. An arm is generated once; "
-              "regenerating changes the arm. Pass --replace if that is what "
-              "you mean." % output)
+        print("refused: %s already exists. An arm is built once per ref; "
+              "a new ref is a new arm. Pass --replace if that is what you "
+              "mean." % output)
         return 1
 
     os.makedirs(options.root, exist_ok=True)
     started_at = datetime.datetime.now()
-    record = {"arm": arm, "kind": entry["kind"],
-              "output_model": entry.get("model"), "ref": options.ref,
+    record = {"arm": arm, "kind": entry["kind"], "ref": options.ref,
               "source": source_record(options.ref), "roots": ROUND5_ROOTS,
               "started_at": started_at.isoformat(timespec="seconds")}
-    tree = worktree_at(options.ref)
-    try:
-        files = resolve_union(tree, ROUND5_ROOTS)
-        record["commit"] = subprocess.run(
-            ["git", "-C", tree, "rev-parse", "HEAD"], capture_output=True,
-            text=True, encoding="utf-8").stdout.strip()
-        record["resolved_files"] = files
-        skills = {}
-        if entry["kind"] == "fixed":
-            document = reference_text(files, read_brief())
-        elif entry["kind"] == "emit":
-            document, skills = emit_arm(tree, ROUND5_ROOTS)
-            record["declined"] = ROUND5_DECLINED
-        elif entry["kind"] == "map":
-            rows = moments(tree, files)
-            document = map_text(rows, entry["load"], read_brief())
-            if entry["load"] == "skill":
-                skills = template_skills(tree, rows)
-            record["load"] = entry["load"]
-            record["moments"] = [{"skill": kind, "moment": description,
-                                  "file": name}
-                                 for kind, description, name in rows]
-        else:
-            prompt = build_prompt(tree, arm, files)
-    finally:
-        remove_worktree(tree)
+    document, skills, details = build_arm(arm, options.ref, read_brief())
+    record.update(details)
     print("chain at %s (%s): %d unique files"
-          % (options.ref, record["commit"][:8], len(files)))
-
-    if entry["kind"] == "model":
-        document = generate(options, record, prompt, started_at)
-        if document is None:
-            write_record(options.root, record, started_at)
-            return 0 if record.get("outcome") == "dry-run" else 1
-
-    # A file over its budget is refused whole rather than trimmed, since
-    # trimming would put a person's judgement into the arm.
-    record["budget"] = entry.get("budget")
-    over = over_budget(document, entry.get("budget"))
-    if over:
-        record["outcome"] = "refused: over budget"
-        record["over_budget"] = over
-        print("refused: the generated file is over its budget: %s"
-              % "; ".join(over))
-        return write_record(options.root, record, started_at) or 1
+          % (options.ref, record["commit"][:8],
+             len(record["resolved_files"])))
 
     texts = [document] + list(skills.values())
-    leak = scan("\n".join(texts), "generated files", NON_INVENTABLE)
+    leak = scan("\n".join(texts), "built files", NON_INVENTABLE)
     record["output_leak"] = leak
     if leak is not None:
         record["outcome"] = "refused: specification leaked"
-        print("refused: the generated files carry data only the "
-              "specification supplies: %r" % leak["hits"])
+        print("refused: the built files carry data only the specification "
+              "supplies: %r" % leak["hits"])
         return write_record(options.root, record, started_at) or 1
 
     tools = named_tooling(texts)
     record["named_tooling"] = tools
     if tools:
         record["outcome"] = "refused: names tooling"
-        print("refused: the generated files name tools the brief does not: "
-              "%s" % ", ".join(tools))
+        print("refused: the built files name tools the brief does not: %s"
+              % ", ".join(tools))
         return write_record(options.root, record, started_at) or 1
 
     # A dry run of any arm stops here: it writes nothing under `arms/`,
@@ -889,14 +718,14 @@ def main(argv):
 
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with io.open(output, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(document.rstrip() + "\n")
+        handle.write(document)
+    shutil.rmtree(skills_path(arm), ignore_errors=True)
+    for kind, text in skills.items():
+        path = os.path.join(skills_path(arm), kind, "SKILL.md")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
     if skills:
-        shutil.rmtree(skills_path(arm), ignore_errors=True)
-        for kind, text in skills.items():
-            path = os.path.join(skills_path(arm), kind, "SKILL.md")
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
-                handle.write(text)
         record["skills"] = {kind: len(text.split())
                             for kind, text in skills.items()}
     record["outcome"] = "generated"
@@ -909,63 +738,6 @@ def main(argv):
     keep_record(record, record_path(arm))
     print("Record kept beside it: %s" % record_path(arm))
     return write_record(options.root, record, started_at)
-
-
-def generate(options, record, prompt, started_at):
-    """Run the model generation; the document, or None with the record
-    saying why not."""
-    record["prompt_chars"] = len(prompt)
-    leak = scan(prompt, "prompt", PROMPT_TOKENS)
-    record["prompt_leak"] = leak
-    if leak is not None:
-        record["outcome"] = "refused: prompt leak"
-        print("refused: the prompt carries specification-only tokens, so the "
-              "wiring is wrong: %r" % leak["hits"])
-        return None
-    prompt_path = os.path.join(options.root, "arm-%s-prompt.txt" % options.arm)
-    with io.open(prompt_path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(prompt)
-    record["prompt_file"] = prompt_path
-    if options.dry_run:
-        record["outcome"] = "dry-run"
-        print("dry run: prompt written to %s, no model called" % prompt_path)
-        return None
-
-    home = prepare_home(options.root)
-    try:
-        record["auth_probe"] = assert_authenticated(
-            home, agent_environment, agent_executable())
-    except TrialError as error:
-        record["outcome"] = "refused: not authenticated"
-        print("refused: %s" % error)
-        return None
-    argv_ = agent_command(home, options.model, options.effort, options.budget)
-    record.update({"command": argv_, "model": options.model,
-                   "effort": options.effort})
-    started = time.monotonic()
-    try:
-        proc = subprocess.run(argv_, input=prompt, cwd=options.root,
-                              env=agent_environment(home),
-                              capture_output=True, text=True,
-                              encoding="utf-8", timeout=options.timeout)
-    except subprocess.TimeoutExpired:
-        record["outcome"] = "timeout"
-        print("the generator did not finish within %ds" % options.timeout)
-        return None
-    record["elapsed_s"] = round(time.monotonic() - started, 1)
-    record["exit_status"] = proc.returncode
-    try:
-        payload = json.loads(proc.stdout)
-    except ValueError:
-        payload = None
-    record["result"] = payload if isinstance(payload, dict) else None
-    document = extract_document(payload, proc.stdout)
-    if proc.returncode != 0 or not document:
-        record["outcome"] = "failed"
-        record["stderr"] = proc.stderr[-4000:]
-        print("the generator failed (status %s)" % proc.returncode)
-        return None
-    return document
 
 
 def keep_record(record, path):

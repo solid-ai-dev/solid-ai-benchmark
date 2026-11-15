@@ -1,7 +1,6 @@
 {
   "arm": "skills",
   "kind": "emit",
-  "output_model": null,
   "ref": "9abed019",
   "source": {
     "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
@@ -16,7 +15,7 @@
     "base-security",
     "base-data-governance"
   ],
-  "started_at": "2026-11-13T14:45:06",
+  "started_at": "2026-11-15T11:26:57",
   "commit": "9abed01916b941d9ed2f8daa8ff8c3b28f0718fd",
   "resolved_files": [
     "templates/core/quality.md",
@@ -39,8 +38,9 @@
     "templates/security/security.md#CORS",
     "templates/backend/auth.md#API keys (service-to-service)"
   ],
-  "budget": null,
+  "inline_skills": false,
   "output_leak": null,
+  "named_tooling": [],
   "skills": {
     "add-check": 256,
     "add-dependency": 38,
@@ -56,7 +56,7 @@
     "write-tests": 186
   },
   "outcome": "generated",
-  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark-regen\\tests\\efficacy\\arms\\skills\\CLAUDE.md",
-  "output_lines": 1370,
-  "output_words": 9448
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark\\tests\\efficacy\\arms\\skills\\CLAUDE.md",
+  "output_lines": 1386,
+  "output_words": 9596
 }

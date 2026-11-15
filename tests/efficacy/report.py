@@ -7526,9 +7526,12 @@ def executive_checks(seed):
     # `reference` reused, the judge's design score constant per arm so each
     # contrast's verdict is known. Every declared contrast is printed, one
     # column per file arm, and the reused arms and the contrasts crossing
-    # rounds are named.
-    design = {"none": 3, "inline": 3, "hybrid": 3, "reference": 4,
-              "skills": 4}
+    # rounds are named. Of the two fresh files, the longer reads better, so
+    # the reading holds whichever of them the arm files make the longer.
+    longer, shorter = sorted(("inline", "skills"), key=context_lines,
+                             reverse=True)
+    design = {"none": 3, shorter: 3, "hybrid": 3, "reference": 4,
+              longer: 4}
     trials = {trial_name(arm, index): {
         "scores": ({"reused_from": {"name": "planted"}}
                    if arm in ("hybrid", "reference") else {}),
@@ -7563,8 +7566,8 @@ def executive_checks(seed):
          "Together: the long file added quality, the short one did not"
          in finding
          and all(row_start(arm, verdict) in finding for arm, verdict in
-                 (("hybrid", "Not measured"), ("inline", "No"),
-                  ("reference", "Not measured"), ("skills", "Yes"))),
+                 (("hybrid", "Not measured"), (shorter, "No"),
+                  ("reference", "Not measured"), (longer, "Yes"))),
          finding),
         ("a trial's repeats are meaned, and one judging means itself",
          judge_score({"judgings": [
