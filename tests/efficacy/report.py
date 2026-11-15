@@ -42,8 +42,9 @@ from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
                      ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
                      ROUND5E_ARMS, SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING,
                      TrialError, canonical, git, reach, read_transcripts,
-                     recorded_round, registration_digest, scoring_area,
-                     split_name, transcript_files, trial_name)
+                     read_change_prompt, recorded_round,
+                     registration_digest, scoring_area, split_name,
+                     text_digest, transcript_files, trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1533,6 +1534,34 @@ def prompt_problem(root):
         if record.get("prompt") != PROMPT:
             return ("trial %s was given another prompt than the one every "
                     "arm is given" % trial_of(record))
+    return None
+
+
+def registered_inputs_problem(root, named):
+    """Why one of a named round's trials did not build or change from the
+    spec and the prompt its round's entry pins for its task, or None."""
+    entry = REGISTRATIONS[named]
+    for record in run_records(root):
+
+        # A refused or unfinished trial put nothing in front of the scorer,
+        # so it has nothing to show; one with something to score has to.
+        if record.get("outcome") not in SCORABLE:
+            continue
+        task = record.get("task", "build")
+        registered = entry["tasks"].get(task)
+        if registered is None:
+            return ("trial %s ran the %s task, which round %s does not "
+                    "register" % (trial_of(record), task, named))
+        spec, prompt = record.get("spec") or {}, record.get("prompt")
+        if spec.get("sha256") != entry["spec"]["sha256"]:
+            return ("trial %s's %s task built from %s at sha256 %s, and round "
+                    "%s registers sha256 %s"
+                    % (trial_of(record), task, spec.get("file"),
+                       spec.get("sha256"), named, entry["spec"]["sha256"]))
+        if (prompt is None
+                or text_digest(prompt) != registered["prompt_sha256"]):
+            return ("trial %s was given another %s prompt than the one round "
+                    "%s registers" % (trial_of(record), task, named))
     return None
 
 
@@ -5387,6 +5416,35 @@ def round_identity_checks():
         return code == 2 and "refused" in printed and why in printed
 
     good = {"round": "C1", "registration": digest, "trials": [trial]}
+
+    # One build and one change task, each on what C1 pins for its task;
+    # then each input swapped, or a task given the other's prompt.
+    spec = {"file": "SPEC.md", "sha256": REGISTRATIONS["C1"]["spec"]["sha256"]}
+    pinned = dict(trial, spec=spec, prompt=PROMPT)
+    change = dict(pinned, task="change", prompt=read_change_prompt())
+
+    def inputs_refused():
+        def problem(*records):
+            root = os.path.join(scratch, "inputs-%d" % len(os.listdir(
+                scratch)))
+            os.makedirs(root)
+            with io.open(os.path.join(root, "run-1.json"), "w",
+                         encoding="utf-8") as handle:
+                json.dump(dict(good, trials=list(records)), handle)
+            return registered_inputs_problem(root, "C1")
+        swapped = [
+            problem(dict(pinned, spec=dict(pinned["spec"], sha256="0" * 64)),
+                    change),
+            problem(pinned, dict(change, prompt=PROMPT)),
+            problem(dict(pinned, prompt=read_change_prompt()), change),
+            problem(dict(pinned, spec=None), change),
+            problem(pinned, dict(change, prompt=None))]
+        return (problem(pinned, change) is None
+                and problem(dict(pinned, outcome="refused", spec=None))
+                is None
+                and all(swapped)
+                and refused("inputs", [dict(good, trials=[dict(
+                    pinned, prompt="Build it.")])], "another build prompt"))
     checks += [
         ("a root mixing a named round's records with others is refused",
          refused("mixed", [good, {"trials": [{"arm": "none", "trial": 1}]}])
@@ -5397,9 +5455,12 @@ def round_identity_checks():
         ("a run whose trials name a round under a header naming none is "
          "refused, not read as the pilot's",
          refused("unheaded", [{"trials": [trial]}], "yet its trial")),
+        ("a named round's trial on a spec or prompt its entry does not pin "
+         "is refused, each task held to its own",
+         inputs_refused()),
         ("a named round is refused until its registration document is on "
          "main before its first trial",
-         refused("unregistered", [good],
+         refused("unregistered", [dict(good, trials=[pinned])],
                  "%s does not exist" % REGISTRATIONS["C1"]["document"])),
     ]
     shutil.rmtree(scratch, ignore_errors=True)
@@ -5427,7 +5488,9 @@ def change_only_checks():
                                             "missing": None}}, handle)
             records.append({"round": "C1", "task": "change", "arm": arm,
                             "block": block, "trial": block,
-                            "outcome": "completed"})
+                            "outcome": "completed",
+                            "prompt": read_change_prompt(),
+                            "spec": dict(REGISTRATIONS["C1"]["spec"])})
     with io.open(os.path.join(area, "security-scores", "none-1.json"), "w",
                  encoding="utf-8") as handle:
         json.dump({"name": "none-1"}, handle)
@@ -8724,6 +8787,14 @@ def main(argv):
     # A hypothesis registered or changed after the round's first trial could
     # have been written to fit what that trial showed, so the round is refused
     # rather than read against it.
+    # A named round's trials are held to the spec and prompts its entry pins,
+    # each task to its own, as a pilot round's are to round 5's.
+    if named is not None:
+        problem = registered_inputs_problem(options.root, named)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
+
     # A named round's registration is its entry's document, held to the
     # same rule.
     if named is not None:
