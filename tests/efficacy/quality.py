@@ -71,7 +71,7 @@ PROBE_TIMEOUT = 900
 # behind that sign-in; a request it turns away, with its redirect, a 401 or
 # a 403, is never measured, and the probe is lost.
 QUALITY_SCRIPT = r'''
-import builtins, html, io, json, logging, math, os, platform, re, sqlite3
+import builtins, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
@@ -509,37 +509,35 @@ def exported(path, lines):
     return total, None
 
 
-# An amount as a page may write it: grouped by thousands with a comma, a
-# point, a space, a no-break or narrow no-break space, or an apostrophe, and
-# two decimals after a point or a comma. The page is read with its character
-# references resolved, so `&nbsp;` and `&#8239;` group as the characters do.
-AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:[,.\u00a0\u202f' ]\d{3})+"
-                    r"|\d+)[.,](\d{2})(?!\d)")
-
-
-def shows_total(answer, total, tolerance=Decimal("0")):
-    """Whether a page shows an amount within `tolerance` of `total`, however
-    it is grouped and whatever currency sign stands beside it."""
-    return any(abs(Decimal(re.sub(r"\D", "", whole) + "." + cents) - total)
-               <= tolerance for whole, cents in AMOUNT.findall(
-                   html.unescape(answer.get_data(as_text=True))))
-
-
 # Every line is the seed's Seed pack, SEE-5, so the invoice's total scales
 # with its lines: it is zero-rated, so no tax rounds per line; its one rule
 # is a bulk rule read per line; a quantity of 6, 12, 18, 24 or 30 makes each
 # line's net a whole multiple of 15.00; no coupon is sent; and the one rule
 # over the whole invoice is a percentage. 500 lines, five times the first
-# 100, then cost five times what those 100 cost, to the cent; a cent per 100
-# lines is allowed for rounding all the same.
+# 100, then cost five times what those 100 cost, to the cent; a cent is
+# allowed for rounding all the same.
 LINES = [("SEE-5", 6 * (1 + index % 5)) for index in range(500)]
 SAMPLE = 100
-CENT_PER_SAMPLE = Decimal("0.01")
+CENT = Decimal("0.01")
+
+
+def saved_export(lines, steps, key):
+    """Save an invoice of `lines` and read its export: the total, or None
+    and why it does not hold them."""
+    saved = held(form_post(client, "/invoices/new", "/invoices",
+                           builder_body(lines)), "the save")
+    steps["save" + key] = saved.status_code
+    path = saved_page(saved)
+    if path is None:
+        return None, None, ("the save of %d lines did not redirect to its "
+                            "page" % len(lines))
+    total, reason = exported(path, lines)
+    return path, total, reason
 
 
 def capacity_500_lines():
-    """An invoice of 500 lines previewed, saved and rendered, every line
-    kept in all three, and priced five times its first 100."""
+    """An invoice of 500 lines previewed, saved and rendered, its export
+    holding every line, and priced five times its first 100 saved alone."""
     lines = LINES
     steps = {}
     try:
@@ -548,63 +546,71 @@ def capacity_500_lines():
                                  headers={"HX-Request": "true"}),
                        "the preview")
         steps["preview"] = preview.status_code
-        sample = held(form_post(client, "/invoices/new", "/invoices/preview",
-                                builder_body(lines[:SAMPLE]),
-                                headers={"HX-Request": "true"}),
-                      "the preview of %d lines" % SAMPLE)
-        steps["preview_%d" % SAMPLE] = sample.status_code
-        saved = held(form_post(client, "/invoices/new", "/invoices",
-                               builder_body(lines)), "the save")
-        steps["save"] = saved.status_code
-        path = saved_page(saved)
-        if path is None:
-            return passed(False, steps=steps,
-                          reason="the save did not redirect to its page")
-        rendered = page(client, path)
-        steps["render"] = rendered.status_code
-        total, reason = exported(path, lines)
+        path, total, reason = saved_export(lines, steps, "")
+        if path is not None:
+            rendered = page(client, path)
+            steps["render"] = rendered.status_code
+        if not reason:
+            _, sample, sample_reason = saved_export(lines[:SAMPLE], steps,
+                                                    "_%d" % SAMPLE)
     except Raised as error:
         return passed(False, steps=steps, raised=str(error))
-    if not (ok(preview) and ok(rendered) and ok(sample)):
+
+    # The preview and the page are read for answering, never for the amounts
+    # they show: what a page writes beside a total, a subtotal among them,
+    # cannot be told apart from it. The amounts are the exports', in the
+    # spec's fixed form.
+    if path is not None and not (ok(preview) and ok(rendered)):
         return passed(False, steps=steps)
 
-    # A build that quietly keeps fewer lines answers 2xx on all three. The
-    # export, in the spec's fixed form, must list every line saved, each a
-    # well-formed record; a malformed one is the build's output, so it fails.
+    # A build that quietly keeps fewer lines answers 2xx everywhere. The
+    # export must list every line saved, in order, each a well-formed record,
+    # with a finite total; a malformed one is the build's output, so it fails.
     if reason:
         return passed(False, steps=steps, reason=reason)
 
-    # The preview and the page are read by their total alone, which only all
-    # 500 lines give, since every line adds to it. A page that paginates its
-    # rows but shows the whole invoice's total keeps every line, so it is no
-    # capacity failure; counting rows in HTML is left alone.
-    kept = {"preview": shows_total(preview, total),
-            "render": shows_total(rendered, total)}
-
-    # The total the export states is the build's own, so a calculation that
-    # reads only the first 100 lines would agree with itself everywhere. The
-    # first 100 lines priced alone must cost a fifth of it.
     # Every line is a Seed pack at a quantity of six or more, which costs
     # more than nothing under the seed's rules, so the invoice's total is
     # positive; a total of nothing scales with any count of lines.
     if total <= 0:
-        return passed(False, steps=steps, kept=kept, total=str(total),
+        return passed(False, steps=steps, total=str(total),
                       reason="500 lines that each cost more than nothing "
                              "were priced at %s" % total)
-    share = total * SAMPLE / len(lines)
-    kept["scales"] = shows_total(sample, share, CENT_PER_SAMPLE)
-    return passed(all(kept.values()), steps=steps, kept=kept,
-                  total=str(total), expected_sample=str(share))
+
+    # The total is the build's own, so a calculation that reads only the
+    # first 100 lines would agree with itself everywhere. Those 100 lines,
+    # saved alone, must cost a fifth of it.
+    if sample_reason:
+        return passed(False, steps=steps,
+                      reason="the invoice of %d lines: %s"
+                             % (SAMPLE, sample_reason))
+    scales = abs(total - sample * len(lines) / SAMPLE) <= CENT
+    return passed(scales, steps=steps, total=str(total),
+                  sample_total=str(sample))
 
 
 LOCKED = re.compile(r"database (table )?is locked", re.IGNORECASE)
 
+# How long each writer is waited for. The self-test shortens it; a run
+# against a build never sets it.
+WRITE_SECONDS = float(os.environ.get("QUALITY_PROBE_WRITE_SECONDS") or 120)
+
 
 def concurrent_writes():
     """Two clients, each saving 20 products at once."""
-    writers = [app.test_client(), app.test_client()]
-    if not all(sign_in(writer) for writer in writers):
-        return lost("concurrent_writes", "a second client could not sign in")
+
+    # Run after the fuzzing, the writes go to an instance of their own on a
+    # fresh database, so no product a malformed request stored can reach
+    # their reading.
+    try:
+        own = package.create_app(os.path.join(folder(), "concurrent.sqlite"))
+    except Exception as error:
+        return passed(False, reason="a fresh instance would not boot: %s"
+                      % repr(error)[:300])
+    writers = [own.test_client(), own.test_client()]
+    reader = own.test_client()
+    if not all(sign_in(who) for who in writers + [reader]):
+        return lost("concurrent_writes", "a writing client could not sign in")
     start = threading.Barrier(len(writers))
     outcomes = [[] for _ in writers]
     logged = len(records)
@@ -636,14 +642,16 @@ def concurrent_writes():
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=120)
+        thread.join(timeout=WRITE_SECONDS)
     if any(thread.is_alive() for thread in threads):
-        return passed(False, reason="the writes did not finish in 120 s")
+        return passed(False, hung=True, reason=(
+            "a write did not finish in %g s: the application hung it"
+            % WRITE_SECONDS))
     entries = [entry for outcome in outcomes for entry in outcome]
     if any(entry.get("gated") for entry in entries):
         return lost("concurrent_writes", "a write was turned away by the "
                     "sign-in")
-    listing = page(client, "/products").get_data(as_text=True)
+    listing = page(reader, "/products").get_data(as_text=True)
     unsaved = [entry["sku"] for entry in entries
                if entry["sku"] not in listing]
     failed = [entry for entry in entries if entry.get("raised")
@@ -880,13 +888,15 @@ if not report["signed_in"] or MODE == "portability":
         report["index_error"] = str(error)
     finish()
 
-# Fuzzing comes last: what a malformed request stores cannot reach another
-# probe's reading.
+# Fuzzing comes after the readings a malformed request's leftovers could
+# reach, and the concurrent writes come last of all: a writer the build hangs
+# outlives its wait, and nothing may run beside it. Where one does, the run
+# stops there, the readings before it kept.
 PROBES = (("latency_p95_ms", latency_p95_ms), ("n_plus_one", n_plus_one),
           ("capacity_500_lines", capacity_500_lines),
-          ("concurrent_writes", concurrent_writes),
           ("coexistence", coexistence),
-          ("fuzz_robustness", fuzz_robustness))
+          ("fuzz_robustness", fuzz_robustness),
+          ("concurrent_writes", concurrent_writes))
 for name, probe in PROBES:
     report["running"] = name
     save()
@@ -901,6 +911,8 @@ for name, probe in PROBES:
         key = "value" if name == "latency_p95_ms" else "passed"
         report["probes"][name] = {key: None, "missing": "the reader failed: "
                                   "%s" % repr(error)[:300]}
+    if report["probes"][name].get("hung"):
+        break
 finish()
 '''
 
@@ -1120,14 +1132,14 @@ def read_trial(area, name, scores_file, other):
 # them, `chatty` reads each invoice line's product on its own, `shared` keeps
 # its products in one store for every instance, `stray` writes a fixed file
 # outside its folder, `truncating` keeps the first 100 lines of an invoice,
-# answering as if it kept them all, `miscounting` shows a total of 100 of
-# them, `nulling` exports one line as null, and `capped` prices the first
-# 100 lines alone wherever it prices them, while it keeps and exports all;
-# `unpriced` exports its total as NaN, and `free` prices every line at
-# nothing. Every mode opens its database by a `file:` URI with a query.
-# `paginating` shows 100 rows and the whole total, which is no fault. Pages
-# write amounts grouped by thousands beside the euro's sign, the preview's
-# with `&nbsp;`. `bouncing` answers a price it cannot parse with the
+# answering as if it kept them all, `nulling` exports one line as null, and
+# `capped` prices the first 100 lines alone wherever it prices them, while
+# it keeps and exports all; `unpriced` exports its total as NaN, `free`
+# prices every line at nothing, `poisoned` stores a price it cannot then
+# list, so its products page answers 500 once fuzzing has stored one, which
+# is no fault of any probe's, and `hanging` holds one concurrent write,
+# and its lock, for a minute. Every mode opens its database by a `file:` URI
+# with a query. `bouncing` answers a price it cannot parse with the
 # sign-in's redirect and `forbidding` with a 403;
 # `gated` never keeps its sign-in, and `refusing` neither keeps it nor
 # redirects, answering 401; `broken` will not boot, and `unportable` boots
@@ -1193,26 +1205,13 @@ def summed(rows):
     return str(total.quantize(decimal.Decimal("0.01")))
 
 
-def written(amount, style):
-    """An amount as a page writes it: `EUR12,345.67` grouped by commas in
-    English, `12&nbsp;345,67&nbsp;EUR` by no-break spaces otherwise, with
-    the euro's sign."""
-    whole, cents = amount.split(".")
-    grouped = format(int(whole), ",")
-    if style == "en":
-        return "\u20ac" + grouped + "." + cents
-    return grouped.replace(",", "&nbsp;") + "," + cents + "&nbsp;\u20ac"
-
-
-def table(rows, style):
+def table(rows):
     """The export's total, and the page: each line's sku and quantity, and
     the total, from (sku, unit price, quantity) rows."""
     total = summed(rows[:100] if MODE == "capped" else rows)
-    shown = rows[:100] if MODE in ("paginating", "miscounting") else rows
-    page_total = summed(shown) if MODE == "miscounting" else total
     return total, "<table>%s</table><p>Total %s</p>" % ("".join(
         "<tr><td>%s</td><td>%d</td></tr>" % (sku, quantity)
-        for sku, _, quantity in shown), written(page_total, style))
+        for sku, _, quantity in rows), total)
 
 
 def number(text):
@@ -1251,6 +1250,13 @@ class App(object):
     def test_client(self):
         return Client(self)
 
+    def prices(self):
+        """Every product's price to the cent, which no price past a
+        Decimal's precision survives."""
+        return [decimal.Decimal(row[0]).quantize(decimal.Decimal("0.01"))
+                for row in self.connect().execute(
+                    "SELECT unit_price FROM products")]
+
     def skus(self):
         if self.products is not None:
             return list(SKUS) + list(self.products)
@@ -1274,13 +1280,15 @@ class App(object):
             finally:
                 IN_FLIGHT.remove(sku)
             return
-        connection = self.connect(0 if MODE == "locking" else 10.0)
+        hangs = MODE == "hanging" and sku == "QCW-1-00"
+        wait = {"locking": 0, "hanging": 0.1}.get(MODE, 10.0)
+        connection = self.connect(10.0 if hangs else wait)
         connection.isolation_level = None
         try:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("INSERT INTO products VALUES (?, ?, ?)",
                                (sku, name, price))
-            time.sleep(0.005)
+            time.sleep(60 if hangs else 0.005)
             connection.execute("COMMIT")
         finally:
             if connection.in_transaction:
@@ -1332,6 +1340,8 @@ class Client(object):
         parts = path.strip("/").split("/")
         if method == "GET" and path in pages:
             listing = " ".join(self.app.skus()) if path == "/products" else ""
+            if path == "/products" and MODE == "poisoned":
+                self.app.prices()
             return Response(200, form_page(path, "<p>%s</p>" % listing))
         if method == "POST" and (path in posts or path.endswith("/delete")
                                  or path.endswith("/erase")):
@@ -1366,7 +1376,8 @@ class Client(object):
                 if MODE == "forbidding":
                     return Response(403, "forbidden")
                 return Response(200, "unit_price is not a number" + TOKEN)
-        if not price.is_finite() or price < 0 or price > 10 ** 12:
+        if not price.is_finite() or price < 0 or (
+                price > 10 ** 12 and MODE != "poisoned"):
             return Response(200, "unit_price is out of range" + TOKEN)
         if sku in self.app.skus():
             return Response(200, "sku exists" + TOKEN)
@@ -1391,7 +1402,7 @@ class Client(object):
             lines = lines[:100]
         if path == "/invoices/preview":
             return Response(200, table([(sku, SKUS.get(sku, "1.00"), quantity)
-                                        for sku, quantity in lines], "eu")[1])
+                                        for sku, quantity in lines])[1])
         if not lines:
             return Response(400, "no lines")
         with self.app.connect() as connection:
@@ -1429,7 +1440,7 @@ class Client(object):
                 (invoice,)).fetchall()
         if MODE == "crowded" and len(rows) > 100:
             return Response(413, "too many lines to show")
-        total, shown = table(rows, "en")
+        total, shown = table(rows)
         if parts[-1] == "export.json":
             records = [{"sku": sku, "quantity": quantity}
                        for sku, _, quantity in rows]
@@ -1453,7 +1464,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "locking": "concurrent_writes", "lossy": "concurrent_writes",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
           "truncating": "capacity_500_lines",
-          "miscounting": "capacity_500_lines",
+          "hanging": "concurrent_writes",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
           "unpriced": "capacity_500_lines", "free": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
@@ -1471,7 +1482,8 @@ def fake_readings(scratch, modes, mode_arg="all"):
         with io.open(os.path.join(package, "__init__.py"), "w",
                      encoding="utf-8") as handle:
             handle.write(FAKE_APP.replace("__MODE__", mode))
-        env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"))
+        env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"),
+                   QUALITY_PROBE_WRITE_SECONDS="5")
         readings[mode] = probe_runtime(sys.executable, where, mode_arg,
                                        env=env, timeout=300)
     return readings
@@ -1486,7 +1498,7 @@ def failing(probes):
 def runtime_self_checks(scratch):
     """Each planted fault fails its own probe and no other; an app that
     keeps the probes from running loses them."""
-    modes = (["sound", "slow", "paginating", "gated", "refusing", "broken"]
+    modes = (["sound", "slow", "poisoned", "gated", "refusing", "broken"]
              + sorted(FAULTS))
     readings = fake_readings(scratch, modes)
     probes = {mode: probe_results(*readings[mode]) for mode in modes}
@@ -1511,15 +1523,6 @@ def runtime_self_checks(scratch):
          sound["n_plus_one"].get("passed") is True
          and sound["capacity_500_lines"].get("passed") is True
          and "return body + main + SIGN_OUT" in FAKE_APP),
-        ("a total grouped by thousands beside a currency sign is read",
-         sound["capacity_500_lines"].get("passed") is True
-         and "€" in FAKE_APP and 'format(int(whole), ",")' in FAKE_APP),
-        ("a total grouped by no-break-space references, with a decimal "
-         "comma, is read",
-         sound["capacity_500_lines"].get("kept", {}).get("preview") is True
-         and "&nbsp;" in FAKE_APP),
-        ("a page showing fewer rows but the whole total passes "
-         "capacity_500_lines", failing(probes["paginating"]) == []),
         ("the latency is two repeats of 30 requests each",
          latency.get("requests") == 30
          and len(latency.get("repeats") or []) == 2
@@ -1549,8 +1552,7 @@ def runtime_self_checks(scratch):
                       "fuzz_robustness",
         "truncating": "an app keeping 100 of 500 lines fails "
                       "capacity_500_lines",
-        "miscounting": "a page showing a total other than the export's "
-                       "fails capacity_500_lines",
+        "hanging": "a writer the app hangs fails concurrent_writes",
         "nulling": "an export with a null line fails capacity_500_lines",
         "unpriced": "an export whose total is NaN fails capacity_500_lines",
         "free": "an app pricing every line at nothing fails "
@@ -1566,6 +1568,16 @@ def runtime_self_checks(scratch):
                        failing(probes[mode]) == [FAULTS[mode]]
                        and probes[mode][FAULTS[mode]].get("passed") is False))
     checks.extend([
+        ("a product a malformed request stored does not reach the "
+         "concurrent writes", failing(probes["poisoned"]) == []),
+        ("a hung writer stops the run, every reading before it kept",
+         "hung it" in probes["hanging"]["concurrent_writes"].get(
+             "reason", "")
+         and {name: probe.get("passed")
+              for name, probe in probes["hanging"].items()
+              if name != "concurrent_writes"}
+         == {name: probe.get("passed") for name, probe in sound.items()
+             if name != "concurrent_writes"}),
         ("the redirect is read as lost, not as an answer",
          "turned away by the sign-in" in probes["bouncing"][
              "fuzz_robustness"].get("lost", "")),
