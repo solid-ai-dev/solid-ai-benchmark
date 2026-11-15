@@ -478,9 +478,12 @@ def n_plus_one():
 def exported(path, lines):
     """The saved invoice's JSON export read against the lines saved: its
     total, or None and why it does not hold them."""
+    answer = page(client, path + "/export.json")
+    if not ok(answer):
+        return None, ("the saved invoice's JSON export answered %d"
+                      % answer.status_code)
     try:
-        export = json.loads(page(client, path + "/export.json").get_data(
-            as_text=True))
+        export = json.loads(answer.get_data(as_text=True))
     except ValueError:
         return None, "the saved invoice's JSON export is not JSON"
     if not isinstance(export, dict) or not isinstance(export.get("lines"),
@@ -1177,7 +1180,8 @@ def read_trial(area, name, scores_file, other):
 # it keeps and exports all; `unpriced` exports its total as NaN, `free`
 # prices every line at nothing, `poisoned` stores a price it cannot then
 # list, so its products page answers 500 once fuzzing has stored one, which
-# is no fault of any probe's, `unformed` answers 500 on its rules page, and
+# is no fault of any probe's, `unformed` answers 500 on its rules page,
+# `unexported` answers its export with a 500 and the JSON all the same, and
 # `hanging` holds one concurrent write,
 # and its lock, for a minute. Every mode opens its database by a `file:` URI
 # with a query. `bouncing` answers a price it cannot parse with the
@@ -1489,9 +1493,10 @@ class Client(object):
                        for sku, _, quantity in rows]
             if MODE == "nulling" and len(records) > 100:
                 records[100] = None
-            return Response(200, json.dumps({
+            export = json.dumps({
                 "lines": records,
-                "total": "NaN" if MODE == "unpriced" else total}))
+                "total": "NaN" if MODE == "unpriced" else total})
+            return Response(500 if MODE == "unexported" else 200, export)
         return Response(200, shown)
 
 
@@ -1508,6 +1513,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
           "truncating": "capacity_500_lines",
           "hanging": "concurrent_writes", "unformed": "fuzz_robustness",
+          "unexported": "capacity_500_lines",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
           "unpriced": "capacity_500_lines", "free": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
@@ -1598,6 +1604,7 @@ def runtime_self_checks(scratch):
         "hanging": "a writer the app hangs fails concurrent_writes",
         "unformed": "an app whose form page answers 500 fails "
                     "fuzz_robustness",
+        "unexported": "an export answered 500 fails capacity_500_lines",
         "nulling": "an export with a null line fails capacity_500_lines",
         "unpriced": "an export whose total is NaN fails capacity_500_lines",
         "free": "an app pricing every line at nothing fails "
