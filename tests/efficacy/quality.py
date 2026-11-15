@@ -742,7 +742,11 @@ def preview(**fields):
 # Each malformed request: a label, the method, the path, the form whose
 # hidden fields it carries (None for none), its body, and whether it is sent
 # signed out. Every one is a request the specification defines an answer to:
-# a re-rendered form, a 400, a 404 or a 405.
+# a re-rendered form, a 400, a 404 or a 405. Only these answers are read,
+# never a later page after one stored an extreme value, such as a price of
+# `1e999999`: the specification bounds no price's size, so it defines no
+# answer for such a page, and reading one would measure that gap, not the
+# build.
 FUZZ = (
     ("POST /products unit_price=abc", "POST", "/products", "/products",
      product(unit_price="abc"), False),
