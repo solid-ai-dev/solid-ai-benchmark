@@ -33,7 +33,7 @@ when:
 | -- | ---- | ---------- |
 | FR-01-01 | Self-test | `report.py` "one landed after the first trial is refused"<br>`report.py` "one merged after the first trial is read at the merge"<br>`report.py` "a registration landed before the first trial passes, across zones" |
 | FR-01-02 | Self-test | `report.py` "one changed and not committed is refused"<br>`report.py` "an amendment on a branch of its own is refused" |
-| FR-01-03 | Self-test | `report.py` "a trial on another spec is refused"<br>`report.py` "a trial on another prompt is refused"<br>`report.py` "every trial on the registered spec passes"<br>`report.py` "every trial on the one prompt passes" |
+| FR-01-03 | Self-test | `report.py` "a trial on another spec is refused"<br>`report.py` "a trial on another prompt is refused"<br>`report.py` "every trial on the registered spec passes"<br>`report.py` "every trial on the one prompt passes"<br>`report.py` "a named round's trial on a spec or prompt its entry does not pin is refused, each task held to its own" |
 | FR-01-04 | Self-test | `report.py` "a scorable trial recording no spec is refused"<br>`report.py` "a scorable trial recording no prompt is refused" |
 | FR-01-05 | Self-test | `harness.py` "a spec edited mid-run refuses the next trial unbuilt"<br>`harness.py` "a spec changed as it is copied refuses the trial and frees its slot"<br>`harness.py` "a round-5 run on other content is refused"<br>`harness.py` "round 6's registered digest is SPEC.md's content, and round 5's is another" |
 | FR-01-06 | Self-test | `report.py` "a trial start with no UTC offset is refused" |

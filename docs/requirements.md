@@ -38,7 +38,7 @@
 | -- | ----------- | ------------ |
 | FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge. | Report |
 | FR-01-02 | The benchmark shall refuse a registration that differs from `main`'s copy or has changes not committed. | Report |
-| FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content. | Report |
+| FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content; a named round's trials each against its entry's spec and the prompt pinned for their task. | Report |
 | FR-01-04 | The benchmark shall refuse a trial with something to score that records no spec or no prompt. | Report |
 | FR-01-05 | The benchmark shall check the spec before every trial, and refuse unbuilt the trials after an edit made mid-run. | Harness |
 | FR-01-06 | The benchmark shall record each trial's start with its UTC offset, and refuse a start with none. | Harness, Report |
