@@ -76,6 +76,7 @@ import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
+from urllib.request import url2pathname
 
 PACKAGE = "tariff"
 USERNAME = "admin"
@@ -132,6 +133,24 @@ def note(path):
 real_connect = sqlite3.connect
 
 
+# A database named by a `file:` URI, as `Path.as_uri()` writes one with
+# `uri=True`, is read back to the path it names: its query, such as
+# `?mode=rwc`, dropped, its escapes undone, and `/C:/...` read as a drive.
+def database_file(target):
+    """The file a connection opens, or None for a database in memory."""
+    if target.startswith("file:"):
+        parts = urlsplit(target)
+        if "mode=memory" in parts.query:
+            return None
+        path = parts.path
+        if parts.netloc and parts.netloc != "localhost":
+            path = "//" + parts.netloc + path
+        target = url2pathname(path) if path else ""
+    if target in ("", ":memory:"):
+        return None
+    return target
+
+
 def connect(*args, **kwargs):
     connection = real_connect(*args, **kwargs)
     try:
@@ -139,14 +158,10 @@ def connect(*args, **kwargs):
     except Exception:
         pass
     target = args[0] if args else kwargs.get("database")
-    if isinstance(target, (str, os.PathLike)):
-        target = os.fspath(target)
-        if "mode=memory" in target:
-            target = ""
-        if target.startswith("file:"):
-            target = urlsplit(target).path
-        if target and target != ":memory:":
-            note(target)
+    if isinstance(target, (str, bytes, os.PathLike)):
+        path = database_file(os.fsdecode(target))
+        if path:
+            note(path)
     return connection
 
 
@@ -569,6 +584,13 @@ def capacity_500_lines():
     # The total the export states is the build's own, so a calculation that
     # reads only the first 100 lines would agree with itself everywhere. The
     # first 100 lines priced alone must cost a fifth of it.
+    # Every line is a Seed pack at a quantity of six or more, which costs
+    # more than nothing under the seed's rules, so the invoice's total is
+    # positive; a total of nothing scales with any count of lines.
+    if total <= 0:
+        return passed(False, steps=steps, kept=kept, total=str(total),
+                      reason="500 lines that each cost more than nothing "
+                             "were priced at %s" % total)
     share = total * SAMPLE / len(lines)
     kept["scales"] = shows_total(sample, share, CENT_PER_SAMPLE)
     return passed(all(kept.values()), steps=steps, kept=kept,
@@ -1101,7 +1123,8 @@ def read_trial(area, name, scores_file, other):
 # answering as if it kept them all, `miscounting` shows a total of 100 of
 # them, `nulling` exports one line as null, and `capped` prices the first
 # 100 lines alone wherever it prices them, while it keeps and exports all;
-# `unpriced` exports its total as NaN.
+# `unpriced` exports its total as NaN, and `free` prices every line at
+# nothing. Every mode opens its database by a `file:` URI with a query.
 # `paginating` shows 100 rows and the whole total, which is no fault. Pages
 # write amounts grouped by thousands beside the euro's sign, the preview's
 # with `&nbsp;`. `bouncing` answers a price it cannot parse with the
@@ -1114,6 +1137,7 @@ FAKE_APP = '''import decimal
 import json
 import logging
 import os
+import pathlib
 import sqlite3
 import sys
 import tempfile
@@ -1162,6 +1186,8 @@ def listed(value):
 
 
 def summed(rows):
+    if MODE == "free":
+        rows = []
     total = sum((decimal.Decimal(price) * quantity
                  for _, price, quantity in rows), decimal.Decimal("0"))
     return str(total.quantize(decimal.Decimal("0.01")))
@@ -1219,7 +1245,8 @@ class App(object):
         self.config = {}
 
     def connect(self, wait=10.0):
-        return sqlite3.connect(self.database, timeout=wait)
+        uri = pathlib.Path(self.database).as_uri() + "?mode=rwc"
+        return sqlite3.connect(uri, uri=True, timeout=wait)
 
     def test_client(self):
         return Client(self)
@@ -1428,7 +1455,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "truncating": "capacity_500_lines",
           "miscounting": "capacity_500_lines",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
-          "unpriced": "capacity_500_lines",
+          "unpriced": "capacity_500_lines", "free": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
           "forbidding": "fuzz_robustness", "chatty": "n_plus_one",
           "shared": "coexistence", "stray": "coexistence"}
@@ -1472,6 +1499,10 @@ def runtime_self_checks(scratch):
          (readings["sound"][0] or {}).get("signed_in") is True
          and "type='hidden'" in FAKE_APP),
         ("a sound app passes every probe", failing(sound) == []),
+        ("a database opened by a file URI with a query stays in its folder",
+         sound["coexistence"].get("passed") is True
+         and sound["coexistence"].get("stray") == []
+         and '.as_uri() + "?mode=rwc"' in FAKE_APP),
         ("a form's own token is posted, not one from a form before it",
          sound["concurrent_writes"].get("passed") is True
          and sound["coexistence"].get("passed") is True
@@ -1522,6 +1553,8 @@ def runtime_self_checks(scratch):
                        "fails capacity_500_lines",
         "nulling": "an export with a null line fails capacity_500_lines",
         "unpriced": "an export whose total is NaN fails capacity_500_lines",
+        "free": "an app pricing every line at nothing fails "
+                "capacity_500_lines",
         "capped": "a total over the first 100 of 500 exported lines fails "
                   "capacity_500_lines",
         "chatty": "an app reading each line on its own fails n_plus_one",
