@@ -86,6 +86,11 @@ MODE, PROGRESS, DATABASES = sys.argv[1], sys.argv[2], sys.argv[3]
 WORKSPACE = os.path.abspath(os.getcwd())
 os.environ["TARIFF_ADMIN_PASSWORD"] = PASSWORD
 
+# The standard library tries its temporary folder with a scratch file the
+# first time any code asks for it; asked here, before the watch below, that
+# try is not read as the build's write.
+tempfile.gettempdir()
+
 real_open = builtins.open
 real_os_open = os.open
 report = {"python": platform.python_version(), "probes": {},
@@ -102,6 +107,8 @@ def save():
 
 def finish():
     report.pop("running", None)
+    if "leaked" in report["probes"].get("coexistence", {}):
+        settle_coexistence(report["probes"]["coexistence"])
     save()
     print(json.dumps(report))
     raise SystemExit(0)
@@ -121,13 +128,15 @@ def traced(statement):
     statements["total"] += 1
 
 
-# Where the application writes while the co-existence probe watches.
-watch = {"on": False, "paths": []}
+# Every file the application opens to write, by name, for the whole run.
+# The watch is in place before the package is imported, so a handle opened
+# at import and written to later is seen.
+written = []
 
 
 def note(path):
-    if watch["on"] and isinstance(path, (str, bytes, os.PathLike)):
-        watch["paths"].append(os.path.abspath(os.fsdecode(path)))
+    if isinstance(path, (str, bytes, os.PathLike)):
+        written.append(os.path.abspath(os.fsdecode(path)))
 
 
 real_connect = sqlite3.connect
@@ -232,37 +241,59 @@ class Raised(Exception):
 
 
 class Hidden(HTMLParser):
-    """Collects every hidden input, however its attributes are quoted, in
-    page order, with the action of the form it sits in."""
+    """Collects every form's action and id, every hidden input and every
+    submit control's `formaction`, however their attributes are quoted, in
+    page order, each with the form it belongs to."""
 
     def __init__(self):
         HTMLParser.__init__(self)
-        self.inputs = []
         self.forms = []
+        self.inputs = []
+        self.controls = []
         self.form = None
+
+    def owner(self, attributes):
+        """The form a control belongs to: the one its `form` attribute names
+        by id, else the one it sits in."""
+        named = attributes.get("form")
+        return ("id", named) if named else self.form
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
+        kind = (attributes.get("type") or "").lower()
         if tag == "form":
             self.form = len(self.forms)
-            self.forms.append(attributes.get("action") or "")
-        elif (tag == "input" and (attributes.get("type") or "").lower()
-                == "hidden" and attributes.get("name")):
-            self.inputs.append((self.form, attributes["name"],
+            self.forms.append((attributes.get("action") or "",
+                               attributes.get("id")))
+        elif tag == "input" and kind == "hidden" and attributes.get("name"):
+            self.inputs.append((self.owner(attributes), attributes["name"],
                                 attributes.get("value") or ""))
+        if ((tag == "button" and kind in ("", "submit"))
+                or (tag == "input" and kind in ("submit", "image"))) \
+                and attributes.get("formaction") is not None:
+            self.controls.append((self.owner(attributes),
+                                  attributes["formaction"]))
 
     def handle_endtag(self, tag):
         if tag == "form":
             self.form = None
 
+    def resolved(self, owner):
+        """A form's index from an owner, an index or an id."""
+        if isinstance(owner, tuple):
+            return next((index for index, (_, ident) in enumerate(self.forms)
+                         if ident == owner[1]), None)
+        return owner
+
 
 # A page may hold several forms, each with its own token, such as a sign-out
 # form beside the one being sent. The fields sent are those of the first form
-# whose action is the path posted to, read as the browser resolves it, its
-# query ignored, an empty action being the page's own path. A post no form's
-# action names takes every hidden field on the page, the first of each name.
-# A save control's `formaction` is not read: the builder's save is sent with
-# the builder form's fields by that fallback, which is how a browser sends it.
+# that posts to the path posted to: by its action, or by a submit control's
+# `formaction`, as the builder's save sends the builder form to `/invoices`;
+# a control outside the form, linked by its `form` attribute, counts too.
+# Each is read as the browser resolves it, its query ignored, an empty one
+# being the page's own path. A post no form sends takes every hidden field
+# on the page, the first of each name.
 def hidden_fields(text, page_path, target):
     """The hidden fields a post to `target` carries from the page at
     `page_path`."""
@@ -270,11 +301,18 @@ def hidden_fields(text, page_path, target):
     parser.feed(text)
     base = "http://localhost" + page_path
     wanted = urlsplit(target).path
-    for form, action in enumerate(parser.forms):
-        if urlsplit(urljoin(base, action or page_path)).path == wanted:
+
+    def path_of(address):
+        return urlsplit(urljoin(base, address or page_path)).path
+
+    for form, (action, _) in enumerate(parser.forms):
+        sends = {path_of(action)} | {
+            path_of(address) for owner, address in parser.controls
+            if parser.resolved(owner) == form}
+        if wanted in sends:
             fields = {}
             for owner, name, value in parser.inputs:
-                if owner == form:
+                if parser.resolved(owner) == form:
                     fields.setdefault(name, value)
             return fields
     fields = {}
@@ -687,37 +725,41 @@ def coexistence():
     out of the other, and neither writes outside its folder or the
     workspace."""
 
-    # A database's sidecars, its `-wal`, `-shm` and `-journal`, sit in its
-    # folder, so the two folders admit them.
     folders_given = [folder(), folder()]
-    watch["paths"] = []
-    watch["on"] = True
     try:
-        try:
-            first, second = [
-                package.create_app(os.path.join(where, "coexist.sqlite"))
-                for where in folders_given]
-        except Exception as error:
-            return passed(False, reason="a second instance would not boot: "
-                          "%s" % repr(error)[:300])
-        one, other = first.test_client(), second.test_client()
-        if not (sign_in(one) and sign_in(other)):
-            return lost("coexistence", "an instance's administrator could "
-                        "not sign in")
-        held(form_post(one, "/products", "/products", PRODUCT),
-             "the product's post")
-        stored = PRODUCT["sku"] in page(one, "/products").get_data(
-            as_text=True)
-        leaked = PRODUCT["sku"] in page(other, "/products").get_data(
-            as_text=True)
-    finally:
-        watch["on"] = False
+        first, second = [
+            package.create_app(os.path.join(where, "coexist.sqlite"))
+            for where in folders_given]
+    except Exception as error:
+        return passed(False, reason="a second instance would not boot: "
+                      "%s" % repr(error)[:300])
+    one, other = first.test_client(), second.test_client()
+    if not (sign_in(one) and sign_in(other)):
+        return lost("coexistence", "an instance's administrator could not "
+                    "sign in")
+    held(form_post(one, "/products", "/products", PRODUCT),
+         "the product's post")
+    stored = PRODUCT["sku"] in page(one, "/products").get_data(as_text=True)
+    leaked = PRODUCT["sku"] in page(other, "/products").get_data(
+        as_text=True)
     if not stored:
         return lost("coexistence", "the product written through the first "
                     "instance was not stored")
-    stray = sorted(set(path for path in watch["paths"]
-                       if not inside(path, folders_given + [WORKSPACE])))
-    return passed(not leaked and not stray, leaked=leaked, stray=stray[:10])
+    return settle_coexistence({"leaked": leaked})
+
+
+# Every database of every probe sits in a folder under the reader's own
+# root, so the workspace and that root are the only places a build may
+# write; a database's sidecars, its `-wal`, `-shm` and `-journal`, sit
+# beside it. Read again as the run ends, so a write after the probe counts.
+def settle_coexistence(reading):
+    """The co-existence reading with every write so far read against the
+    places a build may write."""
+    stray = sorted(set(path for path in written
+                       if not inside(path, [DATABASES, WORKSPACE])))
+    reading["stray"] = stray[:10]
+    reading["passed"] = not reading["leaked"] and not stray
+    return reading
 
 
 # A number past any bound a price, percentage, rate or tier can have. The
@@ -1174,22 +1216,24 @@ def read_trial(area, name, scores_file, other):
 # `cramped` refuses over 100 lines, `crowded` saves them and will not show
 # them, `chatty` reads each invoice line's product on its own, `shared` keeps
 # its products in one store for every instance, `stray` writes a fixed file
-# outside its folder, `truncating` keeps the first 100 lines of an invoice,
-# answering as if it kept them all, `nulling` exports one line as null, and
-# `capped` prices the first 100 lines alone wherever it prices them, while
-# it keeps and exports all; `unpriced` exports its total as NaN, `free`
-# prices every line at nothing, `poisoned` stores a price it cannot then
-# list, so its products page answers 500 once fuzzing has stored one, which
-# is no fault of any probe's, `unformed` answers 500 on its rules page,
-# `unexported` answers its export with a 500 and the JSON all the same, and
-# `hanging` holds one concurrent write,
-# and its lock, for a minute. Every mode opens its database by a `file:` URI
-# with a query. `bouncing` answers a price it cannot parse with the
-# sign-in's redirect and `forbidding` with a 403;
-# `gated` never keeps its sign-in, and `refusing` neither keeps it nor
-# redirects, answering 401; `broken` will not boot, and `unportable` boots
-# on no Python but the one it names. Every mode's sign-in form quotes its
-# attributes with single quotes.
+# outside its folder through a handle opened at import, `truncating` keeps
+# the first 100 lines of an invoice, answering as if it kept them all,
+# `nulling` exports one line as null, `capped` prices the first 100 lines
+# alone wherever it prices them while it keeps and exports all, `unpriced`
+# exports its total as NaN, `free` prices every line at nothing,
+# `unexported` answers its export with a 500 and the JSON all the same,
+# `unformed` answers 500 on its rules page, and `hanging` holds one
+# concurrent write, and its lock, for a minute. `poisoned` stores a price it
+# cannot then list, so its products page answers 500 once fuzzing has stored
+# one, which is no fault of any probe's; `detached` and `plain-save` place
+# the builder's save control and the sign-out form otherwise, which is none
+# either. Every mode opens its database by a `file:` URI with a query, and
+# puts a sign-out form carrying another token on its pages. `bouncing`
+# answers a price it cannot parse with the sign-in's redirect and
+# `forbidding` with a 403; `gated` never keeps its sign-in, and `refusing`
+# neither keeps it nor redirects, answering 401; `broken` will not boot, and
+# `unportable` boots on no Python but the one it names. Every mode's sign-in
+# form quotes its attributes with single quotes.
 FAKE_APP = '''import decimal
 import json
 import logging
@@ -1210,13 +1254,22 @@ SIGN_OUT = ('<form method="post" action="/sign-out"><input type="hidden" '
 
 def form_page(path, body):
     """A page whose main form posts to its own route, the builder's to its
-    preview, with a sign-out form carrying another token beside it: before
-    the main form on the products page, after it everywhere else."""
+    preview with a save control sending it to `/invoices`, and a sign-out
+    form carrying another token before it. `plain-save` has no save control
+    and puts the sign-out form after; `detached` puts the save control
+    after the builder form, linked to it by its id."""
     action = "/invoices/preview" if path == "/invoices/new" else path
-    main = '<form method="post" action="%s">%s</form>' % (action, TOKEN)
-    if path == "/products":
-        return SIGN_OUT + body + main
-    return body + main + SIGN_OUT
+    save = control = ""
+    if path == "/invoices/new" and MODE == "detached":
+        control = ('<button form="builder" formaction="/invoices">Save'
+                   '</button>')
+    elif path == "/invoices/new" and MODE != "plain-save":
+        save = '<button type="submit" formaction="/invoices">Save</button>'
+    main = ('<form id="builder" method="post" action="%s">%s%s</form>%s'
+            % (action, TOKEN, save, control))
+    if MODE == "plain-save":
+        return body + main + SIGN_OUT
+    return SIGN_OUT + body + main
 SKUS = {"WID-1": "10.00", "GAD-2": "24.50", "BOK-3": "12.00",
         "SRV-4": "80.00", "SEE-5": "3.75"}
 LOG = logging.getLogger("tariff")
@@ -1224,6 +1277,7 @@ SHARED = {}
 IN_FLIGHT = []
 GUARD = threading.Lock()
 STRAY = os.path.join(tempfile.gettempdir(), "tariff-quality-stray.log")
+HANDLE = open(STRAY, "a") if MODE == "stray" else None
 
 
 class Response(object):
@@ -1270,9 +1324,9 @@ def number(text):
 
 class App(object):
     def __init__(self, database):
-        if MODE == "stray":
-            with open(STRAY, "a") as handle:
-                handle.write("booted\\n")
+        if HANDLE is not None:
+            HANDLE.write("booted\\n")
+            HANDLE.flush()
         self.database = database
         self.products = SHARED if MODE == "shared" else None
         self.connect().executescript(
@@ -1547,7 +1601,8 @@ def failing(probes):
 def runtime_self_checks(scratch):
     """Each planted fault fails its own probe and no other; an app that
     keeps the probes from running loses them."""
-    modes = (["sound", "slow", "poisoned", "gated", "refusing", "broken"]
+    modes = (["sound", "slow", "poisoned", "detached", "plain-save", "gated",
+              "refusing", "broken"]
              + sorted(FAULTS))
     readings = fake_readings(scratch, modes)
     probes = {mode: probe_results(*readings[mode]) for mode in modes}
@@ -1568,10 +1623,14 @@ def runtime_self_checks(scratch):
          sound["concurrent_writes"].get("passed") is True
          and sound["coexistence"].get("passed") is True
          and "return SIGN_OUT + body + main" in FAKE_APP),
-        ("a post no form's action names carries the page's first token",
+        ("a save sent by its control's formaction carries its form's token",
          sound["n_plus_one"].get("passed") is True
          and sound["capacity_500_lines"].get("passed") is True
-         and "return body + main + SIGN_OUT" in FAKE_APP),
+         and 'formaction="/invoices"' in FAKE_APP),
+        ("a save control outside its form, linked by its id, carries that "
+         "form's token", failing(probes["detached"]) == []),
+        ("a post no form's action names carries the page's first token",
+         failing(probes["plain-save"]) == []),
         ("the latency is two repeats of 30 requests each",
          latency.get("requests") == 30
          and len(latency.get("repeats") or []) == 2
