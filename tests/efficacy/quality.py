@@ -1394,7 +1394,15 @@ def data_upgrade(seeded):
     if saved is None:
         failures.append("an invoice saved after the upgrade has no page")
     else:
+        # The new invoice is read as the old ones are: its page and both
+        # exports answering a success before its total counts.
         again = invoice_reading(saved)
+        for status, what in ((again["status"], saved),
+                             (again["export_status"],
+                              saved + "/export.json"),
+                             (again["csv_status"], saved + "/export.csv")):
+            if not 200 <= status < 300:
+                failures.append("%s answered %d" % (what, status))
         total = (again["export"] or {}).get("total") if isinstance(
             again["export"], dict) else None
         if str(total) != str(seeded["invoices"][0]["export"].get("total")):
@@ -2287,7 +2295,9 @@ def create_app(database):
 # found in, one ending `+pcells` wraps each table cell in a paragraph, one
 # ending `+terse` writes the minimum as 200, each price after the euro's
 # sign and the cap as euro 50, and one
-# ending `+erring` answers its JSON export 500 with a whole body.
+# ending `+erring` answers its JSON export 500 with a whole body, and one
+# ending `+newcsv` answers 500 for the CSV export of an invoice saved after
+# the two the seed saves.
 UPGRADE_APP = '''import decimal
 import json
 import os
@@ -2614,6 +2624,9 @@ class Client(object):
                 export["caps"] = {}
             return Response(500 if MARKUP == "erring" else 200,
                             json.dumps(export))
+        if parts[2:] == ["export.csv"] and MARKUP == "newcsv" \\
+                and int(parts[1]) > 2:
+            return Response(500, "Internal Server Error")
         if parts[2:] == ["export.csv"]:
             head = "sku,quantity,net" + (",cap" if VERSION == 2 else "")
             return Response(200, "\\n".join([head] + [
@@ -2673,6 +2686,7 @@ def upgrade_self_checks(scratch):
     rewrapped = upgrade_reading(scratch, "sound+pcells", "rerating+pcells")
     terse_read = upgrade_reading(scratch, "sound", "sound+terse")
     erring = upgrade_reading(scratch, "sound", "sound+erring")
+    new_csv = upgrade_reading(scratch, "sound", "sound+newcsv")
     failed = sorted(mode for mode, reading in faults.items()
                     if reading.get("passed") is False)
     return [
@@ -2715,7 +2729,13 @@ def upgrade_self_checks(scratch):
          erring.get("passed") is False
          and erring.get("failures") == [
              "/invoices/1/export.json answered 500",
-             "/invoices/2/export.json answered 500"]),
+             "/invoices/2/export.json answered 500",
+             "/invoices/3/export.json answered 500"]),
+        ("an invoice saved after the upgrade whose CSV export errs fails "
+         "it",
+         new_csv.get("passed") is False
+         and new_csv.get("failures") == ["/invoices/3/export.csv answered "
+                                         "500"]),
         ("a row found by no key leaves the upgrade missing, never passed",
          hidden.get("passed") is None
          and hidden.get("missing", "").startswith("row for ")

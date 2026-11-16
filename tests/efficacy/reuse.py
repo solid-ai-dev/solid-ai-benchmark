@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
 from harness import (ARMS, PROMPT, REGISTRATIONS, TrialError,  # noqa: E402
-                     assert_outside_repository, canonical, identity_problem,
+                     assert_outside_repository, canonical, fixtures_problem,
+                     identity_problem,
                      now, project_folder, read_change_prompt, recorded_round,
                      registration_digest, remove_tree, scorable_trials,
                      scoring_area, task_folder, write_run)
@@ -199,6 +200,16 @@ def reuse(source, target, arms):
     if clash:
         raise TrialError("%s already offers %s" % (target, ", ".join(clash)))
     changes, fixtures = change_tasks(source, arms)
+
+    # Change tasks of one named round start every arm of a block from one
+    # fixture, so the source's must have taken the target's manifest and
+    # block mapping, as a change run joining the target must.
+    if changes and fixtures:
+        problem = fixtures_problem(target, dict(
+            fixtures, blocks=fixtures.get("blocks") or {}))
+        if problem:
+            raise TrialError("the change tasks cannot join %s: %s"
+                             % (target, problem))
     try:
         held = scorable_trials(target, task="change")
     except TrialError:
@@ -395,7 +406,36 @@ def change_checks(scratch):
          and os.path.isfile(os.path.join(area, "judge-change", "T1.json"))
          and read_map(area, "change")["blind"] == {"inline-1": "T1"}
          and read_map(area)["blind"] == {"inline-1": "T2", "hand-1": "T1"}),
+        ("change tasks join a target only from the manifest its change "
+         "runs took", manifest_checks(scratch, identity)),
     ]
+
+
+def manifest_checks(scratch, identity):
+    """Change tasks reused into a target whose change runs took another
+    fixture manifest are refused before anything is copied; into one that
+    took the same, they come along."""
+    def target_with(name, manifest):
+        target = os.path.join(scratch, name)
+        os.makedirs(target)
+        write_run(os.path.join(target, "run-earlier-change.json"),
+                  datetime.datetime(2026, 9, 17, 12, 0, 0), [], "change",
+                  read_change_prompt(),
+                  identity=dict(identity, fixtures={
+                      "manifest_sha256": manifest, "blocks": {}}))
+        return target
+    other = target_with("other-manifest", "0" * 64)
+    same = target_with("same-manifest", "f" * 64)
+    source = os.path.join(scratch, "changed")
+    try:
+        reuse(source, other, ["inline"])
+        refused = False
+    except TrialError as error:
+        refused = "manifest" in str(error)
+    reuse(source, same, ["inline"])
+    return (refused and not os.path.exists(os.path.join(other,
+                                                        "inline-1.tar"))
+            and os.path.isfile(os.path.join(same, "change-inline-1.tar")))
 
 
 def self_test():
