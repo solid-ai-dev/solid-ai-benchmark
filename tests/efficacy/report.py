@@ -1969,6 +1969,15 @@ def write_report(root, trials, table, results, seed, out_dir,
                                      margins_of(trials), uses, iso))
         lines.append("")
 
+    # A named round reads its on-demand arms' use of their maps too, with
+    # no pilot hypothesis beside it.
+    if named_round(trials) is not None:
+        uses = report_uses(root, trials) if uses is None else uses
+        if uses and map_use_rows(trials, uses):
+            lines.extend(map_use_lines(trials, uses, "## Use of the map",
+                                       h7=False))
+            lines.append("")
+
     lines.append("## Raw numbers, per trial")
     lines.append("")
     lines.append("| Metric | %s |" % " | ".join(names))
@@ -3626,6 +3635,15 @@ def map_use(files, arm, templates=None, delegated=()):
             else None, "by_subagent": by_subagent}
 
 
+def report_uses(root, trials):
+    """The map uses a report reads: every trial's, wherever the run holds an
+    arm whose file points at a map, named round or not; None where it holds
+    none."""
+    if not any(mapped_templates(arm_of(name)) for name in trials):
+        return None
+    return map_uses(root, trials)
+
+
 def map_uses(root, trials):
     """Every trial's map use, by name, for the arms whose file points at
     the templates and whose transcripts the root still holds."""
@@ -3732,10 +3750,10 @@ def map_use_detail(trials, uses):
     return lines
 
 
-def map_use_lines(trials, uses):
-    """The use-of-the-map table and the note beside H7."""
+def map_use_lines(trials, uses, heading="### Use of the map", h7=True):
+    """The use-of-the-map table and, with `h7`, the note beside H7."""
     rows = map_use_rows(trials, uses)
-    lines = ["### Use of the map", "",
+    lines = [heading, "",
              "From each trial's transcript: the templates it read from the "
              "vendored copy or loaded as skills, counted once each, the "
              "turn the first happened at, and how many came before the "
@@ -3756,7 +3774,7 @@ def map_use_lines(trials, uses):
             row["arm"], row["trials"], row["total"], shown(row["read"]),
             shown(row["before"]), shown(row["first"], 0), row["up_front"],
             row["wrote"]))
-    note = h7_note(rows)
+    note = h7_note(rows) if h7 else None
     if note:
         lines.extend(["", "Beside H7: %s" % note])
     lines.append("")
@@ -8591,6 +8609,62 @@ def cross_checks(seed):
     ]
 
 
+def named_map_use_checks(seed):
+    """A named round's report reads its on-demand arms' use of their maps:
+    a planted C1 run whose `lazysections` trial read two section files
+    before its first write prints that arm's row, through the same reading
+    of the root `main()` makes."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-named-map-use-")
+    workspace = os.path.join(scratch, "pen", "lazysections-1")
+    folder = os.path.join(scratch, "home", ".claude", "projects",
+                          re.sub(r"[^A-Za-z0-9]", "-",
+                                 os.path.abspath(workspace)))
+    os.makedirs(folder)
+    first = "%s/base-quality/static-checks.md" % SECTIONS_INTO
+    second = "%s/base-quality/naming.md" % SECTIONS_INTO
+    calls = [("Read", {"file_path": "%s/%s" % (workspace, first)}),
+             ("Bash", {"command": "cat %s" % second}),
+             ("Write", {"file_path": "%s/app.py" % workspace})]
+    with io.open(os.path.join(folder, "session.jsonl"), "w",
+                 encoding="utf-8", newline="\n") as handle:
+        for turn, (name, given) in enumerate(calls, 1):
+            handle.write(json.dumps({"type": "assistant", "message": {
+                "id": "m%d" % turn, "content": [{
+                    "type": "tool_use", "id": "t%d" % turn, "name": name,
+                    "input": given}]}}) + "\n")
+    with io.open(os.path.join(scratch, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"round": "C1", "trials": [{
+            "round": "C1", "task": "build", "arm": "lazysections",
+            "block": 1, "trial": 1, "outcome": "completed",
+            "workspace": workspace,
+            "started_at": "2000-01-01T00:00:00"}]}, handle)
+    trials = planted_change_run("any-revision")
+    trials["lazysections-1"] = {"scores": {}, "judge": None,
+                                "security": None, "change": None}
+    for trial in trials.values():
+        trial["round"] = "C1"
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    target = write_report(scratch, trials, table, results, seed,
+                          out_dir=os.path.join(scratch, "out"),
+                          uses=report_uses(scratch, trials))
+    with io.open(target[:-len(".md")] + "-record.md",
+                 encoding="utf-8") as handle:
+        text = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    row = next((line for line in text.splitlines()
+                if line.startswith("| lazysections | 1 |")), None)
+    total = len(mapped_templates("lazysections"))
+    return [
+        ("a named round's report prints its sections arm's use of the map",
+         "## Use of the map" in text and "Beside H7" not in text
+         and row == "| lazysections | 1 | %d | 2.0 | 2.0 | 1 | 0 of 1 |"
+         % total and "| lazysections-1 | 3 | 0 | 1: %s, 2: %s |"
+         % (first, second) in text, row),
+    ]
+
+
 def documents_checks(seed):
     """A run writes three documents: a plain report with the radars and a
     verdict per approach naming its deciding measures, an appendix of three
@@ -8788,6 +8862,7 @@ def self_test(seed):
     checks.extend(withdrawal_checks(seed))
     checks.extend(executive_checks(seed))
     checks.extend(documents_checks(seed))
+    checks.extend(named_map_use_checks(seed))
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
@@ -8998,7 +9073,7 @@ def main(argv):
         disagree(results, check)
     iso = (iso_reading(trials, options.seed, withdrawn)
            if iso_rules(trials) or posthoc_iso else None)
-    uses = map_uses(options.root, trials) if is_round5e(trials) else None
+    uses = report_uses(options.root, trials)
     target = write_report(options.root, trials, table, results, options.seed,
                           out_dir, withdrawn, check, iso, uses)
 
