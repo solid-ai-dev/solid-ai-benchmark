@@ -40,8 +40,9 @@ import lib  # noqa: E402
 import probes  # noqa: E402
 from harness import (INTERFACE_MODULES, SCORABLE, LiveRunError,  # noqa: E402
                      TrialError, canonical, claim_area, claim_refusal_check,
-                     frozen_top, name_of, release_area, remove_tree,
-                     scorable_trials, scoring_area, task_folder)
+                     frozen_top, name_of, read_change_prompt, release_area,
+                     remove_tree, scorable_trials, scoring_area,
+                     task_folder)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.basename(__file__)
@@ -1095,13 +1096,23 @@ def kind_of(name):
     return None
 
 
-def scope(workspace, roots):
-    """Files, lines, app and test code, and artifacts nobody asked for."""
+def tracked_files(workspace):
+    """The files the workspace's index holds, as the trial left it; or an
+    absent metric where it is no readable git checkout."""
     tracked = run(["git", "-C", workspace, "ls-files"], timeout=120)
     if tracked["failed"] or tracked["status"] != 0:
         return absent("the workspace is not a readable git checkout: %s"
                       % tracked["stderr"][:300])
-    files = [line for line in tracked["stdout"].splitlines() if line.strip()]
+    return [line for line in tracked["stdout"].splitlines() if line.strip()]
+
+
+def scope(workspace, roots, files=None):
+    """Files, lines, app and test code, and artifacts nobody asked for;
+    `files` the tracked files as read before scoring touched the index, by
+    default read now."""
+    files = tracked_files(workspace) if files is None else files
+    if isinstance(files, dict):
+        return files
     unasked = [name for name in files
                if any(token in os.path.basename(name).upper()
                       for token in UNASKED)]
@@ -1244,9 +1255,11 @@ def score_trial(record, options, suite, lock):
     return scores
 
 
-def measure_code(scores, venv, workspace, options, lock, source):
+def measure_code(scores, venv, workspace, options, lock, source,
+                 required=probes.REQUIRED_NAMES):
     """The static battery, the structure and web probes and adherence, read
-    into `scores` from the installed tree once its suites have run."""
+    into `scores` from the installed tree once its suites have run; the
+    public surface is read against `required`."""
     roots, seen = scores["discovery"]["roots"], scores["seen"]
     scores["battery"] = install_battery(venv, lock)
 
@@ -1280,7 +1293,7 @@ def measure_code(scores, venv, workspace, options, lock, source):
         scores["web"] = absent(moved)
     else:
         scores["structure"] = probes.structure(context, workspace, roots,
-                                               seen)
+                                               seen, required)
         if options.web:
             scores["web"] = probes.web_quality(context, workspace)
         else:
@@ -1347,6 +1360,10 @@ def score_change_trial(record, options, suite, lock):
     workspace = extract((record.get("frozen") or {}).get("tarball"),
                         os.path.join(scoring, "tree"), frozen)
     files = python_files(workspace)
+
+    # The index as the change task left it, before the install, the suites
+    # or churn's intent-to-add can put a file of their own in it.
+    tracked = tracked_files(workspace)
     venv = create_venv(os.path.join(scoring, "venv"))
 
     # The fixture is named by its hash and with the readings it qualified
@@ -1392,12 +1409,27 @@ def score_change_trial(record, options, suite, lock):
     scores["churn"] = (churn(workspace, record["base"]) if record.get("base")
                        else absent("the change record names no starting "
                                    "commit"))
-    measure_code(scores, venv, workspace, options, lock, source)
-    scores["scope"] = scope(workspace, roots)
+    measure_code(scores, venv, workspace, options, lock, source,
+                 change_required_names())
+    scores["scope"] = scope(workspace, roots, tracked)
     scores["cost"] = cost(record)
     scores["flagged"] = metric_flags(scores)
     drop_venv(venv)
     return scores
+
+
+# A name the pinned change prompt has other software call, as
+# `tariff.ThresholdRule(...)`.
+PROMPTED_NAME = re.compile(r"\btariff\.([A-Za-z_]\w*)\(")
+
+
+def change_required_names(prompt=None):
+    """The names a changed tree's public surface is read against: the
+    build's, then each the pinned change prompt calls on the package."""
+    text = read_change_prompt() if prompt is None else prompt
+    added = [name for name in dict.fromkeys(PROMPTED_NAME.findall(text))
+             if name not in probes.REQUIRED_NAMES]
+    return tuple(probes.REQUIRED_NAMES) + tuple(added)
 
 
 def module_whole(report, module):
@@ -1814,7 +1846,7 @@ def interface_checks():
     ]
 
 
-def change_breadth_checks(scratch):
+def change_breadth_checks(scratch, folder="breadth"):
     """A change task is scored on every reading a build is, with its own
     suites and churn in place of the build's one suite."""
     import argparse as _argparse
@@ -1835,14 +1867,14 @@ def change_breadth_checks(scratch):
         "install_battery": lambda venv, lock: {"missing": "stubbed"},
         "package_moved": lambda before, after: None,
         "adherence": lambda workspace, scores: measured(1.0),
-        "scope": lambda workspace, roots: measured({}),
+        "scope": lambda workspace, roots, files=None: measured({}),
         "churn": lambda workspace, base: measured({}),
         "drop_venv": lambda venv: None,
     }
     saved = {name: globals()[name] for name in stubs}
     record = {"arm": "none", "trial": 1, "base": "abc", "frozen": {
         "tarball": "none-1.tar"}, "fixture": None}
-    options = _argparse.Namespace(root=os.path.join(scratch, "breadth"),
+    options = _argparse.Namespace(root=os.path.join(scratch, folder),
                                   web=False)
     suite = {"revision": "stub", "path": scratch}
     globals().update(stubs)
@@ -1856,6 +1888,113 @@ def change_breadth_checks(scratch):
              owed <= set(change)
              and {"build_suite", "change_suite", "interfaces",
                   "churn"} <= set(change))]
+
+
+def change_scope_checks(scratch):
+    """A changed tree's scope is its index as the change task left it, so a
+    file the scorer's own install or tests write is no unasked artifact."""
+    import argparse as _argparse
+    tree = os.path.join(scratch, "change-scope", "tree")
+    os.makedirs(os.path.join(tree, "tariff"))
+    with io.open(os.path.join(tree, "tariff", "app.py"), "w",
+                 encoding="utf-8") as handle:
+        handle.write("VALUE = 1\n")
+    for argv in (["init", "-q"], ["add", "-A"],
+                 ["-c", "user.name=self-test",
+                  "-c", "user.email=self-test@example.invalid",
+                  "commit", "-q", "-m", "change"]):
+        run(["git", "-C", tree] + argv, timeout=120)
+    base = run(["git", "-C", tree, "rev-parse", "HEAD"])["stdout"].strip()
+
+    def installed(venv, workspace):
+        """An install that leaves its build output in the tree, as pip's
+        does."""
+        built = os.path.join(workspace, "build", "lib", "tariff")
+        os.makedirs(built, exist_ok=True)
+        with io.open(os.path.join(built, "app.py"), "w",
+                     encoding="utf-8") as handle:
+            handle.write("VALUE = 1\n")
+        return measured(True)
+    stubs = {
+        "extract": lambda tarball, into, name: tree,
+        "python_files": lambda workspace: [],
+        "create_venv": lambda where: where,
+        "venv_version": lambda venv: "3.12.0",
+        "install_trial": installed,
+        "package_source": lambda venv: "site",
+        "boot_check": lambda venv, workspace: measured(True),
+        "discover_roots": lambda venv, workspace: {
+            "roots": [], "how": "stub", "installed": None},
+        "pip": lambda venv, *args, **kwargs: None,
+        "run_hidden_suite": lambda venv, suite, workspace, which: measured(
+            1.0, report={"modules": {}}),
+        "install_battery": lambda venv, lock: {"missing": "stubbed"},
+        "package_moved": lambda before, after: None,
+        "adherence": lambda workspace, scores: measured(1.0),
+        "drop_venv": lambda venv: None,
+    }
+    saved = {name: globals()[name] for name in stubs}
+    record = {"arm": "none", "trial": 1, "base": base, "frozen": {
+        "tarball": "none-1.tar"}, "fixture": None}
+    options = _argparse.Namespace(root=os.path.join(scratch, "change-scope"),
+                                  web=False)
+    globals().update(stubs)
+    try:
+        change = score_change_trial(record, options,
+                                    {"revision": "stub", "path": scratch},
+                                    "lock")
+    finally:
+        globals().update(saved)
+    read = (change.get("scope") or {}).get("value") or {}
+    return [("a file the scorer's install writes is no unasked artifact of a "
+             "changed tree",
+             read.get("unasked_artifacts") == 0
+             and read.get("tracked_files") == 1)]
+
+
+def change_surface_checks(scratch):
+    """A changed tree's public surface is read against the build's names and
+    the change's own, the build's left as it was."""
+    def surface(names):
+        workspace = os.path.join(scratch, "surface-%d" % len(names))
+        package = os.path.join(workspace, "tariff")
+        os.makedirs(package)
+        with io.open(os.path.join(package, "__init__.py"), "w",
+                     encoding="utf-8") as handle:
+            handle.write("".join("def %s():\n    pass\n\n\n" % name
+                                 for name in names))
+        reading = probes.structure(probes.planted_context(), workspace,
+                                   [package], {"files": 1},
+                                   change_required_names())
+        return (reading.get("value") or {}).get("surface") or {}
+    built = list(probes.REQUIRED_NAMES)
+    changed = surface(built + ["ThresholdRule"])
+    unchanged = surface(built)
+
+    # The required names each task hands the structure probe, as scored.
+    handed = {}
+    real = probes.structure
+
+    def recording(ctx, workspace, roots, seen, required=None):
+        handed.setdefault("calls", []).append(required)
+        return real(ctx, workspace, roots, seen, required)
+    probes.structure = recording
+    try:
+        change_breadth_checks(scratch, "surface-breadth")
+    finally:
+        probes.structure = real
+    calls = handed.get("calls") or []
+    return [
+        ("a changed tree with the change's names exports no extra one, and "
+         "one without them misses each",
+         changed.get("extra") == [] and changed.get("missing") == []
+         and unchanged.get("missing") == ["ThresholdRule"]),
+        ("the build is read against the build's names, the change against "
+         "the change's too",
+         len(calls) == 2 and tuple(calls[0]) == probes.REQUIRED_NAMES
+         and tuple(calls[1]) == change_required_names()
+         and "ThresholdRule" in calls[1]),
+    ]
 
 
 PLANTED_SEEDING_APP = '''\
@@ -2240,7 +2379,8 @@ def self_test():
               + adherence_checks(scratch)
               + python_files_checks(scratch)
               + scope_checks(scratch) + revision_checks(scratch)
-              + interface_checks() + change_breadth_checks(scratch))
+              + interface_checks() + change_breadth_checks(scratch)
+              + change_scope_checks(scratch) + change_surface_checks(scratch))
     dropped = create_venv(os.path.join(scratch, "dropped"))
     drop_venv(dropped)
     checks.append(("a scored trial's environment is dropped",
