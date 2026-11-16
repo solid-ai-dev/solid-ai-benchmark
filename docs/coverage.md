@@ -165,7 +165,7 @@ when:
 | -- | ---- | ---------- |
 | FR-12-01 | Self-test | `report.py` "a contrast crossing rounds carries no verdict and counts nowhere"<br>`report.py` "a comparison across rounds reads as not given, not too few runs" |
 | FR-12-02 | Self-test | `report.py` "a contrast across rounds is unpaired, with a verdict"<br>`report.py` "a round-5d run reads H4 against a reused `none`, unpaired"<br>`report.py` "an unpaired contrast leaves out two trials, not blocks"<br>`report.py` "a contrast crosses rounds where its arms ran in different roots, reused or not"<br>`reuse.py` "a trial copied on keeps the root it ran in as its origin" |
-| FR-12-03 | Self-test | `report.py` "it prints every declared contrast its arms ran"<br>`report.py` "a three-arm run prints only its own contrasts" |
+| FR-12-03 | Self-test | `report.py` "it prints every declared contrast its arms ran"<br>`report.py` "a three-arm run prints only its own contrasts"<br>`report.py` "a run of round 6's new arms reads each against none, in plain words" |
 | FR-12-04 | Self-test | `report.py` "round 5 reports the files it supersedes without a verdict" |
 | FR-12-05 | Self-test | `report.py` "the report links its appendix, and the appendix the record"<br>`report.py` "the appendix holds what produced the results, the radar's axes and the verdict vector, and nothing else" |
 | FR-12-06 | Self-test | `report.py` "the radar draws a panel per arm, with the bare ring, in both themes"<br>`report.py` "an axis is better minus worse over its rows with a verdict, None without one"<br>`report.py` "the summary is the radar, one image per theme" |
