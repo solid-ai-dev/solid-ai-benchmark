@@ -1206,6 +1206,7 @@ def seed_upgrade():
                 answer.status_code)
         reading = invoice_reading(path)
         if not (200 <= reading["status"] < 300
+                and 200 <= reading["export_status"] < 300
                 and isinstance(reading["export"], dict)
                 and 200 <= reading["csv_status"] < 300):
             return None, "the fixture does not show the invoice it saved"
@@ -1232,12 +1233,40 @@ def seed_upgrade():
         if missing:
             return None, "%s does not list %s" % (path, missing[0])
     export = page(client, "/customers/%s/export.json" % customer)
+    if not ok(export):
+        return None, "the seeded customer's export answered %d" % (
+            export.status_code)
     try:
         customer_export = json.loads(export.get_data(as_text=True))
     except ValueError:
         return None, "the seeded customer's export is not JSON"
     return {"invoices": invoices, "pages": pages, "rows": shown_rows(),
             "customer": {"id": customer, "export": customer_export}}, None
+
+
+# A currency a page may write before an amount, as a sign or a code.
+CURRENCY = re.compile(r"^(?:€|\$|£|EUR|USD|GBP)\s*", re.IGNORECASE)
+
+
+def same_token(old, new):
+    """Whether a value a page wrote reads as another: equal as text, or as
+    amounts once a leading currency is set aside, `50.00` as `€50`; a
+    `key=value` reads so only with the same key and a value that does."""
+    if old == new:
+        return True
+    if "=" in old and "=" in new:
+        old_key, _, old_value = old.partition("=")
+        new_key, _, new_value = new.partition("=")
+        return old_key == new_key and same_token(old_value, new_value)
+    try:
+        return Decimal(CURRENCY.sub("", old)) == Decimal(CURRENCY.sub("", new))
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def has_token(tokens, wanted):
+    """Whether a row's values hold one that reads as `wanted`."""
+    return any(same_token(wanted, token) for token in tokens)
 
 
 def unkept(old, new, where="$"):
@@ -1310,17 +1339,23 @@ def data_upgrade(seeded):
             if now is None:
                 continue
             failures += ["%s no longer shows %r for %s" % (path, token, key)
-                         for token in tokens if token not in now]
+                         for token in tokens if not has_token(now, token)]
     for old in seeded["invoices"]:
         now = invoice_reading(old["path"])
         if not 200 <= now["status"] < 300:
             failures.append("%s answered %d" % (old["path"], now["status"]))
             continue
-        place = unkept(old["export"], now["export"])
-        if place:
-            failures.append("%s/export.json no longer reads the same at %s"
-                            % (old["path"], place))
-        if now["csv_status"] != old["csv_status"]:
+        # An export is read only where it answers as a success; a body
+        # served with an error is no export, whatever it holds.
+        if not 200 <= now["export_status"] < 300:
+            failures.append("%s/export.json answered %d" % (
+                old["path"], now["export_status"]))
+        else:
+            place = unkept(old["export"], now["export"])
+            if place:
+                failures.append("%s/export.json no longer reads the same at "
+                                "%s" % (old["path"], place))
+        if not 200 <= now["csv_status"] < 300:
             failures.append("%s/export.csv answered %d" % (
                 old["path"], now["csv_status"]))
         else:
@@ -1343,7 +1378,10 @@ def data_upgrade(seeded):
     except ValueError:
         export = None
     place = unkept(customer["export"], export)
-    if place:
+    if not ok(answer):
+        failures.append("the customer's export answered %d"
+                        % answer.status_code)
+    elif place:
         failures.append("the customer's export no longer reads the same at %s"
                         % place)
 
@@ -1395,7 +1433,7 @@ def data_upgrade(seeded):
                             body[key])
         if tokens is None:
             unfound.append(body[key])
-        elif not any(token in tokens for token in shown_as):
+        elif not any(has_token(tokens, token) for token in shown_as):
             failures.append("%s lists %s without the %s it was posted with"
                             % (path, body[key], shown_as[0]))
     if not failures and unfound:
@@ -2238,7 +2276,10 @@ def create_app(database):
 # links no customer, so nothing can be seeded. `items`, at either version,
 # lists jurisdictions as list items rather than table rows, and is sound. A
 # mode ending `+divs` lists its records in bare `<div>`s, which no row is
-# found in, and one ending `+pcells` wraps each table cell in a paragraph.
+# found in, one ending `+pcells` wraps each table cell in a paragraph, one
+# ending `+terse` writes the minimum as 200, each price after the euro's
+# sign and the cap as euro 50, and one
+# ending `+erring` answers its JSON export 500 with a whole body.
 UPGRADE_APP = '''import decimal
 import json
 import os
@@ -2266,6 +2307,17 @@ class Response(object):
 
     def get_data(self, as_text=False):
         return self._body if as_text else self._body.encode("utf-8")
+
+
+def terse(value):
+    """A value as a terse page writes it: the minimum without its trailing
+    zeros, a price after the euro's sign, a cap with it."""
+    text = str(value)
+    if text == "200.00":
+        return "200"
+    if text.replace(".", "", 1).isdigit() and "." in text:
+        return "\u20ac" + text
+    return text.replace("=50.00", "=\u20ac50")
 
 
 def form(action, body=""):
@@ -2416,6 +2468,8 @@ class Client(object):
         else:
             rows = connection.execute("SELECT code, name, default_rate, "
                                       "rates FROM jurisdictions")
+        if MARKUP == "terse":
+            rows = [tuple(terse(value) for value in row) for row in rows]
         if MARKUP == "divs":
             return "".join("<div>%s</div>" % " ".join(str(value)
                                                     for value in row)
@@ -2544,7 +2598,8 @@ class Client(object):
                       "total": total}
             if VERSION == 2:
                 export["caps"] = {}
-            return Response(200, json.dumps(export))
+            return Response(500 if MARKUP == "erring" else 200,
+                            json.dumps(export))
         if parts[2:] == ["export.csv"]:
             head = "sku,quantity,net" + (",cap" if VERSION == 2 else "")
             return Response(200, "\\n".join([head] + [
@@ -2602,6 +2657,8 @@ def upgrade_self_checks(scratch):
     hidden = upgrade_reading(scratch, "sound+divs", "rerating+divs")
     wrapped = upgrade_reading(scratch, "sound+pcells", "sound+pcells")
     rewrapped = upgrade_reading(scratch, "sound+pcells", "rerating+pcells")
+    terse_read = upgrade_reading(scratch, "sound", "sound+terse")
+    erring = upgrade_reading(scratch, "sound", "sound+erring")
     failed = sorted(mode for mode, reading in faults.items()
                     if reading.get("passed") is False)
     return [
@@ -2637,6 +2694,14 @@ def upgrade_self_checks(scratch):
          and rewrapped.get("failures") == [
              "/jurisdictions no longer shows 'standard=0.2' for UP",
              "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
+        ("a value written as another amount, a sign before it or no "
+         "trailing zeros, reads as the same value",
+         terse_read.get("passed") is True and not terse_read.get("failures")),
+        ("an export answering an error fails the upgrade, naming its status",
+         erring.get("passed") is False
+         and erring.get("failures") == [
+             "/invoices/1/export.json answered 500",
+             "/invoices/2/export.json answered 500"]),
         ("a row found by no key leaves the upgrade missing, never passed",
          hidden.get("passed") is None
          and hidden.get("missing", "").startswith("row for ")
