@@ -357,15 +357,27 @@ def gated(response, token=True):
         return True
     if response.status_code not in REDIRECTS:
         return False
-    return urlsplit(response.headers.get("Location", "")).path == "/sign-in"
+    return location(response) == "/sign-in"
+
+
+# A redirect may name its target relative to the request, as `invoices/1`
+# after a post to `/invoices`; it is resolved against the path the answer
+# was asked on, as a browser resolves it.
+def location(response):
+    """The path a redirect sends to, resolved against its request's."""
+    asked = getattr(response, "asked_path", None) or "/"
+    return urlsplit(urljoin("http://localhost" + asked,
+                            response.headers.get("Location", ""))).path
 
 
 def ask(who, method, path, data=None, headers=None):
     try:
-        return who.open(path, method=method, data=data,
-                        headers=headers or {})
+        answer = who.open(path, method=method, data=data,
+                          headers=headers or {})
     except Exception as error:
         raise Raised(repr(error)[:300])
+    answer.asked_path = urlsplit(path).path
+    return answer
 
 
 def page(who, path):
@@ -440,7 +452,7 @@ def saved_page(answer):
     """The invoice page a save redirected to, or None."""
     if answer.status_code not in REDIRECTS:
         return None
-    path = urlsplit(answer.headers.get("Location", "")).path
+    path = location(answer)
     if re.match(r"^/invoices/[^/]+$", path) and path not in (
             "/invoices/new", "/invoices/preview"):
         return path
@@ -1263,8 +1275,9 @@ def read_trial(area, name, scores_file, other):
 # product list of the third instance made, the second co-existence's, and
 # `hanging` holds one concurrent write, and its lock, for a minute;
 # `late-stray` writes outside on its first malformed request, then hangs.
-# `reader` reads a database outside its folder, opened read-only, which is
-# no fault.
+# `reader` reads a database outside its folder, opened read-only, and
+# `relative` answers a save with a location relative to `/invoices`, which
+# are no faults.
 # `poisoned` stores a price it cannot then list, so its products page
 # answers 500 once fuzzing has stored one, which is no fault of any probe's;
 # `detached` and `plain-save` place the builder's save control and the
@@ -1572,7 +1585,9 @@ class Client(object):
                 "INSERT INTO lines VALUES (?, ?, ?, ?)",
                 [(invoice, position, sku, quantity)
                  for position, (sku, quantity) in enumerate(lines)])
-        return Response(302, "", {"Location": "/invoices/%d" % invoice})
+        target = ("invoices/%d" if MODE == "relative"
+                  else "/invoices/%d") % invoice
+        return Response(302, "", {"Location": target})
 
     def show(self, parts):
         if parts[0] != "invoices" or len(parts) > 2 and parts[2] not in (
@@ -1667,6 +1682,7 @@ def runtime_self_checks(scratch):
     connection.commit()
     connection.close()
     modes = (["sound", "slow", "poisoned", "detached", "plain-save", "reader",
+              "relative",
               "gated", "refusing", "broken"]
              + sorted(FAULTS))
     readings = fake_readings(scratch, modes)
@@ -1763,6 +1779,12 @@ def runtime_self_checks(scratch):
          any("could not be reached" in entry.get("reason", "")
              for entry in probes["unformed"]["fuzz_robustness"].get(
                  "failed", []))),
+        ("a save redirected to a relative location reads as the sound "
+         "app's", failing(probes["relative"]) == []
+         and probes["relative"]["latency_p95_ms"].get("value") is not None
+         and all(probes["relative"][name].get("passed")
+                 is sound[name].get("passed") is True
+                 for name in ("capacity_500_lines", "n_plus_one"))),
         ("a database outside, opened read-only, is no stray write",
          failing(probes["reader"]) == []
          and probes["reader"]["coexistence"].get("stray") == []),
