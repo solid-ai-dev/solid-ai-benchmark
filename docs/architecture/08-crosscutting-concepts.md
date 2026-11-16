@@ -629,8 +629,9 @@ FR-12-23):
   module, met where the module passes whole: no check failed, errored or
   skipped. A module missing from a build's report is not measured where
   the suite's revision did not hold it, and not met where it did: it failed
-  to collect or ran out of time. The sub-characteristic is still one share
-  among three on its axis, however many modules it holds.
+  to collect. A suite that ran out of time fails every module: the build
+  held it there. The sub-characteristic is still one share among three on
+  its axis, however many modules it holds.
 - **Quality probes.** Each pass-or-fail probe is one target: fault
   tolerance, availability, capacity, resource use, co-existence and
   portability. A lost probe fails; a missing one is not measured.
