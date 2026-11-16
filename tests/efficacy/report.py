@@ -41,7 +41,8 @@ import lib  # noqa: E402
 from generate_arm import RECORDED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
                      ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
-                     ROUND5E_ARMS, SCORABLE, SECTIONS_INTO, TEMPLATES_ENV,
+                     ROUND5E_ARMS, SCORABLE, SECTIONS_INTO, SKILLS_INTO,
+                     TEMPLATES_ENV,
                      VENDORED, VOIDING,
                      TrialError, canonical, git, reach, read_transcripts,
                      read_change_prompt, recorded_round,
@@ -3295,6 +3296,12 @@ TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
 SECTION_OPERAND = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
                              + r"[\w./*?\[\]-]+)")
 
+# A skill's file named in an operand, by its path under the folder the arm
+# installs its skills in: reading it reads the skill, as loading it does.
+SKILL_OPERAND = re.compile(re.escape(SKILLS_INTO + "/")
+                           + r"([\w.*?\[\]-]+/SKILL\.md)")
+SKILL_FILE = "SKILL.md"
+
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
@@ -3774,6 +3781,12 @@ def map_use(files, arm, templates=None, delegated=()):
         elif name == "Skill" and entry.get("skills"):
             skill = str(given.get("skill") or "").strip()
             found = [skill] if skill in known else []
+
+        # A skill's file read through a read or a shell command is that
+        # skill used, counted once with any loading of it.
+        elif name in SHELLS + ("Read",) and entry.get("skills"):
+            found = skill_reads(name, given, command, known, writes_at,
+                                first_write, before)
         if name not in SHELLS and first_write is None:
             before.update(found)
         if first_write is None and (name in WRITES or writes_at is not None):
@@ -3784,6 +3797,26 @@ def map_use(files, arm, templates=None, delegated=()):
     return {"uses": uses, "first_write": first_write,
             "before_write": sorted(before) if first_write is not None
             else None, "by_subagent": by_subagent}
+
+
+def skill_reads(name, given, command, known, writes_at, first_write,
+                before):
+    """The skills a read or a shell command reads the file of, by name, each
+    a shell command read before its first write added to `before`."""
+    files = sorted("%s/%s" % (skill, SKILL_FILE) for skill in known)
+    if name == "Read":
+        path = str(given.get("file_path") or "").replace("\\", "/")
+        return [read.split("/")[0] for read in SKILL_OPERAND.findall(path)
+                if read.split("/")[0] in known]
+    found = []
+    for index, read in shell_reads(command, files, SKILL_OPERAND):
+        skill = read.split("/")[0]
+        if skill in known:
+            found.append(skill)
+            if first_write is None and (writes_at is None
+                                        or index < writes_at):
+                before.add(skill)
+    return found
 
 
 def report_uses(root, trials, task="build"):
@@ -5951,6 +5984,8 @@ def registered_checks(seed):
             CHECK_LOOP[0]: {block: 0.111105 for block in range(1, 6)},
             CHECK_LOOP[1]: {block: 0.12345 for block in range(1, 6)}}}},
         seed, CHECK_LOOP)
+    hairline = text(plant({("lazyref", "build"): 1.8,
+                           ("lazyref", "change"): 0.9}))
     builds_alone = text({name: dict(trial, change=None)
                          for name, trial in plant(cheaper).items()})
 
@@ -5973,6 +6008,10 @@ def registered_checks(seed):
          "axis worse",
          "**Kept.**" in kept and "| build task | 20 % |" in kept
          and "| change task | 20 % |" in kept),
+        ("a cost drop a float's error under 10 % reads yes in the table and "
+         "keeps the loop",
+         "**Kept.**" in hairline and hairline.count("| 10 % | 10 % to 10 % "
+                                                    "| yes |") == 2),
         ("the check loop is not kept on the build task's readings alone",
          "**Not decided.**" in builds_alone
          and "| build task | 20 % |" in builds_alone),
@@ -6158,6 +6197,56 @@ def planted_registry(repository, branch=REGISTRATION_BRANCH):
         "-c", "user.email=self-test@example.invalid", "commit", "-q", "-m",
         "register", env=env)
     return repository
+
+
+def round3_checks(seed):
+    """A skill's file read is that skill used, once with its loading; C1's
+    non-inferiority needs the lower bound strictly above minus the margin;
+    and the cost gate meets 10 % within a float's error."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-skill-reads-")
+    planted = os.path.join(scratch, "skills.jsonl")
+    calls = [("Skill", {"skill": "base-quality"}),
+             ("Read", {"file_path": "C:\\pen\\.claude\\skills\\"
+                                    "base-quality\\SKILL.md"}),
+             ("Bash", {"command": "cat .claude/skills/backend-*/SKILL.md"}),
+             ("Bash", {"command": "ls .claude/skills"}),
+             ("Read", {"file_path": "/pen/.claude/skills/other/SKILL.md"})]
+    with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
+        for turn, (name, given) in enumerate(calls, 1):
+            handle.write(json.dumps({"type": "assistant", "message": {
+                "id": "m%d" % turn, "content": [{
+                    "type": "tool_use", "id": "t%d" % turn, "name": name,
+                    "input": given}]}}) + "\n")
+    used = map_use([planted], "lazyskills",
+                   ["base-quality", "backend-api", "backend-auth"])
+    shutil.rmtree(scratch, ignore_errors=True)
+
+    def states(low, high):
+        """The Reliability state of an interval at its margin."""
+        return dict(axis_states({"iso:Reliability": {"a-b": {
+            "verdict": "held", "interval": {"low": low, "high": high}}}},
+            "a-b"))["Reliability"]
+    margin = ISO_MARGINS["Reliability"]
+    hair = cost_drop({"cost_usd": {
+        "label": "cost", "direction": DOWN, "values": {
+            CHECK_LOOP[0]: {block: 0.90 for block in range(1, 6)},
+            CHECK_LOOP[1]: {block: 1.00 for block in range(1, 6)}}}},
+        seed, CHECK_LOOP)
+    return [
+        ("a skill's file read or shell-read is that skill used, once with "
+         "its loading",
+         templates_read({"lazyskills-1": used}, "lazyskills") == 3.0
+         and sorted({skill for _, skill in used["uses"]})
+         == ["backend-api", "backend-auth", "base-quality"]),
+        ("C1 reads an axis non-inferior only with its lower bound strictly "
+         "above minus the margin",
+         states(-margin, -margin) == "inconclusive"
+         and states(-margin + 0.1, 0.0) == "non-inferior"),
+        ("a cost drop a float's error under 10 % meets the gate",
+         hair[0] < COST_DROP and meets_cost_drop(hair[0])
+         and check_loop_kept({task: {"cost": hair, "worse": []}
+                              for task, _ in TASKS}) is True),
+    ]
 
 
 def change_only_checks():
@@ -7722,6 +7811,16 @@ UP_FRONT = "reference"
 # shown beside it and decides nothing.
 COST_DROP = 0.10
 
+# How far under COST_DROP a drop may read and still meet it: a share worked
+# out in floating point, as 0.90 against 1.00 is, lands a hair under.
+COST_TOLERANCE = 1e-9
+
+
+def meets_cost_drop(drop):
+    """Whether a cost drop meets the check loop's gate, within the
+    tolerance; the table's column and the decision both read this."""
+    return drop is not None and drop >= COST_DROP - COST_TOLERANCE
+
 # What no axis flagged worse reads as: the absence of a flag, never a claim
 # that nothing got worse.
 NO_DEGRADATION = "no degradation detected under the registered rule"
@@ -7737,17 +7836,20 @@ def registered_pairs():
 def axis_states(iso_results, label):
     """Each ISO axis of one pair on one task, as (axis, state): `worse`
     where the whole interval lies past the margin downward,
-    `non-inferior` where its lower bound clears minus the margin,
-    `inconclusive` where it crosses the margin, None where unread."""
+    `non-inferior` where its lower bound lies strictly above minus the
+    margin, `inconclusive` otherwise, None where unread."""
     states = []
     for axis, _ in ISO_AXES:
         contrast = iso_results.get("iso:" + axis, {}).get(label) or {}
-        held = contrast.get("non_inferior") or {}
+        low = (contrast.get("interval") or {}).get("low")
+
+        # Round C1 registered the strict bound: a lower bound on minus the
+        # margin has not cleared it. The pilot rounds keep their own rule.
         if contrast.get("verdict") == "worse":
             state = "worse"
-        elif contrast.get("verdict") not in COUNTED_VERDICTS:
+        elif contrast.get("verdict") not in COUNTED_VERDICTS or low is None:
             state = None
-        elif held.get("within"):
+        elif low > -ISO_MARGINS[axis]:
             state = "non-inferior"
         else:
             state = "inconclusive"
@@ -7828,7 +7930,7 @@ def check_loop_kept(reads):
     A task that misses either is enough to refuse it; keeping it needs both
     tasks read, so it is None while one is not."""
     if any(read["worse"] or (read["cost"][0] is not None
-                             and read["cost"][0] < COST_DROP)
+                             and not meets_cost_drop(read["cost"][0]))
            for read in reads.values()):
         return False
     if set(reads) != {task for task, _ in TASKS} or any(
@@ -7887,7 +7989,7 @@ def registered_lines(tasks, seed, uses_by_task):
             lines.append("| %s | %s | %s to %s | %s | %s | %s |" % (
                 label, percent(drop), percent(low), percent(high),
                 "—" if drop is None else
-                ("yes" if drop >= COST_DROP else "no"),
+                ("yes" if meets_cost_drop(drop) else "no"),
                 worse_words(read), non_inferior_words(read)))
         kept = check_loop_kept(loop)
         lines.extend(["", "**%s.** %s Keeping the loop is no claim that "
@@ -10148,6 +10250,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in registered_checks(seed))
     checks.extend((label, ok, ok) for label, ok in task_use_checks())
     checks.extend((label, ok, ok) for label, ok in pair_contrast_checks(seed))
+    checks.extend((label, ok, ok) for label, ok in round3_checks(seed))
     checks.extend((label, ok, ok) for label, ok
                   in change_finding_checks(seed))
     for label, ok, got in checks:

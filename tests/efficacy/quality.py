@@ -1119,15 +1119,16 @@ def data_upgrade(seeded):
                      for value in values if value not in shown]
 
         # Each field the fixture's page wrote of a seeded record, its price
-        # or rate as much as its name, still shows in that record's row; a
-        # column the change adds is its own, and is no loss.
+        # or rate as much as its name, still shows whole as a cell of that
+        # record's row, never only inside a longer one; a column the change
+        # adds is its own, and is no loss.
         text = answer.get_data(as_text=True)
         for key, cells in (seeded.get("rows") or {}).get(path, {}).items():
             now = row_cells(text, key)
             if not cells or now is None:
                 continue
             failures += ["%s no longer shows %r for %s" % (path, cell, key)
-                         for cell in cells if cell not in " ".join(now)]
+                         for cell in cells if cell not in now]
     for old in seeded["invoices"]:
         now = invoice_reading(old["path"])
         if not 200 <= now["status"] < 300:
@@ -1953,7 +1954,8 @@ def create_app(database):
 # `dropping` rebuilds an old file empty, `rewriting` migrates and resets every
 # jurisdiction's rate, rows all kept, `rerating` migrates and clears every
 # jurisdiction's listed rates, which no invoice prices with and only its page
-# shows, `fragile` cannot read an old
+# shows, `extending` appends a digit to them, the old rates still inside the
+# new, `fragile` cannot read an old
 # jurisdiction's empty cap, so old invoices break while new ones open, and
 # `refusing` will not open an old file at all. At version 1, `unlisting`
 # links no customer, so nothing can be seeded.
@@ -2034,6 +2036,9 @@ class App(object):
                                    "default_rate = '0'")
             if MODE == "rerating":
                 connection.execute("UPDATE jurisdictions SET rates = ''")
+            if MODE == "extending":
+                connection.execute("UPDATE jurisdictions SET rates = rates "
+                                   "|| '1' WHERE rates != ''")
         if not connection.execute("SELECT * FROM admin").fetchone():
             connection.execute("INSERT INTO admin VALUES (?)", (
                 os.environ.get("TARIFF_ADMIN_PASSWORD"),))
@@ -2261,7 +2266,7 @@ def create_app(database):
 
 # The faults the data upgrade must catch at version 2, and what each loses.
 UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "rerating",
-                  "fragile", "refusing")
+                  "extending", "fragile", "refusing")
 
 
 def plant_upgrade(where, version, mode):
@@ -2320,6 +2325,11 @@ def upgrade_self_checks(scratch):
          "fails the upgrade",
          faults["rerating"].get("passed") is False
          and faults["rerating"].get("failures") == [
+             "/jurisdictions no longer shows 'standard=0.2,reduced=0.05' "
+             "for UP"]),
+        ("a listed field kept only inside a longer one fails the upgrade",
+         faults["extending"].get("passed") is False
+         and faults["extending"].get("failures") == [
              "/jurisdictions no longer shows 'standard=0.2,reduced=0.05' "
              "for UP"]),
         ("old invoices that break on the new field fail the upgrade",
