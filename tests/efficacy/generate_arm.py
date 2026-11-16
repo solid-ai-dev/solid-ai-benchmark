@@ -42,7 +42,7 @@ import tempfile
 import textwrap
 
 from harness import (ROUND5_DECLINED, ROUND5_REF,  # noqa: E402
-                     ROUND5_ROOTS, SECTIONS_INTO,
+                     ROUND5_ROOTS, SECTIONS_INTO, arm_vendor,
                      TEMPLATES_ENV, VENDORED, TrialError, source_record,
                      templates_root, assert_outside_repository, read_input)
 
@@ -937,10 +937,16 @@ def on_demand_checks(records, brief):
         print("FAIL: lazyrefold is not built at the check-loop commit's "
               "parent, %s" % parent[:8])
         return 1
-    old = dict(vendored_files(parent),
-               **{"CLAUDE.md": committed_arm("lazyrefold")[0]})
-    new = dict(vendored_files(commit),
-               **{"CLAUDE.md": build_arm("lazyref", commit, brief)[0]})
+
+    # The pair compared is the one a trial gets: each arm's committed root
+    # and the templates vendored at the ref the harness reads from its
+    # record, not a build made here, which no trial runs.
+    def installed(arm, ref=None):
+        """An arm's workspace files: its committed root and the templates
+        vendored at `ref`, by default the one its record names."""
+        return dict(vendored_files(ref or arm_vendor(arm)["ref"]),
+                    **{"CLAUDE.md": committed_arm(arm)[0]})
+    old, new = installed("lazyrefold"), installed("lazyref")
     removed, added, inside = commit_change(CHECK_LOOP)
     path = "%s/%s" % (VENDORED["into"], CHECK_LOOP["file"])
     findings = pair_findings(old, new, path, (removed, added))
@@ -961,6 +967,16 @@ def on_demand_checks(records, brief):
         return 1
     print("a line changed besides the commit's, one of its lines missing, or "
           "one outside its section is reported")
+
+    # A `lazyref` committed at another ref than the check-loop commit, as
+    # one left at an earlier round's, makes a pair no trial should read.
+    stale = installed("lazyref", "%s^" % parent)
+    if not pair_findings(old, stale, path, (removed, added)):
+        print("FAIL: a lazyref committed at another ref than the check-loop "
+              "commit is not reported")
+        return 1
+    print("a lazyref committed at another ref than the check-loop commit is "
+          "reported")
 
     # The section files and the inline root are two packagings of one rule
     # set at one ref, so each rule block of the one is a block of the other.
