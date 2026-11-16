@@ -6076,16 +6076,25 @@ def quality_value(trial, name):
 
 def module_value(trial, module):
     """1.0 where a hidden-suite module passed whole, 0.0 where any of its
-    checks failed, errored or was skipped, or where the suite's revision
-    held it and it did not run; None where the suite did not run, or its
-    revision did not hold the module."""
+    checks failed, errored or was skipped, where the suite ran out of time,
+    or where the suite's revision held it and it did not run; None where the
+    suite was not run, or its revision did not hold the module."""
     record = path(trial, "scores", "hidden_suite")
-    if not isinstance(record, dict) or record.get("missing"):
+    if not isinstance(record, dict):
+        return None
+    revision = path(record, "report", "suite_revision")
+    if module in SUITE_LACKS.get(revision, ()):
+        return None
+
+    # A suite that ran out of time was held there by the build under it, so
+    # every module fails, even where the scorer kept no rate from the run.
+    if path(record, "report", "timed_out") is True:
+        return 0.0
+    if record.get("missing"):
         return None
     counts = path(record, "report", "modules", module)
     if not isinstance(counts, dict):
-        revision = path(record, "report", "suite_revision")
-        return None if module in SUITE_LACKS.get(revision, ()) else 0.0
+        return 0.0
 
     # A skipped check is one nobody ran, so it cannot show the module whole.
     unproven = sum(counts.get(key) or 0
@@ -8083,6 +8092,61 @@ def iso_checks(seed):
     checks.append(("a module passes whole only where no check failed, "
                    "errored or was skipped",
                    got == [1.0, 0.0, 0.0, 0.0, None], got))
+
+    # A suite the build held past its time fails every module, both where
+    # pytest wrote no report, which the scorer files as missing, and where
+    # it wrote one partway; the records are the scorer's own, from the
+    # grader's timed-out report. A suite never run is still not measured.
+    import score
+
+    def timed_out(raw):
+        def grader(argv, cwd=None, env=None, timeout=None, stdin=None):
+            report = {"ok": False, "timed_out": True, "exit_status": None,
+                      "suite_revision": env["HIDDEN_SUITE_REVISION"],
+                      "suite": "build", "python": "3.12.10",
+                      "elapsed_seconds": 1800.0}
+            if raw:
+                report["modules"] = {module: dict(whole) for module in raw}
+                counts = dict(passed=5 * len(raw), failed=0, skipped=0,
+                              error=0, total=5 * len(raw))
+            else:
+                report["reason"] = "pytest wrote no report"
+                report["output_tail"] = ""
+                counts = dict(passed=0, failed=0, skipped=0, error=0,
+                              total=0)
+            graded = counts["passed"] + counts["failed"] + counts["error"]
+            report.update(counts=counts, graded=graded,
+                          pass_rate=counts["passed"] / graded if graded
+                          else 0.0)
+            with io.open(argv[argv.index("--report") + 1], "w",
+                         encoding="utf-8") as handle:
+                json.dump(report, handle)
+            return {"argv": list(argv), "cwd": cwd, "status": None,
+                    "stdout": "", "stderr": "", "failed": None}
+
+        trial = planted()
+        held = tempfile.mkdtemp(prefix="efficacy-report-suite-")
+        real = score.run
+        score.run = grader
+        try:
+            trial["scores"]["hidden_suite"] = score.run_hidden_suite(
+                os.path.join(held, "venv"), {
+                    "revision": "a8e79354eda873c72c6da7319cd0f93865a16812",
+                    "path": held}, held, "build")
+        finally:
+            score.run = real
+            shutil.rmtree(held, ignore_errors=True)
+        return trial
+
+    unreported, partway = timed_out(()), timed_out(HIDDEN_MODULES[:10])
+    unrun = suite({}, "the trial did not install")
+    got = (bool(path(unreported, "scores", "hidden_suite", "missing")),
+           {module_value(unreported, module) for module in HIDDEN_MODULES},
+           {module_value(partway, module) for module in HIDDEN_MODULES},
+           module_value(unrun, "test_seed.py"))
+    checks.append(("a suite the build held past its time fails every module, "
+                   "and one never run is not measured",
+                   got == (True, {0.0}, {0.0}, None), got))
 
     # A module absent from a report graded by a revision that did not hold
     # it is not measured, so correctness is the share of the modules that
