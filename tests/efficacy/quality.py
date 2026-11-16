@@ -966,25 +966,58 @@ def invoice_reading(path):
             "csv": csv_text.get_data(as_text=True)}
 
 
-ROW_OPEN = re.compile(r"<(?:tr|li|p)\b[^>]*>", re.IGNORECASE)
-ROW_CLOSE = re.compile(r"</(?:tr|li|p)>", re.IGNORECASE)
-CELL_OPEN = re.compile(r"<t[dh]\b[^>]*>", re.IGNORECASE)
-TAG = re.compile(r"<[^>]+>")
-
+# The kinds of element a page may write a record's row as, outermost first:
+# a page is read by the first kind it holds, so a paragraph inside a table
+# cell stays part of its row.
+ROW_KINDS = ("tr", "li", "p")
+ROW_TAG = re.compile(r"<(tr|li|p)\b", re.IGNORECASE)
 
 # What a row's text is split into whole values on: white space and the
 # separators a page writes a list in, so `standard=0.2` stays one value.
 TOKEN_SPLIT = re.compile(r"[\s,;|]+")
 
 
+class Rows(HTMLParser):
+    """The text of each outermost `kind` element on a page, every tag inside
+    it included, a `kind` nested inside it part of it."""
+
+    def __init__(self, kind):
+        HTMLParser.__init__(self, convert_charrefs=True)
+        self.kind, self.depth, self.rows = kind, 0, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == self.kind:
+            if not self.depth:
+                self.rows.append([])
+            self.depth += 1
+        if self.depth:
+            self.rows[-1].append(" ")
+
+    def handle_endtag(self, tag):
+        if self.depth:
+            self.rows[-1].append(" ")
+        if tag == self.kind and self.depth:
+            self.depth -= 1
+
+    def handle_data(self, data):
+        if self.depth:
+            self.rows[-1].append(data)
+
+
 def row_tokens(text, key):
     """The whole values the first row a page shows `key` in writes, in
-    order, a row being a table row, a list item or a paragraph, however its
-    cells are marked up; None where no row shows it."""
-    for chunk in ROW_OPEN.split(text)[1:]:
-        chunk = ROW_CLOSE.split(chunk)[0]
-        tokens = [token for token in TOKEN_SPLIT.split(html.unescape(
-            TAG.sub(" ", chunk))) if token]
+    order, a row being the outermost of a table row, a list item or a
+    paragraph the page holds, however its cells are marked up; None where
+    no row shows it."""
+    present = {tag.lower() for tag in ROW_TAG.findall(text)}
+    kind = next((kind for kind in ROW_KINDS if kind in present), None)
+    if kind is None:
+        return None
+    parser = Rows(kind)
+    parser.feed(text)
+    parser.close()
+    for row in parser.rows:
+        tokens = [token for token in TOKEN_SPLIT.split("".join(row)) if token]
         if key in tokens:
             return tokens
     return None
@@ -1985,7 +2018,7 @@ def create_app(database):
 # links no customer, so nothing can be seeded. `items`, at either version,
 # lists jurisdictions as list items rather than table rows, and is sound. A
 # mode ending `+divs` lists its records in bare `<div>`s, which no row is
-# found in.
+# found in, and one ending `+pcells` wraps each table cell in a paragraph.
 UPGRADE_APP = '''import decimal
 import json
 import os
@@ -2168,8 +2201,9 @@ class Client(object):
             return "<ul>%s</ul>" % "".join(
                 "<li>%s</li>" % " ".join(str(value) for value in row)
                 for row in rows)
+        cell = "<td><p>%s</p></td>" if MARKUP == "pcells" else "<td>%s</td>"
         return "<table>%s</table>" % "".join(
-            "<tr>%s</tr>" % "".join("<td>%s</td>" % value for value in row)
+            "<tr>%s</tr>" % "".join(cell % value for value in row)
             for row in rows)
 
     def create(self, connection, table, data):
@@ -2344,6 +2378,8 @@ def upgrade_self_checks(scratch):
     unseeded = upgrade_reading(scratch, "unlisting", "sound")
     items = upgrade_reading(scratch, "items", "items")
     hidden = upgrade_reading(scratch, "sound+divs", "rerating+divs")
+    wrapped = upgrade_reading(scratch, "sound+pcells", "sound+pcells")
+    rewrapped = upgrade_reading(scratch, "sound+pcells", "rerating+pcells")
     failed = sorted(mode for mode, reading in faults.items()
                     if reading.get("passed") is False)
     return [
@@ -2371,6 +2407,13 @@ def upgrade_self_checks(scratch):
         ("a listed field kept only inside a longer one fails the upgrade",
          faults["extending"].get("passed") is False
          and faults["extending"].get("failures") == [
+             "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
+        ("a table row whose cells are paragraphs is read whole: kept when "
+         "sound, its cleared values named",
+         wrapped.get("passed") is True
+         and rewrapped.get("passed") is False
+         and rewrapped.get("failures") == [
+             "/jurisdictions no longer shows 'standard=0.2' for UP",
              "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
         ("a row found by no key leaves the upgrade missing, never passed",
          hidden.get("passed") is None
