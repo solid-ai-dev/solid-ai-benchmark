@@ -19,6 +19,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 
@@ -75,7 +76,7 @@ import builtins, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from urllib.request import url2pathname
 
 PACKAGE = "tariff"
@@ -167,11 +168,14 @@ real_connect = sqlite3.connect
 # A database named by a `file:` URI, as `Path.as_uri()` writes one with
 # `uri=True`, is read back to the path it names: its query, such as
 # `?mode=rwc`, dropped, its escapes undone, and `/C:/...` read as a drive.
+# Opened with `mode=ro`, it is read and never written, so it is no write.
 def database_file(target):
-    """The file a connection opens, or None for a database in memory."""
+    """The file a connection may write, or None for a database in memory
+    or one opened read-only."""
     if target.startswith("file:"):
         parts = urlsplit(target)
-        if "mode=memory" in parts.query:
+        mode = parse_qs(parts.query).get("mode", [""])[-1]
+        if mode in ("memory", "ro"):
             return None
         path = parts.path
         if parts.netloc and parts.netloc != "localhost":
@@ -1195,6 +1199,15 @@ def read_trial(area, name, scores_file, other):
     tree = scores.get("workspace")
     result = {"name": name, "read_at": datetime.datetime.now().isoformat(
         timespec="seconds")}
+
+    # An archived round drops its extracted trees. With no tree there is
+    # nothing to install, which is no fault of the build's, so nothing is
+    # measured; the tree is not restored here.
+    if not tree or not os.path.isdir(tree):
+        reason = "source tree not present: %s" % tree
+        result["probes"] = {probe: missing_reading(probe, reason)
+                            for probe in PROBES}
+        return result
     where = os.path.join(area, "quality", name)
     os.makedirs(where, exist_ok=True)
     venv = create_venv(os.path.join(where, "venv"))
@@ -1250,6 +1263,8 @@ def read_trial(area, name, scores_file, other):
 # product list of the third instance made, the second co-existence's, and
 # `hanging` holds one concurrent write, and its lock, for a minute;
 # `late-stray` writes outside on its first malformed request, then hangs.
+# `reader` reads a database outside its folder, opened read-only, which is
+# no fault.
 # `poisoned` stores a price it cannot then list, so its products page
 # answers 500 once fuzzing has stored one, which is no fault of any probe's;
 # `detached` and `plain-save` place the builder's save control and the
@@ -1306,6 +1321,8 @@ GUARD = threading.Lock()
 STRAY = os.path.join(tempfile.gettempdir(), "tariff-quality-stray.log")
 HANDLE = open(STRAY, "a") if MODE == "stray" else None
 LATE = os.path.join(tempfile.gettempdir(), "tariff-quality-late.log")
+REFERENCE = os.path.join(tempfile.gettempdir(),
+                         "tariff-quality-reference.sqlite")
 INSTANCES = []
 
 
@@ -1355,6 +1372,10 @@ class App(object):
     def __init__(self, database):
         INSTANCES.append(self)
         self.number = len(INSTANCES)
+        if MODE == "reader":
+            uri = pathlib.Path(REFERENCE).as_uri() + "?mode=ro"
+            sqlite3.connect(uri, uri=True).execute(
+                "SELECT COUNT(*) FROM rates").fetchone()
         if HANDLE is not None:
             HANDLE.write("booted\\n")
             HANDLE.flush()
@@ -1639,8 +1660,14 @@ def failing(probes):
 def runtime_self_checks(scratch):
     """Each planted fault fails its own probe and no other; an app that
     keeps the probes from running loses them."""
-    modes = (["sound", "slow", "poisoned", "detached", "plain-save", "gated",
-              "refusing", "broken"]
+    reference = os.path.join(tempfile.gettempdir(),
+                             "tariff-quality-reference.sqlite")
+    connection = sqlite3.connect(reference)
+    connection.execute("CREATE TABLE IF NOT EXISTS rates (code TEXT)")
+    connection.commit()
+    connection.close()
+    modes = (["sound", "slow", "poisoned", "detached", "plain-save", "reader",
+              "gated", "refusing", "broken"]
              + sorted(FAULTS))
     readings = fake_readings(scratch, modes)
     probes = {mode: probe_results(*readings[mode]) for mode in modes}
@@ -1733,6 +1760,9 @@ def runtime_self_checks(scratch):
          any("could not be reached" in entry.get("reason", "")
              for entry in probes["unformed"]["fuzz_robustness"].get(
                  "failed", []))),
+        ("a database outside, opened read-only, is no stray write",
+         failing(probes["reader"]) == []
+         and probes["reader"]["coexistence"].get("stray") == []),
         ("a hung writer stops the run, every reading before it kept",
          "hung it" in probes["hanging"]["concurrent_writes"].get(
              "reason", "")
@@ -1775,7 +1805,8 @@ def runtime_self_checks(scratch):
                 for path in late["coexistence"].get("stray", []))
         and "stopped during fuzz_robustness" in late["fuzz_robustness"].get(
             "lost", "")))
-    for name in ("tariff-quality-stray.log", "tariff-quality-late.log"):
+    for name in ("tariff-quality-stray.log", "tariff-quality-late.log",
+                 "tariff-quality-reference.sqlite"):
         path = os.path.join(tempfile.gettempdir(), name)
         if os.path.exists(path):
             os.remove(path)
@@ -1851,6 +1882,23 @@ def claim_self_checks(scratch):
              and not os.path.exists(os.path.join(area, "quality")))]
 
 
+def absent_tree_self_checks(scratch):
+    """A trial whose tree is gone has nothing measured, and installs
+    nothing."""
+    area = os.path.join(scratch, "absent")
+    os.makedirs(area)
+    scores_file = os.path.join(area, "none-1.json")
+    with io.open(scores_file, "w", encoding="utf-8") as handle:
+        json.dump({"workspace": os.path.join(area, "dropped")}, handle)
+    result = read_trial(area, "none-1", scores_file, None)
+    return [("a trial whose source tree is gone is missing, not lost",
+             sorted(result["probes"]) == sorted(PROBES)
+             and all("source tree not present" in (probe.get("missing") or "")
+                     and not probe.get("lost")
+                     for probe in result["probes"].values())
+             and not os.path.exists(os.path.join(area, "quality")))]
+
+
 def leftover_self_checks(scratch):
     """A reading leaves no environment behind, and a trial that did not
     install loses every probe, portability too."""
@@ -1881,6 +1929,7 @@ def self_test():
     os.makedirs(scratch)
     checks = (runtime_self_checks(scratch) + reading_self_checks()
               + portability_self_checks(scratch) + claim_self_checks(scratch)
+              + absent_tree_self_checks(scratch)
               + leftover_self_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
