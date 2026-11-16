@@ -6,7 +6,8 @@ invoice of 500 lines, SQL statements per invoice line, two instances side by
 side, and the same build on another Python. Each passes or fails, except the
 latency, which is recorded as two repeats of its 95th percentile. A change
 task's tree is read on the same probes and on one more, the data upgrade: a
-database its fixture seeded, opened by the changed tree with nothing lost.
+database its fixture seeded, opened by the changed tree, its exported values
+kept and the change's own fields pricing as the change says.
 
 Each trial is installed into a fresh environment of its own, on the spec's
 Python, and read there in one in-process run through the test client. A probe
@@ -1006,23 +1007,6 @@ def fuzz_robustness():
                   statuses=[entry.get("status") for entry in answers])
 
 
-# An amount as a page may write it, which the data upgrade reads an old
-# invoice's price back by: grouped by thousands with a comma, a point, a
-# space, a no-break or narrow no-break space, or an apostrophe, and two
-# decimals after a point or a comma. The page is read with its character
-# references resolved, so `&nbsp;` and `&#8239;` group as the characters do.
-AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:[,.\u00a0\u202f' ]\d{3})+"
-                    r"|\d+)[.,](\d{2})(?!\d)")
-
-
-def shows_total(answer, total, tolerance=Decimal("0")):
-    """Whether a page shows an amount within `tolerance` of `total`, however
-    it is grouped and whatever currency sign stands beside it."""
-    return any(abs(Decimal(re.sub(r"\D", "", whole) + "." + cents) - total)
-               <= tolerance for whole, cents in AMOUNT.findall(
-                   html.unescape(answer.get_data(as_text=True))))
-
-
 # What the data upgrade seeds through the fixture's own application: a
 # product of each rated category, a customer, a rule of three kinds over the
 # new products, a jurisdiction of its own, and invoices that read all of
@@ -1045,6 +1029,13 @@ UPGRADE_JURISDICTION = {"code": "UP", "name": "Upgradia",
                         "default_rate": "0.2",
                         "rates": "standard=0.2,reduced=0.05"}
 CUSTOMER_LINK = re.compile(r"/customers/(\d+)(?![\d/])")
+TAG = re.compile(r"<[^>]+>")
+
+# The identifiers the list pages must still name after the upgrade. The
+# pages are read for presence alone: what each record holds is read from
+# the exports the specification fixes, never from the markup.
+PRESENCE = {"/jurisdictions": [UPGRADE_JURISDICTION["code"]],
+            "/rules": [item["rule_id"] for item in UPGRADE_RULES]}
 
 
 def upgrade_body(jurisdiction, customer, lines, coupons):
@@ -1054,13 +1045,29 @@ def upgrade_body(jurisdiction, customer, lines, coupons):
             "quantity": [str(quantity) for _, quantity in lines]}
 
 
+def upgrade_bodies(customer):
+    """The invoices the fixture saves: one in the seeded jurisdiction with a
+    line under each seeded rule, the coupon, a category's own rate and the
+    default rate, and one on the seed's own data and rules."""
+    return (upgrade_body("UP", customer, (("UPG-1", 3), ("UPG-2", 4),
+                                          ("SEE-5", 1)), "UPGRADE"),
+            upgrade_body("DE", "", WORKED, "WELCOME"))
+
+
 def text_of(answer):
-    return html.unescape(answer.get_data(as_text=True))
+    """A page's text, its markup taken out and its references decoded."""
+    return html.unescape(TAG.sub(" ", answer.get_data(as_text=True)))
 
 
-def created(path, body):
+def identified(answer, identifier):
+    """Whether a page names `identifier` whole, whatever markup holds it."""
+    return re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(identifier),
+                     text_of(answer)) is not None
+
+
+def created(who, path, body):
     """Post one record through its form; Gated where it is turned away."""
-    answer = held(form_post(client, path, path, body), "the post to " + path)
+    answer = held(form_post(who, path, path, body), "the post to " + path)
     return answer.status_code
 
 
@@ -1068,7 +1075,7 @@ def customer_id(email):
     """The id the customer list links to for `email`, read from each linked
     customer's export."""
     for found in sorted(set(CUSTOMER_LINK.findall(
-            text_of(page(client, "/customers")))), key=int):
+            page(client, "/customers").get_data(as_text=True))), key=int):
         try:
             export = json.loads(page(client, "/customers/%s/export.json"
                                      % found).get_data(as_text=True))
@@ -1079,23 +1086,12 @@ def customer_id(email):
     return None
 
 
-def listed_on():
-    """What each list page must show of the records seeded."""
-    return {
-        "/products": [value for item in UPGRADE_PRODUCTS
-                      for value in (item["sku"], item["name"])],
-        "/customers": [UPGRADE_CUSTOMER["name"], UPGRADE_CUSTOMER["email"]],
-        "/rules": [item["rule_id"] for item in UPGRADE_RULES],
-        "/jurisdictions": [UPGRADE_JURISDICTION["code"],
-                           UPGRADE_JURISDICTION["name"]]}
-
-
-def invoice_reading(path):
+def invoice_reading(who, path):
     """A saved invoice as other software reads it: its page's status, its
-    JSON export parsed, and its CSV export's text."""
-    shown = page(client, path)
-    export = page(client, path + "/export.json")
-    csv_text = page(client, path + "/export.csv")
+    JSON export parsed, its CSV export's text, and each one's status."""
+    shown = page(who, path)
+    export = page(who, path + "/export.json")
+    csv_text = page(who, path + "/export.csv")
     try:
         parsed = json.loads(export.get_data(as_text=True))
     except ValueError:
@@ -1105,133 +1101,62 @@ def invoice_reading(path):
             "csv": csv_text.get_data(as_text=True)}
 
 
-# The kinds of element a page may write a record's row as, outermost first:
-# a page is read by the first kind it holds, so a paragraph inside a table
-# cell stays part of its row.
-ROW_KINDS = ("tr", "li", "p")
-ROW_TAG = re.compile(r"<(tr|li|p)\b", re.IGNORECASE)
-
-# What a row's text is split into whole values on: white space and the
-# separators a page writes a list in, so `standard=0.2` stays one value.
-TOKEN_SPLIT = re.compile(r"[\s,;|]+")
-
-
-class Rows(HTMLParser):
-    """The text of each outermost `kind` element on a page, every tag inside
-    it included, a `kind` nested inside it part of it."""
-
-    def __init__(self, kind):
-        HTMLParser.__init__(self, convert_charrefs=True)
-        self.kind, self.depth, self.rows = kind, 0, []
-
-    def handle_starttag(self, tag, attrs):
-        if tag == self.kind:
-            if not self.depth:
-                self.rows.append([])
-            self.depth += 1
-        if self.depth:
-            self.rows[-1].append(" ")
-
-    def handle_endtag(self, tag):
-        if self.depth:
-            self.rows[-1].append(" ")
-        if tag == self.kind and self.depth:
-            self.depth -= 1
-
-    def handle_data(self, data):
-        if self.depth:
-            self.rows[-1].append(data)
+def answered(reading, path):
+    """Each part of an invoice's reading that answered no success, named; an
+    export served with an error is no export, whatever its body holds."""
+    return ["%s%s answered %d" % (path, suffix, reading[key])
+            for key, suffix in (("status", ""),
+                                ("export_status", "/export.json"),
+                                ("csv_status", "/export.csv"))
+            if not 200 <= reading[key] < 300]
 
 
-def row_tokens(text, key):
-    """The whole values the first row a page shows `key` in writes, in
-    order, a row being the outermost of a table row, a list item or a
-    paragraph the page holds, however its cells are marked up; None where
-    no row shows it."""
-    present = {tag.lower() for tag in ROW_TAG.findall(text)}
-    kind = next((kind for kind in ROW_KINDS if kind in present), None)
-    if kind is None:
-        return None
-    parser = Rows(kind)
-    parser.feed(text)
-    parser.close()
-    for row in parser.rows:
-        tokens = [token for token in TOKEN_SPLIT.split("".join(row)) if token]
-        if key in tokens:
-            return tokens
-    return None
-
-
-def row_keys():
-    """The value each seeded record's row is found by, on each list page."""
-    return {
-        "/products": [item["sku"] for item in UPGRADE_PRODUCTS],
-        "/customers": [UPGRADE_CUSTOMER["email"]],
-        "/rules": [item["rule_id"] for item in UPGRADE_RULES],
-        "/jurisdictions": [UPGRADE_JURISDICTION["code"]]}
-
-
-def shown_rows():
-    """Every seeded record's row as its list page shows it: each field the
-    page writes, its price, rate or kind among them, by page and key."""
-    rows = {}
-    for path, keys in row_keys().items():
-        text = page(client, path).get_data(as_text=True)
-        rows[path] = {key: row_tokens(text, key) for key in keys}
-    return rows
+def absent_identifiers(who):
+    """Each seeded identifier a list page no longer names, and each list
+    page that answers no success."""
+    failures = []
+    for path, identifiers in PRESENCE.items():
+        answer = page(who, path)
+        if not ok(answer):
+            failures.append("%s answered %d" % (path, answer.status_code))
+            continue
+        failures += ["%s no longer names %s" % (path, identifier)
+                     for identifier in identifiers
+                     if not identified(answer, identifier)]
+    return failures
 
 
 def seed_upgrade():
-    """Seed the records through the fixture's forms and read each back as
-    the fixture shows it; the readings, or why the fixture could not."""
+    """Seed the records through the fixture's forms and read back the
+    exports of the invoices it saves; the readings, or why the fixture
+    could not."""
     for item in UPGRADE_PRODUCTS:
-        created("/products", item)
-    created("/customers", UPGRADE_CUSTOMER)
+        created(client, "/products", item)
+    created(client, "/customers", UPGRADE_CUSTOMER)
     for item in UPGRADE_RULES:
-        created("/rules", item)
-    created("/jurisdictions", UPGRADE_JURISDICTION)
+        created(client, "/rules", item)
+    created(client, "/jurisdictions", UPGRADE_JURISDICTION)
     customer = customer_id(UPGRADE_CUSTOMER["email"])
     if customer is None:
         return None, "the seeded customer is not listed with its export"
-    bodies = (upgrade_body("UP", customer, (("UPG-1", 3), ("UPG-2", 4)),
-                           "UPGRADE"),
-              upgrade_body("DE", "", WORKED, "WELCOME"))
+    unlisted = absent_identifiers(client)
+    if unlisted:
+        return None, "the fixture: %s" % unlisted[0]
     invoices = []
-    for body in bodies:
+    for body in upgrade_bodies(customer):
         answer = held(form_post(client, "/invoices/new", "/invoices", body),
                       "the save")
         path = saved_page(answer)
         if path is None:
             return None, "an invoice was not saved: it answered %d" % (
                 answer.status_code)
-        reading = invoice_reading(path)
-        if not (200 <= reading["status"] < 300
-                and 200 <= reading["export_status"] < 300
-                and isinstance(reading["export"], dict)
-                and 200 <= reading["csv_status"] < 300):
-            return None, "the fixture does not show the invoice it saved"
-        preview = held(form_post(client, "/invoices/new",
-                                 "/invoices/preview", body,
-                                 headers={"HX-Request": "true"}),
-                       "the preview")
-        try:
-            total = Decimal(str(reading["export"].get("total")))
-        except InvalidOperation:
-            total = None
-
-        # A preview is read against the old total only where the fixture's
-        # own preview shows it.
-        reading.update(body=body, path=path,
-                       total=None if total is None else str(total),
-                       previewed=bool(total is not None and ok(preview)
-                                      and shows_total(preview, total)))
+        reading = invoice_reading(client, path)
+        unread = answered(reading, path)
+        if unread or not isinstance(reading["export"], dict):
+            return None, "the fixture's %s" % (
+                unread[0] if unread else path + "/export.json is not JSON")
+        reading.update(body=body, path=path)
         invoices.append(reading)
-    pages = listed_on()
-    for path, values in pages.items():
-        shown = text_of(page(client, path))
-        missing = [value for value in values if value not in shown]
-        if missing:
-            return None, "%s does not list %s" % (path, missing[0])
     export = page(client, "/customers/%s/export.json" % customer)
     if not ok(export):
         return None, "the seeded customer's export answered %d" % (
@@ -1240,33 +1165,8 @@ def seed_upgrade():
         customer_export = json.loads(export.get_data(as_text=True))
     except ValueError:
         return None, "the seeded customer's export is not JSON"
-    return {"invoices": invoices, "pages": pages, "rows": shown_rows(),
+    return {"invoices": invoices,
             "customer": {"id": customer, "export": customer_export}}, None
-
-
-# A currency a page may write before an amount, as a sign or a code.
-CURRENCY = re.compile(r"^(?:€|\$|£|EUR|USD|GBP)\s*", re.IGNORECASE)
-
-
-def same_token(old, new):
-    """Whether a value a page wrote reads as another: equal as text, or as
-    amounts once a leading currency is set aside, `50.00` as `€50`; a
-    `key=value` reads so only with the same key and a value that does."""
-    if old == new:
-        return True
-    if "=" in old and "=" in new:
-        old_key, _, old_value = old.partition("=")
-        new_key, _, new_value = new.partition("=")
-        return old_key == new_key and same_token(old_value, new_value)
-    try:
-        return Decimal(CURRENCY.sub("", old)) == Decimal(CURRENCY.sub("", new))
-    except (InvalidOperation, ValueError):
-        return False
-
-
-def has_token(tokens, wanted):
-    """Whether a row's values hold one that reads as `wanted`."""
-    return any(same_token(wanted, token) for token in tokens)
 
 
 def unkept(old, new, where="$"):
@@ -1295,8 +1195,9 @@ def unkept(old, new, where="$"):
 
 
 def csv_unkept(old, new):
-    """Where a CSV export no longer holds an old column's values, or None.
-    A column only the new export has is the change's own."""
+    """Where a CSV export no longer holds an old column's values, row by row
+    in order, the total row's included, or None. A column only the new
+    export has is the change's own."""
     before = list(csv.DictReader(io.StringIO(old)))
     after = list(csv.DictReader(io.StringIO(new)))
     if len(before) != len(after):
@@ -1309,151 +1210,163 @@ def csv_unkept(old, new):
     return None
 
 
-def data_upgrade(seeded):
-    """The changed tree on a copy of the fixture's database: every record
-    seeded is still there and reads the same, every old invoice opens and
-    prices as it did, and the upgraded database takes new records."""
-    failures, unfound = [], []
-    for path, values in seeded["pages"].items():
-        answer = page(client, path)
-        shown = text_of(answer)
-        if not ok(answer):
-            failures.append("%s answered %d" % (path, answer.status_code))
-            continue
-        failures += ["%s no longer lists %s" % (path, value)
-                     for value in values if value not in shown]
+def without_id(export):
+    """An invoice's JSON export without the id the application assigned."""
+    if not isinstance(export, dict):
+        return export
+    return {key: value for key, value in export.items()
+            if key != "invoice_id"}
 
-        # Each value the fixture's page wrote of a seeded record, its price
-        # or rate as much as its name, still shows whole in that record's
-        # row, never only inside a longer one; a value the change adds is
-        # its own, and is no loss.
-        # A row neither page marks so it can be found by its key leaves the
-        # values unread, never kept; a key gone from the page is a loss, as
-        # the listing above reads it.
-        text = answer.get_data(as_text=True)
-        for key, tokens in (seeded.get("rows") or {}).get(path, {}).items():
-            now = row_tokens(text, key)
-            if tokens is None or (now is None and key in shown):
-                unfound.append(key)
-                continue
-            if now is None:
-                continue
-            failures += ["%s no longer shows %r for %s" % (path, token, key)
-                         for token in tokens if not has_token(now, token)]
-    for old in seeded["invoices"]:
-        now = invoice_reading(old["path"])
-        if not 200 <= now["status"] < 300:
-            failures.append("%s answered %d" % (old["path"], now["status"]))
+
+def kept_exports(old, now, what):
+    """Where an invoice's exports no longer read as the old ones did."""
+    failures = []
+    place = unkept(old["export"], now["export"])
+    if place:
+        failures.append("%s/export.json no longer reads the same at %s"
+                        % (what, place))
+    place = csv_unkept(old["csv"], now["csv"])
+    if place:
+        failures.append("%s/export.csv: %s" % (what, place))
+    return failures
+
+
+# The change's own fields, each exercised where a field dropped shows in a
+# saved invoice's figures: a threshold of 10 % from 200.00 and a cap of
+# 50.00 on the reduced rate, in a jurisdiction whose standard rate is 0.2,
+# on two products no other rule reaches. The seed's invoice percentage would
+# share the threshold's slot and move every taxable amount off the cap, so
+# it is deleted first, on the upgraded copy alone.
+SEED_PERCENTAGE = "r-pct-all"
+CHANGE_PRODUCTS = (
+    {"sku": "UPG-3", "name": "Upgrade token", "unit_price": "25.00",
+     "tax_category": "standard"},
+    {"sku": "UPG-4", "name": "Upgrade leaflet", "unit_price": "10.00",
+     "tax_category": "reduced"})
+CHANGE_JURISDICTION = {"code": "U3", "name": "Upgradia Capped",
+                       "default_rate": "0.2",
+                       "rates": "standard=0.2,reduced=0.05",
+                       "caps": "reduced=50.00"}
+CHANGE_RULE = {"rule_id": "u-threshold", "kind": "threshold", "sku": "",
+               "percent": "10", "minimum": "200.00"}
+
+# Each invoice of the change's fields: its lines, then the invoice-scoped
+# rules applied, the discount, the tax and the total the pinned semantics
+# give: below, at and above the threshold, and a taxable amount below, at
+# and above the cap.
+CHANGE_EFFECTS = (
+    ("threshold below", (("UPG-3", 7),), [], "0.00", "35.00", "210.00"),
+    ("threshold at", (("UPG-3", 8),), ["u-threshold"], "20.00", "36.00",
+     "216.00"),
+    ("threshold above", (("UPG-3", 9),), ["u-threshold"], "22.50", "40.50",
+     "243.00"),
+    ("cap below", (("UPG-4", 4),), [], "0.00", "2.00", "42.00"),
+    ("cap at", (("UPG-4", 5),), [], "0.00", "2.50", "52.50"),
+    ("cap above", (("UPG-4", 6),), [], "0.00", "4.50", "64.50"))
+
+
+def amount(value):
+    """A monetary value of an export as a Decimal, or None."""
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def change_effects():
+    """What the change's own fields do once stored in the upgraded file:
+    each invoice of them, saved through the application opened afresh on
+    it, against the figures the change's semantics give."""
+    failures = []
+    if identified(page(client, "/rules"), SEED_PERCENTAGE):
+        held(form_post(client, "/rules", "/rules/%s/delete"
+                       % SEED_PERCENTAGE, {}), "the delete")
+        if identified(page(client, "/rules"), SEED_PERCENTAGE):
+            return ["the seed's %s could not be deleted, so the change's "
+                    "fields cannot be read apart from it" % SEED_PERCENTAGE]
+    for item in CHANGE_PRODUCTS:
+        created(client, "/products", item)
+    created(client, "/jurisdictions", CHANGE_JURISDICTION)
+    created(client, "/rules", CHANGE_RULE)
+    for path, identifier in (("/jurisdictions", CHANGE_JURISDICTION["code"]),
+                             ("/rules", CHANGE_RULE["rule_id"])):
+        if not identified(page(client, path), identifier):
+            failures.append("a record posted to %s after the upgrade is not "
+                            "listed" % path)
+
+    # What counts is what the file stored, not what one instance holds.
+    fresh = package.create_app(os.environ["QUALITY_DATABASE"]).test_client()
+    if not sign_in(fresh):
+        return failures + ["the administrator could not sign in on the "
+                           "upgraded file opened afresh"]
+    for label, lines, applied, discount, tax, total in CHANGE_EFFECTS:
+        body = upgrade_body(CHANGE_JURISDICTION["code"], "", lines, "")
+        saved = saved_page(held(form_post(fresh, "/invoices/new",
+                                          "/invoices", body), "the save"))
+        if saved is None:
+            failures.append("the %s invoice was not saved" % label)
             continue
-        # An export is read only where it answers as a success; a body
-        # served with an error is no export, whatever it holds.
-        if not 200 <= now["export_status"] < 300:
-            failures.append("%s/export.json answered %d" % (
-                old["path"], now["export_status"]))
-        else:
-            place = unkept(old["export"], now["export"])
-            if place:
-                failures.append("%s/export.json no longer reads the same at "
-                                "%s" % (old["path"], place))
-        if not 200 <= now["csv_status"] < 300:
-            failures.append("%s/export.csv answered %d" % (
-                old["path"], now["csv_status"]))
-        else:
-            place = csv_unkept(old["csv"], now["csv"])
-            if place:
-                failures.append("%s/export.csv: %s" % (old["path"], place))
-        if old["previewed"]:
-            preview = held(form_post(client, "/invoices/new",
-                                     "/invoices/preview", old["body"],
-                                     headers={"HX-Request": "true"}),
-                           "the preview")
-            if not (ok(preview) and shows_total(preview,
-                                                Decimal(old["total"]))):
-                failures.append("the old invoice %s no longer prices at %s"
-                                % (old["path"], old["total"]))
+        reading = invoice_reading(fresh, saved)
+        unread = answered(reading, saved)
+        if unread:
+            failures += unread
+            continue
+        export = reading["export"] if isinstance(reading["export"],
+                                                 dict) else {}
+        got = (export.get("applied"), amount(export.get("discount_total")),
+               amount(export.get("tax_total")), amount(export.get("total")))
+        wanted = (applied, Decimal(discount), Decimal(tax), Decimal(total))
+        if got != wanted:
+            failures.append("the %s invoice reads applied %r, discount %s, "
+                            "tax %s, total %s, where the change gives %r, "
+                            "%s, %s, %s" % ((label,) + got + wanted))
+    return failures
+
+
+def data_upgrade(seeded):
+    """The changed tree on a copy of the fixture's database: every seeded
+    identifier still listed, every saved invoice's exports and the
+    customer's export reading as they did, every saved invoice saved again
+    reading as the fixture's, and the change's own fields doing what they
+    say once stored."""
+    failures = absent_identifiers(client)
+    for old in seeded["invoices"]:
+        now = invoice_reading(client, old["path"])
+        unread = answered(now, old["path"])
+        failures += unread or kept_exports(old, now, old["path"])
+
+    # The customer's export before any invoice is billed to them again.
     customer = seeded["customer"]
     answer = page(client, "/customers/%s/export.json" % customer["id"])
-    try:
-        export = json.loads(answer.get_data(as_text=True))
-    except ValueError:
-        export = None
-    place = unkept(customer["export"], export)
     if not ok(answer):
         failures.append("the customer's export answered %d"
                         % answer.status_code)
-    elif place:
-        failures.append("the customer's export no longer reads the same at %s"
-                        % place)
-
-    # The new schema has to take new rows on the old file too, not only read
-    # the old ones: a column added for new tables alone fails here. The old
-    # invoice is saved again first, before a new rule can reprice it.
-    saved = saved_page(held(form_post(client, "/invoices/new", "/invoices",
-                                      seeded["invoices"][0]["body"]),
-                            "the save"))
-    if saved is None:
-        failures.append("an invoice saved after the upgrade has no page")
     else:
-        # The new invoice is read as the old ones are: its page and both
-        # exports answering a success before its total counts.
-        again = invoice_reading(saved)
-        for status, what in ((again["status"], saved),
-                             (again["export_status"],
-                              saved + "/export.json"),
-                             (again["csv_status"], saved + "/export.csv")):
-            if not 200 <= status < 300:
-                failures.append("%s answered %d" % (what, status))
-        total = (again["export"] or {}).get("total") if isinstance(
-            again["export"], dict) else None
-        if str(total) != str(seeded["invoices"][0]["export"].get("total")):
-            failures.append("the first invoice saved again totals %r, not %r"
-                            % (total, seeded["invoices"][0]["export"].get(
-                                "total")))
-    # Every value posted is read back whole in the record's row, by the
-    # rule the kept values are read by; a cap may be written as its amount
-    # alone, so either form of it reads.
-    written = (("/jurisdictions", "code", {
-        "code": "U2", "name": "Upgradia Nova", "default_rate": "0.1",
-        "rates": "standard=0.1"}, {}),
-        ("/rules", "rule_id", {"rule_id": "u-pct-after",
-                               "kind": "percentage", "sku": "UPG-2",
-                               "percent": "3"}, {}),
+        try:
+            export = json.loads(answer.get_data(as_text=True))
+        except ValueError:
+            export = None
+        place = unkept(customer["export"], export)
+        if place:
+            failures.append("the customer's export no longer reads the same "
+                            "at %s" % place)
 
-        # And through the fields the change added, which a schema changed
-        # for new files alone refuses on an old one, or drops.
-        ("/jurisdictions", "code", {
-            "code": "U3", "name": "Upgradia Capped", "default_rate": "0.2",
-            "rates": "standard=0.2,reduced=0.05", "caps": "reduced=50.00"},
-         {"caps": ("reduced=50.00", "50.00")}),
-        ("/rules", "rule_id", {"rule_id": "u-threshold",
-                               "kind": "threshold", "sku": "",
-                               "percent": "5", "minimum": "200.00"}, {}))
-    for path, key, body, forms in written:
-        created(path, body)
-        text = text_of(page(client, path))
-        if body[key] not in text:
-            failures.append("a record posted to %s after the upgrade is not "
-                            "listed" % path)
+    # Saved invoices keep their own figures; the same bodies saved again
+    # read the catalogue, the rules and the rates as they stand now.
+    for old in seeded["invoices"]:
+        saved = saved_page(held(form_post(client, "/invoices/new",
+                                          "/invoices", old["body"]),
+                                "the save"))
+        if saved is None:
+            failures.append("%s saved again has no page" % old["path"])
             continue
-        tokens = row_tokens(page(client, path).get_data(as_text=True),
-                            body[key])
-        if tokens is None:
-            unfound.append(body[key])
-            continue
-        for field, value in body.items():
-            wanted = forms.get(field)
-            if wanted is None:
-                missed = [token for token in TOKEN_SPLIT.split(value)
-                          if token and not has_token(tokens, token)]
-            else:
-                missed = [] if any(has_token(tokens, token)
-                                   for token in wanted) else [value]
-            if missed:
-                failures.append("%s lists %s without the %s it was posted "
-                                "with" % (path, body[key], value))
-    if not failures and unfound:
-        return {"passed": None,
-                "missing": "row for %s not found" % unfound[0]}
+        now = invoice_reading(client, saved)
+        unread = answered(now, saved)
+        failures += unread or kept_exports(
+            dict(old, export=without_id(old["export"])),
+            dict(now, export=without_id(now["export"])),
+            "%s saved again as %s" % (old["path"], saved))
+    failures += change_effects()
     return passed(not failures, failures=failures[:20])
 
 
@@ -2273,32 +2186,30 @@ def create_app(database):
     return App(database)
 '''
 
-# A stand-in for the data upgrade, a fixture at version 1 and a changed
-# tree at version 2 of one application on a real SQLite file: version 2 adds
-# a cap to each jurisdiction and a minimum to each rule, shows the cap in its
-# JSON and CSV exports, and adds the columns to an old file. `sound` does
-# all of that. Each other mode plants one fault in version 2 alone:
-# `unmigrated` adds the columns to new files only and then reads them,
-# `dropping` rebuilds an old file empty, `rewriting` migrates and resets every
-# jurisdiction's rate, rows all kept, `rerating` migrates and clears every
-# jurisdiction's listed rates, which no invoice prices with and only its page
-# shows, `extending` appends a digit to them, the old rates still inside the
-# new, `fresh` adds the columns to new files alone and reads an old one
-# without them, silently dropping the field a new record sets, `garbling`
-# stores a new jurisdiction under another name and rates, `fragile`
-# cannot read an old
-# jurisdiction's empty cap, so old invoices break while new ones open, and
-# `refusing` will not open an old file at all. At version 1, `unlisting`
-# links no customer, so nothing can be seeded. `items`, at either version,
-# lists jurisdictions as list items rather than table rows, and is sound. A
-# mode ending `+divs` lists its records in bare `<div>`s, which no row is
-# found in, one ending `+pcells` wraps each table cell in a paragraph, one
-# ending `+terse` writes the minimum as 200, each price after the euro's
-# sign and the cap as euro 50, and one
-# ending `+erring` answers its JSON export 500 with a whole body, and one
-# ending `+newcsv` answers 500 for the CSV export of an invoice saved after
-# the two the seed saves.
-UPGRADE_APP = '''import decimal
+# A stand-in for the data upgrade, a fixture at version 1 and a changed tree at
+# version 2 of one application on a real SQLite file. It prices an invoice the
+# specification's way, closely enough to be read by it: a line's percentage and
+# bulk rules, one invoice percentage, seeded as the specification seeds one, a
+# coupon's amount, each category's rate or the default, and exports of the
+# specification's keys and columns. Version 2 adds a threshold rule, sharing
+# the invoice percentage's slot from its minimum on, and a cap on a category's
+# rate, and adds the columns to an old file; its exports carry one key and one
+# column more. `sound` does all of that. Each other mode plants one fault in
+# version 2 alone: `unmigrated` adds the columns to new files only and then
+# reads them, `dropping` rebuilds an old file empty, `rewriting` migrates and
+# resets every jurisdiction's default rate, `rerating` clears every
+# jurisdiction's category rates, `extending` appends a digit to them,
+# `readdressing` rewrites every customer's address, `fresh` adds the columns to
+# new files alone and silently drops the field a new record sets on an old one,
+# `garbling` stores a new jurisdiction's rates as others, `undeletable` keeps a
+# rule its delete names, `fragile` cannot read an old jurisdiction's empty cap,
+# so old invoices break, and `refusing` will not open an old file at all. At
+# version 1, `unlisting` links no customer, so nothing can be seeded. A mode
+# ending `+divs` lists its records in bare `<div>`s, one ending `+erring`
+# answers its JSON exports 500 with a whole body, and one ending `+newcsv`
+# answers 500 for the CSV export of an invoice saved after the two the seed
+# saves.
+UPGRADE_APP = r'''import decimal
 import json
 import os
 import sqlite3
@@ -2315,6 +2226,8 @@ SEED = (("WID-1", "Widget", "10.00", "standard"),
 TABLES = ("products", "customers", "rules", "jurisdictions", "invoices",
           "lines")
 ADDED = (("rules", "minimum"), ("jurisdictions", "caps"))
+CSV_HEAD = ("sku,name,quantity,unit_price,gross,line_discount,net,"
+            "invoice_discount,taxable,tax,total")
 
 
 class Response(object):
@@ -2327,17 +2240,6 @@ class Response(object):
         return self._body if as_text else self._body.encode("utf-8")
 
 
-def terse(value):
-    """A value as a terse page writes it: the minimum without its trailing
-    zeros, a price after the euro's sign, a cap with it."""
-    text = str(value)
-    if text == "200.00":
-        return "200"
-    if text.replace(".", "", 1).isdigit() and "." in text:
-        return "\u20ac" + text
-    return text.replace("=50.00", "=\u20ac50")
-
-
 def form(action, body=""):
     return ('%s<form method="post" action="%s">%s</form>'
             % (body, action, TOKEN))
@@ -2346,6 +2248,20 @@ def form(action, body=""):
 def columns(connection, table):
     return [row[1] for row in connection.execute(
         "PRAGMA table_info(%s)" % table)]
+
+
+def pairs(text):
+    """A `category=value` list as a dict of Decimals."""
+    found = {}
+    for item in (text or "").split(","):
+        if "=" in item:
+            key, _, value = item.partition("=")
+            found[key.strip()] = decimal.Decimal(value)
+    return found
+
+
+def money(value):
+    return str(value.quantize(CENT, rounding=decimal.ROUND_HALF_EVEN))
 
 
 class App(object):
@@ -2389,6 +2305,8 @@ class App(object):
             if MODE == "extending":
                 connection.execute("UPDATE jurisdictions SET rates = rates "
                                    "|| '1' WHERE rates != ''")
+            if MODE == "readdressing":
+                connection.execute("UPDATE customers SET address = 'moved'")
         if not connection.execute("SELECT * FROM admin").fetchone():
             connection.execute("INSERT INTO admin VALUES (?)", (
                 os.environ.get("TARIFF_ADMIN_PASSWORD"),))
@@ -2397,6 +2315,10 @@ class App(object):
                                    "(?, ?, ?, ?)", SEED)
             for code, rate in (("DE", "0.19"), ("IE", "0.23")):
                 self.add_jurisdiction(connection, code, code, rate, "")
+            connection.execute("INSERT INTO rules (rule_id, kind, sku, "
+                               "detail) VALUES (?, ?, ?, ?)", (
+                                   "r-pct-all", "percentage", "",
+                                   json.dumps({"percent": "5"})))
         connection.commit()
         connection.close()
 
@@ -2409,7 +2331,7 @@ class App(object):
             code, name, rate, rates]
         if VERSION == 2 and "caps" in columns(connection, "jurisdictions"):
             names.append("caps")
-            values.append(caps or "{}")
+            values.append(caps or "")
         connection.execute("INSERT INTO jurisdictions (%s) VALUES (%s)" % (
             ", ".join(names), ", ".join("?" for _ in names)), values)
 
@@ -2458,7 +2380,12 @@ class Client(object):
         parts = path.strip("/").split("/")
         if path == "/":
             return Response(200, "dashboard")
-        if parts[0] in ("products", "rules", "jurisdictions") \\
+        if parts[0] == "rules" and parts[2:] == ["delete"]:
+            if MODE != "undeletable":
+                connection.execute("DELETE FROM rules WHERE rule_id = ?",
+                                   (parts[1],))
+            return Response(302, "", {"Location": "/rules"})
+        if parts[0] in ("products", "rules", "jurisdictions") \
                 and len(parts) == 1:
             if method == "POST":
                 return self.create(connection, parts[0], data)
@@ -2475,34 +2402,17 @@ class Client(object):
             rows = connection.execute("SELECT sku, name, unit_price FROM "
                                       "products")
         elif table == "rules":
-            minimum = VERSION == 2 and "minimum" in columns(connection,
-                                                            "rules")
-            rows = []
-            for found in connection.execute(
-                    "SELECT rule_id, kind, sku, detail%s FROM rules"
-                    % (", minimum" if minimum else "")):
-                row = (found[0], found[1], found[2] or "",
-                       json.loads(found[3]).get("percent") or "")
-                rows.append(row + ((found[4] or "",) if minimum else ()))
-        elif VERSION == 2 and "caps" in columns(connection, "jurisdictions"):
-            rows = connection.execute("SELECT code, name, default_rate, "
-                                      "rates, caps FROM jurisdictions")
+            rows = connection.execute("SELECT rule_id, kind FROM rules")
         else:
             rows = connection.execute("SELECT code, name, default_rate, "
                                       "rates FROM jurisdictions")
-        if MARKUP == "terse":
-            rows = [tuple(terse(value) for value in row) for row in rows]
+        rows = list(rows)
         if MARKUP == "divs":
             return "".join("<div>%s</div>" % " ".join(str(value)
                                                     for value in row)
                            for row in rows)
-        if MODE == "items":
-            return "<ul>%s</ul>" % "".join(
-                "<li>%s</li>" % " ".join(str(value) for value in row)
-                for row in rows)
-        cell = "<td><p>%s</p></td>" if MARKUP == "pcells" else "<td>%s</td>"
         return "<table>%s</table>" % "".join(
-            "<tr>%s</tr>" % "".join(cell % value for value in row)
+            "<tr>%s</tr>" % "".join("<td>%s</td>" % value for value in row)
             for row in rows)
 
     def create(self, connection, table, data):
@@ -2522,7 +2432,7 @@ class Client(object):
                 ", ".join(names), ", ".join("?" for _ in names)), values)
         else:
             if MODE == "garbling":
-                data = dict(data, name="Garbled", rates="standard=0.9")
+                data = dict(data, rates="standard=0.9")
             self.app.add_jurisdiction(connection, data["code"], data["name"],
                                       data["default_rate"],
                                       data.get("rates") or "",
@@ -2555,43 +2465,120 @@ class Client(object):
             "address": row[3], "invoices": invoices}))
 
     def priced(self, connection, jurisdiction, coupons, lines):
+        """An invoice priced as the specification orders it, to the keys
+        of its JSON export."""
         found = connection.execute("SELECT * FROM jurisdictions WHERE code "
                                    "= ?", (jurisdiction,)).fetchone()
         if found is None:
             raise LookupError(jurisdiction)
-        rate = decimal.Decimal(found[2])
-        if VERSION == 2:
-            caps = found[4] if len(found) > 4 else "{}"
-            json.loads(caps if MODE == "fragile" else caps or "{}")
-        rules = [(kind, sku, json.loads(detail)) for kind, sku, detail
-                 in connection.execute("SELECT kind, sku, detail FROM rules")]
-        net = []
+        default, rates = decimal.Decimal(found[2]), pairs(found[3])
+        # Version 2 reads the columns it added, which an old file lacks
+        # unless they were added to it; `fresh` looks before it reads.
+        caps, has_minimum = {}, VERSION == 2
+        if VERSION == 2 and MODE == "fresh":
+            has_minimum = "minimum" in columns(connection, "rules")
+        if has_minimum:
+            text = connection.execute("SELECT caps FROM jurisdictions WHERE "
+                                      "code = ?", (jurisdiction,)).fetchone()
+            caps = pairs(text[0].strip() if MODE == "fragile"
+                         else text[0] or "")
+        rules = [(row[0], row[1], row[2], json.loads(row[3]),
+                  row[4] if has_minimum else None)
+                 for row in connection.execute(
+                     "SELECT rule_id, kind, sku, detail%s FROM rules "
+                     "ORDER BY rule_id" % (", minimum" if has_minimum
+                                           else ""))]
+        priced = []
         for sku, quantity in lines:
-            price = connection.execute("SELECT unit_price FROM products "
-                                       "WHERE sku = ?", (sku,)).fetchone()
-            amount = decimal.Decimal(price[0]) * quantity
-            for kind, scope, detail in rules:
-                if kind == "percentage" and scope == sku:
-                    amount -= amount * decimal.Decimal(detail["percent"]) / 100
-            net.append((sku, quantity, amount.quantize(CENT)))
-        subtotal = sum((amount for _, _, amount in net),
-                       decimal.Decimal("0"))
-        for kind, _, detail in rules:
-            if (kind == "coupon" and detail.get("code") in coupons
-                    and detail.get("amount")):
-                subtotal -= decimal.Decimal(detail["amount"])
-        total = (subtotal * (1 + rate)).quantize(CENT)
-        return net, str(total)
+            name, price, category = connection.execute(
+                "SELECT name, unit_price, tax_category FROM products WHERE "
+                "sku = ?", (sku,)).fetchone()
+            price = decimal.Decimal(price)
+            gross = price * quantity
+            discount, applied = decimal.Decimal("0"), []
+            for rule_id, kind, scope, detail, _ in rules:
+                if scope != sku:
+                    continue
+                if kind == "percentage":
+                    discount += gross * decimal.Decimal(detail["percent"]) \
+                        / 100
+                    applied.append(rule_id)
+                elif kind == "bulk":
+                    buy, pay = int(detail["buy"]), int(detail["pay"])
+                    if quantity >= buy:
+                        discount += price * (quantity // buy) * (buy - pay)
+                        applied.append(rule_id)
+            priced.append({"sku": sku, "name": name, "quantity": quantity,
+                           "unit_price": price, "gross": gross,
+                           "line_discount": discount,
+                           "net": gross - discount, "applied": applied,
+                           "category": category})
+        subtotal = sum((line["net"] for line in priced), decimal.Decimal("0"))
+
+        # One slot for the invoice percentage and the threshold, the lowest
+        # result taking it; a threshold with no minimum is always eligible.
+        slot, applied = None, []
+        for rule_id, kind, scope, detail, minimum in rules:
+            if scope or kind not in ("percentage", "threshold"):
+                continue
+            if kind == "threshold" and (VERSION != 2 or subtotal
+                                        < decimal.Decimal(minimum or "0")):
+                continue
+            result = subtotal * (100 - decimal.Decimal(detail["percent"])) \
+                / 100
+            if slot is None or result < slot[1]:
+                slot = (rule_id, result)
+        running = subtotal
+        if slot:
+            running = slot[1]
+            applied.append(slot[0])
+        for rule_id, kind, scope, detail, _ in rules:
+            if kind == "coupon" and detail.get("code") in coupons \
+                    and detail.get("amount"):
+                running -= min(decimal.Decimal(detail["amount"]), running)
+                applied.append(rule_id)
+        discount_total = subtotal - running
+        standard = rates.get("standard", default)
+        taxable_total = tax_total = decimal.Decimal("0")
+        for line in priced:
+            share = (discount_total * line["net"] / subtotal if subtotal
+                     else decimal.Decimal("0"))
+            line["invoice_discount"] = share
+            taxable = line["net"] - share
+            rate = rates.get(line["category"], default)
+            cap = caps.get(line["category"])
+            if cap is None:
+                tax = taxable * rate
+            else:
+                tax = min(taxable, cap) * rate + max(
+                    decimal.Decimal("0"), taxable - cap) * standard
+            tax = decimal.Decimal(money(tax))
+            line.update(taxable=taxable, tax=tax, total=taxable + tax)
+            taxable_total += taxable
+            tax_total += tax
+        return {
+            "currency": "EUR", "jurisdiction": jurisdiction,
+            "lines": [{key: (money(line[key]) if isinstance(
+                line[key], decimal.Decimal) else line[key])
+                for key in ("sku", "name", "quantity", "unit_price",
+                            "gross", "line_discount", "net",
+                            "invoice_discount", "taxable", "tax", "total",
+                            "applied")} for line in priced],
+            "subtotal": money(subtotal),
+            "discount_total": money(discount_total),
+            "taxable_total": money(taxable_total),
+            "tax_total": money(tax_total),
+            "total": money(taxable_total + tax_total), "applied": applied}
 
     def invoices(self, connection, parts, method, data):
         if parts[1:] in (["preview"], []) and method == "POST":
             lines = [(sku, int(quantity)) for sku, quantity in zip(
                 listed(data.get("sku")), listed(data.get("quantity")))]
             coupons = (data.get("coupon_codes") or "").split(",")
-            _, total = self.priced(connection, data["jurisdiction"], coupons,
-                                   lines)
+            priced = self.priced(connection, data["jurisdiction"], coupons,
+                                 lines)
             if parts[1:] == ["preview"]:
-                return Response(200, "<p>Total %s</p>" % total)
+                return Response(200, "<p>Total %s</p>" % priced["total"])
             invoice = connection.execute(
                 "INSERT INTO invoices (jurisdiction, customer, coupons) "
                 "VALUES (?, ?, ?)", (data["jurisdiction"],
@@ -2612,38 +2599,38 @@ class Client(object):
         lines = connection.execute("SELECT sku, quantity FROM lines WHERE "
                                    "invoice = ? ORDER BY position",
                                    (parts[1],)).fetchall()
-        net, total = self.priced(connection, row[0], row[1].split(","),
-                                 lines)
+        priced = self.priced(connection, row[0], row[1].split(","), lines)
         if parts[2:] == ["export.json"]:
-            export = {"invoice_id": int(parts[1]), "jurisdiction": row[0],
-                      "lines": [{"sku": sku, "quantity": quantity,
-                                 "net": str(amount)}
-                                for sku, quantity, amount in net],
-                      "total": total}
+            export = dict({"invoice_id": int(parts[1])}, **priced)
             if VERSION == 2:
-                export["caps"] = {}
+                export["caps_read"] = True
             return Response(500 if MARKUP == "erring" else 200,
                             json.dumps(export))
-        if parts[2:] == ["export.csv"] and MARKUP == "newcsv" \\
-                and int(parts[1]) > 2:
-            return Response(500, "Internal Server Error")
         if parts[2:] == ["export.csv"]:
-            head = "sku,quantity,net" + (",cap" if VERSION == 2 else "")
-            return Response(200, "\\n".join([head] + [
-                "%s,%d,%s" % (sku, quantity, amount)
+            if MARKUP == "newcsv" and int(parts[1]) > 2:
+                return Response(500, "Internal Server Error")
+            extra = ",cap" if VERSION == 2 else ""
+            rows = [CSV_HEAD + extra] + [
+                ",".join(str(line[key]) for key in CSV_HEAD.split(","))
                 + ("," if VERSION == 2 else "")
-                for sku, quantity, amount in net]) + "\\n")
+                for line in priced["lines"]]
+            rows.append("TOTAL,,,,,,%s,%s,%s,%s,%s" % (
+                priced["subtotal"], priced["discount_total"],
+                priced["taxable_total"], priced["tax_total"],
+                priced["total"]) + ("," if VERSION == 2 else ""))
+            return Response(200, "\n".join(rows) + "\n")
         return Response(200, "<p>Invoice %s</p><p>Total %s</p>"
-                        % (parts[1], total))
+                        % (parts[1], priced["total"]))
 
 
 def create_app(database):
     return App(database)
 '''
 
-# The faults the data upgrade must catch at version 2, and what each loses.
+# The faults the data upgrade must catch at version 2.
 UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "rerating",
-                  "extending", "fresh", "garbling", "fragile", "refusing")
+                  "extending", "readdressing", "fresh", "garbling",
+                  "undeletable", "fragile", "refusing")
 
 
 def plant_upgrade(where, version, mode):
@@ -2674,95 +2661,60 @@ def upgrade_reading(scratch, fixture, changed):
 
 
 def upgrade_self_checks(scratch):
-    """A sound upgrade passes; each planted fault fails or loses the probe;
-    a fixture that cannot seed leaves it missing."""
+    """A sound upgrade passes; each planted fault fails or loses the probe
+    through the exports it reads; a fixture that cannot seed leaves it
+    missing; the list pages are read for presence whatever their markup."""
     sound = upgrade_reading(scratch, "sound", "sound")
     faults = {mode: upgrade_reading(scratch, "sound", mode)
               for mode in UPGRADE_FAULTS}
     unseeded = upgrade_reading(scratch, "unlisting", "sound")
-    items = upgrade_reading(scratch, "items", "items")
-    hidden = upgrade_reading(scratch, "sound+divs", "rerating+divs")
-    wrapped = upgrade_reading(scratch, "sound+pcells", "sound+pcells")
-    rewrapped = upgrade_reading(scratch, "sound+pcells", "rerating+pcells")
-    terse_read = upgrade_reading(scratch, "sound", "sound+terse")
+    divs = upgrade_reading(scratch, "sound+divs", "sound+divs")
     erring = upgrade_reading(scratch, "sound", "sound+erring")
     new_csv = upgrade_reading(scratch, "sound", "sound+newcsv")
     failed = sorted(mode for mode, reading in faults.items()
                     if reading.get("passed") is False)
+
+    def says(reading, text):
+        return any(text in failure
+                   for failure in reading.get("failures") or [])
     return [
         ("a version 2 that migrates the old database keeps every record",
          sound.get("passed") is True and not sound.get("failures")
          and len(sound.get("seeded_sha256") or "") == 64),
         ("a schema change shipped without a migration fails the upgrade",
          faults["unmigrated"].get("passed") is False
-         and any("/jurisdictions" in failure for failure in
-                 faults["unmigrated"].get("failures") or [])),
+         and says(faults["unmigrated"], "/invoices/1 answered 500")),
         ("an old database rebuilt empty fails the upgrade",
          faults["dropping"].get("passed") is False
-         and any("no longer lists" in failure for failure in
-                 faults["dropping"].get("failures") or [])),
-        ("rows all kept with their values changed fail the upgrade",
+         and says(faults["dropping"], "/rules no longer names u-pct-lamp")),
+        ("a rate the migration changes fails the invoices saved again too",
          faults["rewriting"].get("passed") is False
-         and any("no longer reads the same" in failure for failure in
-                 faults["rewriting"].get("failures") or [])),
-        ("a listed field changed by the migration, no invoice priced by it, "
-         "fails the upgrade",
-         faults["rerating"].get("passed") is False
-         and faults["rerating"].get("failures") == [
-             "/jurisdictions no longer shows 'standard=0.2' for UP",
-             "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
-        ("a listed field kept only inside a longer one fails the upgrade",
-         faults["extending"].get("passed") is False
-         and faults["extending"].get("failures") == [
-             "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
-        ("a table row whose cells are paragraphs is read whole: kept when "
-         "sound, its cleared values named",
-         wrapped.get("passed") is True
-         and rewrapped.get("passed") is False
-         and rewrapped.get("failures") == [
-             "/jurisdictions no longer shows 'standard=0.2' for UP",
-             "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
-        ("a value written as another amount, a sign before it or no "
-         "trailing zeros, reads as the same value",
-         terse_read.get("passed") is True and not terse_read.get("failures")),
-        ("an export answering an error fails the upgrade, naming its status",
-         erring.get("passed") is False
-         and erring.get("failures") == [
-             "/invoices/1/export.json answered 500",
-             "/invoices/2/export.json answered 500",
-             "/invoices/3/export.json answered 500"]),
-        ("an invoice saved after the upgrade whose CSV export errs fails "
-         "it",
-         new_csv.get("passed") is False
-         and new_csv.get("failures") == ["/invoices/3/export.csv answered "
-                                         "500"]),
-        ("a row found by no key leaves the upgrade missing, never passed",
-         hidden.get("passed") is None
-         and hidden.get("missing", "").startswith("row for ")
-         and hidden["missing"].endswith(" not found")),
-        ("a new record stored with other values than it was posted with "
-         "fails the upgrade",
-         faults["garbling"].get("passed") is False
-         and faults["garbling"].get("failures") == [
-             "/jurisdictions lists %s without the %s it was posted with"
-             % (code, value) for code, value in (
-                 ("U2", "Upgradia Nova"), ("U2", "standard=0.1"),
-                 ("U3", "Upgradia Capped"),
-                 ("U3", "standard=0.2,reduced=0.05"))]),
-        ("a list-item row with a value the change adds keeps every old one",
-         items.get("passed") is True and not items.get("failures")),
-        ("a schema changed for new files alone fails on the change's own "
-         "fields",
+         and says(faults["rewriting"], "saved again as /invoices/3")),
+        ("category rates cleared or changed by the migration fail the "
+         "upgrade through the exports",
+         all(faults[mode].get("passed") is False
+             and says(faults[mode], "export.json no longer reads the same")
+             for mode in ("rerating", "extending"))),
+        ("a customer the migration rewrites fails through the customer's "
+         "export alone",
+         faults["readdressing"].get("failures") == [
+             "the customer's export no longer reads the same at $.address"]),
+        ("a change's field dropped on an old file fails through the "
+         "invoices that exercise it",
          faults["fresh"].get("passed") is False
-         and faults["fresh"].get("failures") == [
-             "/jurisdictions lists U3 without the reduced=50.00 it was "
-             "posted with",
-             "/rules lists u-threshold without the 200.00 it was posted "
-             "with"]),
+         and says(faults["fresh"], "the threshold below invoice reads")
+         and says(faults["fresh"], "the cap above invoice reads")),
+        ("a new jurisdiction stored with other rates fails through its "
+         "invoices",
+         faults["garbling"].get("passed") is False
+         and says(faults["garbling"], "the threshold at invoice reads")),
+        ("a seeded rule that will not be deleted stops the change's "
+         "invoices, never passes",
+         faults["undeletable"].get("passed") is False
+         and says(faults["undeletable"], "r-pct-all could not be deleted")),
         ("old invoices that break on the new field fail the upgrade",
          faults["fragile"].get("passed") is False
-         and any("/invoices/" in failure for failure in
-                 faults["fragile"].get("failures") or [])),
+         and says(faults["fragile"], "/invoices/1 answered 500")),
         ("a version 2 that will not open the old database loses the upgrade",
          faults["refusing"].get("passed") is False
          and bool(faults["refusing"].get("lost"))),
@@ -2770,6 +2722,17 @@ def upgrade_self_checks(scratch):
          failed == sorted(UPGRADE_FAULTS)),
         ("a fixture that cannot seed leaves the upgrade missing, not failed",
          unseeded.get("passed") is None and bool(unseeded.get("missing"))),
+        ("the list pages are read for the seeded identifiers alone, "
+         "whatever their markup",
+         divs.get("passed") is True and not divs.get("failures")),
+        ("an export answering an error fails the upgrade, naming its status",
+         erring.get("passed") is False
+         and (erring.get("failures") or [""])[0]
+         == "/invoices/1/export.json answered 500"),
+        ("an invoice saved after the upgrade whose CSV export errs fails it",
+         new_csv.get("passed") is False
+         and says(new_csv, "/invoices/3/export.csv answered 500")
+         and not says(new_csv, "/invoices/1/")),
     ]
 
 

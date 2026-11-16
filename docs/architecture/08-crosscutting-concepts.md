@@ -376,15 +376,28 @@ axis only:
 | Reading | What it reads | Fails when | ISO place |
 | ------- | ------------- | ---------- | --------- |
 | Interfaces | The hidden suite's API, route and two export modules on the changed tree, against the fixture's frozen baseline | A module the fixture passed whole no longer does | Compatibility, Interoperability |
-| Data upgrade | Products, customers, rules, a jurisdiction and invoices saved through the fixture's own forms, then the changed tree on a copy of that database | A record is gone or reads differently, an old invoice will not open or price as it did, or the file takes no new record | Flexibility, Adaptability |
+| Data upgrade | Products, customers, rules, a jurisdiction and invoices saved through the fixture's own forms, then the changed tree on a copy of that database | An export no longer reads as it did, an old invoice saved again prices otherwise, a seeded code or rule id is gone from its list page, or the change's own fields do not price as the change says | Flexibility, Adaptability |
 
 - **Inherited is not broken.** An interface module the fixture already
   failed is the fixture's, not the change's, and counts neither way
   (FR-16-02).
-- **Values, not counts.** Each record is read back as the fixture showed
-  it: every field of its row on the list pages, each invoice's JSON and CSV exports, the customer's
-  export, and the old invoice priced again. A key or column only the
-  changed tree has is the change's own, and is no loss (FR-16-04).
+- **Exported values, exercised behaviour.** Values are read from the
+  exports the specification fixes, never from the pages' markup: each old
+  invoice's JSON, every old key and value, lists as long and in order, and
+  its CSV, every old column by name, row by row; the customer's export; and
+  each old invoice's body saved again, its export the fixture's but for
+  its id. A key or column only the changed tree has is the change's own,
+  and is no loss. The list pages count only for presence: a seeded code or
+  rule id named whole, whatever the markup (FR-16-04).
+- **The change's own fields, by their effect.** A capped jurisdiction and
+  a threshold rule are posted on the upgraded copy, and invoices saved
+  through the application opened afresh on it must give the applied rules,
+  discount, tax and total the change's semantics give, below, at and above
+  the threshold and the cap. The seed's invoice percentage, which would
+  share the threshold's slot, is deleted first, on the copy alone.
+- **Outside the claim.** A jurisdiction's name, a parameter no invoice
+  exercises and an equivalent internal form can change unread: the reading
+  claims exported values kept and exercised behaviour, not every field.
 - **Lost and missing.** A changed tree that will not open the file, or
   sign in on it, has lost the data and fails. A fixture that cannot seed is
   no arm's, so the reading is missing. Each reading names the fixture's
