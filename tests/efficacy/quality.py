@@ -1701,10 +1701,13 @@ def runtime_self_checks(scratch):
          and len(latency.get("repeats") or []) == 2
          and all(value > 0 for value in latency["repeats"])
          and latency["value"] == max(latency["repeats"])),
+        # Each answer is delayed 20 ms, so each repeat's p95 is at least
+        # that whatever the machine's load; a comparison with the sound
+        # run's would read the load instead.
         ("a slowed app reads slower by its delay",
          failing(probes["slow"]) == []
-         and (probes["slow"]["latency_p95_ms"].get("value") or 0) >= 20
-         and probes["slow"]["latency_p95_ms"]["value"] > latency["value"]),
+         and len(probes["slow"]["latency_p95_ms"].get("repeats") or []) == 2
+         and min(probes["slow"]["latency_p95_ms"]["repeats"]) >= 20),
         ("statements are counted per page, and did not grow",
          sound["n_plus_one"].get("one_line", 0) > 0
          and sound["n_plus_one"]["twenty_lines"]
