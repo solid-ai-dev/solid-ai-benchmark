@@ -1112,7 +1112,7 @@ def data_upgrade(seeded):
     """The changed tree on a copy of the fixture's database: every record
     seeded is still there and reads the same, every old invoice opens and
     prices as it did, and the upgraded database takes new records."""
-    failures = []
+    failures, unfound = [], []
     for path, values in seeded["pages"].items():
         answer = page(client, path)
         shown = text_of(answer)
@@ -1126,10 +1126,16 @@ def data_upgrade(seeded):
         # or rate as much as its name, still shows whole in that record's
         # row, never only inside a longer one; a value the change adds is
         # its own, and is no loss.
+        # A row neither page marks so it can be found by its key leaves the
+        # values unread, never kept; a key gone from the page is a loss, as
+        # the listing above reads it.
         text = answer.get_data(as_text=True)
         for key, tokens in (seeded.get("rows") or {}).get(path, {}).items():
             now = row_tokens(text, key)
-            if not tokens or now is None:
+            if tokens is None or (now is None and key in shown):
+                unfound.append(key)
+                continue
+            if now is None:
                 continue
             failures += ["%s no longer shows %r for %s" % (path, token, key)
                          for token in tokens if token not in now]
@@ -1205,6 +1211,9 @@ def data_upgrade(seeded):
         if body[key] not in text_of(page(client, path)):
             failures.append("a record posted to %s after the upgrade is not "
                             "listed" % path)
+    if not failures and unfound:
+        return {"passed": None,
+                "missing": "row for %s not found" % unfound[0]}
     return passed(not failures, failures=failures[:20])
 
 
@@ -1974,14 +1983,16 @@ def create_app(database):
 # jurisdiction's empty cap, so old invoices break while new ones open, and
 # `refusing` will not open an old file at all. At version 1, `unlisting`
 # links no customer, so nothing can be seeded. `items`, at either version,
-# lists jurisdictions as list items rather than table rows, and is sound.
+# lists jurisdictions as list items rather than table rows, and is sound. A
+# mode ending `+divs` lists its records in bare `<div>`s, which no row is
+# found in.
 UPGRADE_APP = '''import decimal
 import json
 import os
 import sqlite3
 
 VERSION = __VERSION__
-MODE = "__MODE__"
+MODE, _, MARKUP = "__MODE__".partition("+")
 TOKEN = '<input type="hidden" name="csrf_token" value="t">'
 CENT = decimal.Decimal("0.01")
 SEED = (("WID-1", "Widget", "10.00", "standard"),
@@ -2149,6 +2160,10 @@ class Client(object):
         else:
             rows = connection.execute("SELECT code, name, default_rate, "
                                       "rates FROM jurisdictions")
+        if MARKUP == "divs":
+            return "".join("<div>%s</div>" % " ".join(str(value)
+                                                    for value in row)
+                           for row in rows)
         if MODE == "items":
             return "<ul>%s</ul>" % "".join(
                 "<li>%s</li>" % " ".join(str(value) for value in row)
@@ -2328,6 +2343,7 @@ def upgrade_self_checks(scratch):
               for mode in UPGRADE_FAULTS}
     unseeded = upgrade_reading(scratch, "unlisting", "sound")
     items = upgrade_reading(scratch, "items", "items")
+    hidden = upgrade_reading(scratch, "sound+divs", "rerating+divs")
     failed = sorted(mode for mode, reading in faults.items()
                     if reading.get("passed") is False)
     return [
@@ -2356,6 +2372,10 @@ def upgrade_self_checks(scratch):
          faults["extending"].get("passed") is False
          and faults["extending"].get("failures") == [
              "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
+        ("a row found by no key leaves the upgrade missing, never passed",
+         hidden.get("passed") is None
+         and hidden.get("missing", "").startswith("row for ")
+         and hidden["missing"].endswith(" not found")),
         ("a list-item row with a value the change adds keeps every old one",
          items.get("passed") is True and not items.get("failures")),
         ("a schema changed for new files alone fails on the change's own "

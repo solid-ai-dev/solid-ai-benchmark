@@ -336,7 +336,12 @@ def boot_check(venv, workspace):
     have no application factory. The factory's name and signature are fixed
     by the specification, so this reaches only what every arm owes.
     """
-    database = os.path.join(workspace, ".score-boot.sqlite")
+
+    # The database, and whatever the app keeps beside it, such as a secret
+    # it persists, go to a folder of their own outside the tree, so booting
+    # the app changes nothing a later reading of the tree counts.
+    folder = tempfile.mkdtemp(prefix="score-boot-")
+    database = os.path.join(folder, "boot.sqlite")
     code = (
         "import json, sys\n"
         "result = {'import': False, 'factory': False, 'index_status': None}\n"
@@ -359,7 +364,11 @@ def boot_check(venv, workspace):
         "    result['serve_error'] = repr(error)[:300]\n"
         "print(json.dumps(result))\n" % (PACKAGE, database)
     )
-    outcome = run([python_in(venv), "-c", code], cwd=workspace, timeout=300)
+    try:
+        outcome = run([python_in(venv), "-c", code], cwd=workspace,
+                      timeout=300)
+    finally:
+        remove_tree(folder)
     try:
         payload = json.loads(outcome["stdout"].strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -1361,9 +1370,12 @@ def score_change_trial(record, options, suite, lock):
                         os.path.join(scoring, "tree"), frozen)
     files = python_files(workspace)
 
-    # The index as the change task left it, before the install, the suites
-    # or churn's intent-to-add can put a file of their own in it.
+    # The index as the change task left it, and what it changed, both read
+    # before the install, the boot or the suites can put a file of their own
+    # in the tree; churn's intent-to-add comes after the index is read.
     tracked = tracked_files(workspace)
+    changed = (churn(workspace, record["base"]) if record.get("base")
+               else absent("the change record names no starting commit"))
     venv = create_venv(os.path.join(scoring, "venv"))
 
     # The fixture is named by its hash and with the readings it qualified
@@ -1404,11 +1416,7 @@ def score_change_trial(record, options, suite, lock):
     scores["interfaces"] = interfaces(scores["build_suite"],
                                       record.get("fixture"))
 
-    # Before the battery, whose tools leave reports and caches in the tree
-    # that the agent never wrote.
-    scores["churn"] = (churn(workspace, record["base"]) if record.get("base")
-                       else absent("the change record names no starting "
-                                   "commit"))
+    scores["churn"] = changed
     measure_code(scores, venv, workspace, options, lock, source,
                  change_required_names())
     scores["scope"] = scope(workspace, roots, tracked)
@@ -2046,6 +2054,53 @@ def boot_checks(scratch, venv):
              and booted.get("index_status") == 200)]
 
 
+# An app that keeps a secret beside its database the first time it boots,
+# as a generated key persisted to a file does.
+PLANTED_SECRET_APP = """\
+import io
+
+
+class App(object):
+    def test_client(self):
+        return self
+
+    def get(self, path):
+        return type("Answer", (), {"status_code": 200})()
+
+
+def create_app(database):
+    with io.open(database, "w") as handle:
+        handle.write("")
+    with io.open(database + ".secretkey", "w") as handle:
+        handle.write("generated")
+    return App()
+"""
+
+
+def boot_churn_checks(scratch, venv):
+    """Booting an unchanged app that writes a secret beside its database
+    leaves the tree as it was: no churn, and nothing new in it."""
+    tree = os.path.join(scratch, "boot-churn")
+    os.makedirs(os.path.join(tree, PACKAGE))
+    with io.open(os.path.join(tree, PACKAGE, "__init__.py"), "w",
+                 encoding="utf-8") as handle:
+        handle.write(PLANTED_SECRET_APP)
+    for argv in (["init", "-q"], ["add", "-A"],
+                 ["-c", "user.name=self-test",
+                  "-c", "user.email=self-test@example.invalid",
+                  "commit", "-q", "-m", "build"]):
+        run(["git", "-C", tree] + argv, timeout=120)
+    base = run(["git", "-C", tree, "rev-parse", "HEAD"])["stdout"].strip()
+    booted = boot_check(venv, tree)["value"] or {}
+    changed = churn(tree, base)["value"] or {}
+    left = run(["git", "-C", tree, "status", "--porcelain",
+                "--untracked-files=all"])["stdout"]
+    return [("an unchanged app that writes a secret beside its database at "
+             "boot shows no churn",
+             booted.get("index_status") == 200 and changed.get("files") == 0
+             and ".secretkey" not in left and ".score-boot" not in left)]
+
+
 PLANTED_TEST_DEPENDENCIES = '''[project]
 name = "pkg"
 version = "0"
@@ -2386,7 +2441,8 @@ def self_test():
     checks.append(("a scored trial's environment is dropped",
                    not os.path.exists(dropped)))
     venv = create_venv(os.path.join(scratch, "venv"))
-    checks += boot_checks(scratch, venv) + interpreter_checks(scratch, venv)
+    checks += (boot_checks(scratch, venv) + boot_churn_checks(scratch, venv)
+               + interpreter_checks(scratch, venv))
 
     empty = os.path.join(scratch, "empty")
     os.makedirs(empty)
