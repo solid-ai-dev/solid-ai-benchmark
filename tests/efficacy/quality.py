@@ -97,12 +97,16 @@ report = {"python": platform.python_version(), "probes": {},
           "running": "boot"}
 
 
+SAVING = threading.Lock()
+
+
 def save():
     """The report so far, replaced whole, so a stalled run leaves a whole
     file behind."""
-    with real_open(PROGRESS + ".part", "w", encoding="utf-8") as handle:
-        json.dump(report, handle)
-    os.replace(PROGRESS + ".part", PROGRESS)
+    with SAVING:
+        with real_open(PROGRESS + ".part", "w", encoding="utf-8") as handle:
+            json.dump(report, handle)
+        os.replace(PROGRESS + ".part", PROGRESS)
 
 
 def finish():
@@ -128,15 +132,33 @@ def traced(statement):
     statements["total"] += 1
 
 
+def inside(path, roots):
+    path = os.path.normcase(os.path.realpath(path))
+    for root in roots:
+        root = os.path.normcase(os.path.realpath(root))
+        try:
+            if os.path.commonpath([path, root]) == root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 # Every file the application opens to write, by name, for the whole run.
 # The watch is in place before the package is imported, so a handle opened
-# at import and written to later is seen.
-written = []
-
-
+# at import and written to later is seen. Every database of every probe sits
+# in a folder under the reader's own root, so the workspace and that root
+# are the only places a build may write; a database's sidecars, its `-wal`,
+# `-shm` and `-journal`, sit beside it. A write anywhere else is filed the
+# moment it is seen, so a run killed later cannot lose it.
 def note(path):
-    if isinstance(path, (str, bytes, os.PathLike)):
-        written.append(os.path.abspath(os.fsdecode(path)))
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return
+    path = os.path.abspath(os.fsdecode(path))
+    stray = report.setdefault("stray", [])
+    if not inside(path, [DATABASES, WORKSPACE]) and path not in stray:
+        stray.append(path)
+        save()
 
 
 real_connect = sqlite3.connect
@@ -704,18 +726,6 @@ def concurrent_writes():
                   failed=failed[:5], locked=locked)
 
 
-def inside(path, roots):
-    path = os.path.normcase(os.path.realpath(path))
-    for root in roots:
-        root = os.path.normcase(os.path.realpath(root))
-        try:
-            if os.path.commonpath([path, root]) == root:
-                return True
-        except ValueError:
-            continue
-    return False
-
-
 PRODUCT = {"sku": "QCO-1", "name": "Coexistence probe", "unit_price": "2.00",
            "tax_category": "standard"}
 
@@ -739,25 +749,28 @@ def coexistence():
                     "sign in")
     held(form_post(one, "/products", "/products", PRODUCT),
          "the product's post")
-    stored = PRODUCT["sku"] in page(one, "/products").get_data(as_text=True)
-    leaked = PRODUCT["sku"] in page(other, "/products").get_data(
-        as_text=True)
+    listed, other_listed = page(one, "/products"), page(other, "/products")
+
+    # A list that does not answer cannot show the product, so its absence
+    # there says nothing about isolation.
+    if not (ok(listed) and ok(other_listed)):
+        return passed(False, reason=(
+            "the instances' product lists answered %d and %d, so neither's "
+            "contents could be read" % (listed.status_code,
+                                        other_listed.status_code)))
+    stored = PRODUCT["sku"] in listed.get_data(as_text=True)
+    leaked = PRODUCT["sku"] in other_listed.get_data(as_text=True)
     if not stored:
         return lost("coexistence", "the product written through the first "
                     "instance was not stored")
     return settle_coexistence({"leaked": leaked})
 
 
-# Every database of every probe sits in a folder under the reader's own
-# root, so the workspace and that root are the only places a build may
-# write; a database's sidecars, its `-wal`, `-shm` and `-journal`, sit
-# beside it. Read again as the run ends, so a write after the probe counts.
 def settle_coexistence(reading):
-    """The co-existence reading with every write so far read against the
-    places a build may write."""
-    stray = sorted(set(path for path in written
-                       if not inside(path, [DATABASES, WORKSPACE])))
-    reading["stray"] = stray[:10]
+    """The co-existence reading with every write outside the places a build
+    may write, so far."""
+    stray = report.get("stray") or []
+    reading["stray"] = sorted(stray)[:10]
     reading["passed"] = not reading["leaked"] and not stray
     return reading
 
@@ -1002,6 +1015,15 @@ finish()
 '''
 
 
+# The stray writes are filed apart from the probe that reads them, so a run
+# killed after one keeps it; the reader folds them into co-existence again.
+def stray_read(reading, stray):
+    """A co-existence reading with `stray` writes counted against it."""
+    reading["stray"] = sorted(stray)[:10]
+    reading["passed"] = not reading["leaked"] and not stray
+    return reading
+
+
 def lost_reading(name, reason):
     """A probe the trial kept from running: failed, or no latency."""
     if name in MEASURED:
@@ -1050,6 +1072,8 @@ def probe_results(payload, reason=None, lost=False, stalled=None):
         else:
             readings[name] = missing_reading(
                 name, "the in-process probe did not report it")
+    if payload.get("stray") and "leaked" in readings["coexistence"]:
+        stray_read(readings["coexistence"], payload["stray"])
     return readings
 
 
@@ -1222,13 +1246,16 @@ def read_trial(area, name, scores_file, other):
 # alone wherever it prices them while it keeps and exports all, `unpriced`
 # exports its total as NaN, `free` prices every line at nothing,
 # `unexported` answers its export with a 500 and the JSON all the same,
-# `unformed` answers 500 on its rules page, and `hanging` holds one
-# concurrent write, and its lock, for a minute. `poisoned` stores a price it
-# cannot then list, so its products page answers 500 once fuzzing has stored
-# one, which is no fault of any probe's; `detached` and `plain-save` place
-# the builder's save control and the sign-out form otherwise, which is none
-# either. Every mode opens its database by a `file:` URI with a query, and
-# puts a sign-out form carrying another token on its pages. `bouncing`
+# `unformed` answers 500 on its rules page, `unlisted` answers 500 on the
+# product list of the third instance made, the second co-existence's, and
+# `hanging` holds one concurrent write, and its lock, for a minute;
+# `late-stray` writes outside on its first malformed request, then hangs.
+# `poisoned` stores a price it cannot then list, so its products page
+# answers 500 once fuzzing has stored one, which is no fault of any probe's;
+# `detached` and `plain-save` place the builder's save control and the
+# sign-out form otherwise, which is none either. Every mode opens its
+# database by a `file:` URI with a query, and puts a sign-out form carrying
+# another token on its pages. `bouncing`
 # answers a price it cannot parse with the sign-in's redirect and
 # `forbidding` with a 403; `gated` never keeps its sign-in, and `refusing`
 # neither keeps it nor redirects, answering 401; `broken` will not boot, and
@@ -1278,6 +1305,8 @@ IN_FLIGHT = []
 GUARD = threading.Lock()
 STRAY = os.path.join(tempfile.gettempdir(), "tariff-quality-stray.log")
 HANDLE = open(STRAY, "a") if MODE == "stray" else None
+LATE = os.path.join(tempfile.gettempdir(), "tariff-quality-late.log")
+INSTANCES = []
 
 
 class Response(object):
@@ -1324,6 +1353,8 @@ def number(text):
 
 class App(object):
     def __init__(self, database):
+        INSTANCES.append(self)
+        self.number = len(INSTANCES)
         if HANDLE is not None:
             HANDLE.write("booted\\n")
             HANDLE.flush()
@@ -1439,6 +1470,9 @@ class Client(object):
         parts = path.strip("/").split("/")
         if method == "GET" and path in pages:
             listing = " ".join(self.app.skus()) if path == "/products" else ""
+            if (path == "/products" and MODE == "unlisted"
+                    and self.app.number == 3):
+                raise RuntimeError("the second instance's list is broken")
             if path == "/products" and MODE == "poisoned":
                 self.app.prices()
             if path == "/rules" and MODE == "unformed":
@@ -1476,6 +1510,10 @@ class Client(object):
                     return Response(302, "", {"Location": "/sign-in"})
                 if MODE == "forbidding":
                     return Response(403, "forbidden")
+                if MODE == "late-stray":
+                    with open(LATE, "a") as handle:
+                        handle.write("late\\n")
+                    time.sleep(600)
                 return Response(200, "unit_price is not a number" + TOKEN)
         if not price.is_finite() or price < 0 or (
                 price > 10 ** 12 and MODE != "poisoned"):
@@ -1567,7 +1605,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
           "truncating": "capacity_500_lines",
           "hanging": "concurrent_writes", "unformed": "fuzz_robustness",
-          "unexported": "capacity_500_lines",
+          "unexported": "capacity_500_lines", "unlisted": "coexistence",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
           "unpriced": "capacity_500_lines", "free": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
@@ -1575,7 +1613,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "shared": "coexistence", "stray": "coexistence"}
 
 
-def fake_readings(scratch, modes, mode_arg="all"):
+def fake_readings(scratch, modes, mode_arg="all", timeout=300):
     """Run the in-process probes against the stand-in in each mode."""
     readings = {}
     for mode in modes:
@@ -1588,7 +1626,7 @@ def fake_readings(scratch, modes, mode_arg="all"):
         env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"),
                    QUALITY_PROBE_WRITE_SECONDS="5")
         readings[mode] = probe_runtime(sys.executable, where, mode_arg,
-                                       env=env, timeout=300)
+                                       env=env, timeout=timeout)
     return readings
 
 
@@ -1664,6 +1702,8 @@ def runtime_self_checks(scratch):
         "unformed": "an app whose form page answers 500 fails "
                     "fuzz_robustness",
         "unexported": "an export answered 500 fails capacity_500_lines",
+        "unlisted": "a second instance whose product list answers 500 fails "
+                    "coexistence",
         "nulling": "an export with a null line fails capacity_500_lines",
         "unpriced": "an export whose total is NaN fails capacity_500_lines",
         "free": "an app pricing every line at nothing fails "
@@ -1722,9 +1762,23 @@ def runtime_self_checks(scratch):
          all("would not boot" in probe.get("lost", "")
              for probe in probes["broken"].values())),
     ])
-    stray = os.path.join(tempfile.gettempdir(), "tariff-quality-stray.log")
-    if os.path.exists(stray):
-        os.remove(stray)
+
+    # The first malformed request writes outside and then hangs, so the run
+    # is killed in its fuzzing, long after co-existence passed.
+    payload, reason, stalled = fake_readings(scratch, ["late-stray"],
+                                             timeout=40)["late-stray"]
+    late = probe_results(payload, reason, stalled=stalled)
+    checks.append((
+        "a write outside before a hang still fails coexistence, the path kept",
+        late["coexistence"].get("passed") is False
+        and any(path.endswith("tariff-quality-late.log")
+                for path in late["coexistence"].get("stray", []))
+        and "stopped during fuzz_robustness" in late["fuzz_robustness"].get(
+            "lost", "")))
+    for name in ("tariff-quality-stray.log", "tariff-quality-late.log"):
+        path = os.path.join(tempfile.gettempdir(), name)
+        if os.path.exists(path):
+            os.remove(path)
     return checks
 
 
