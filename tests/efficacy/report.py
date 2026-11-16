@@ -6261,6 +6261,43 @@ def round3_checks(seed):
     ]
 
 
+def c1_arm_checks(seed):
+    """Round C1's new arms are read on each task against `none`: each gets
+    a verdict and a cost per task from the contrasts the round declares."""
+    def reading(value):
+        return {"value": value, "missing": None}
+
+    def tree(cost):
+        return {"install": reading(True),
+                "boot": reading({"factory": True, "index_status": 200}),
+                "cost": reading({"cost_usd": cost})}
+    costs = {BARE: (2.0, 1.0), "lazysections": (1.5, 0.75),
+             "lazyrefold": (2.5, 1.25)}
+    trials = {}
+    for arm, (built, changed) in costs.items():
+        for block in range(1, 6):
+            name = trial_name(arm, block)
+            trials[name] = {
+                "round": "C1", "judge": None, "judgings": [],
+                "scores": dict(tree(built), name=name), "security": None,
+                "quality": None, "change": dict(tree(changed), name=name)}
+    tasks = task_readings(trials, seed)
+    text = "\n".join(line for reading in tasks
+                     for line in task_lines(reading, {}))
+    sections = {task: text.split("## The %s" % label)[1].split("## The ")[0]
+                for task, label in TASKS}
+    rows = {task: [line for line in section.splitlines()
+                   if line.startswith(("| lazysections |",
+                                       "| lazyrefold |"))]
+            for task, section in sections.items()}
+    return [("a C1 run gives lazysections and lazyrefold a verdict and a "
+             "cost on each task, against none",
+             rows["build"] == ["| lazysections | No | $1.50 |",
+                               "| lazyrefold | No | $2.50 |"]
+             and rows["change"] == ["| lazysections | No | $0.75 |",
+                                    "| lazyrefold | No | $1.25 |"])]
+
+
 def change_only_checks():
     """A named round's change task is read whether or not its build trial
     was scored or reached, on rows of its own; a pilot round's keeps
@@ -7976,6 +8013,26 @@ def on_demand(read, uses, arm):
     if ours is None or theirs is None:
         return False
     return ours < theirs and read["non_inferior"]
+
+
+def registered_figures(tasks, seed, uses_by_task):
+    """Round C1's registered results as figures, for a verify to compare:
+    each pair's reading on each task, whether the check loop is kept, and
+    each on-demand arm's answer on each task."""
+    present = {arm_of(name) for reading in tasks for name in reading[2]}
+    reads = {(reading[0], pair): pair_reading(reading, seed, pair)
+             for reading in tasks for pair in registered_pairs()
+             if set(pair) <= present}
+    loop = {task: read for (task, pair), read in reads.items()
+            if pair == CHECK_LOOP}
+    return {
+        "reads": {"%s %s-%s" % (task, pair[0], pair[1]): read
+                  for (task, pair), read in sorted(reads.items())},
+        "check_loop_kept": check_loop_kept(loop) if loop else None,
+        "on_demand": {"%s %s" % (task, arm): on_demand(
+            reads[(task, (arm, UP_FRONT))], uses_by_task.get(task) or {},
+            arm) for task, _, _, _, _ in tasks for arm in ON_DEMAND
+            if (task, (arm, UP_FRONT)) in reads}}
 
 
 def registered_lines(tasks, seed, uses_by_task):
@@ -10388,6 +10445,7 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in task_use_checks())
     checks.extend((label, ok, ok) for label, ok in pair_contrast_checks(seed))
     checks.extend((label, ok, ok) for label, ok in round3_checks(seed))
+    checks.extend((label, ok, ok) for label, ok in c1_arm_checks(seed))
     checks.extend((label, ok, ok) for label, ok
                   in change_finding_checks(seed))
     for label, ok, got in checks:

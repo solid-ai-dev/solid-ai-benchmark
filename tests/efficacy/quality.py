@@ -1365,24 +1365,39 @@ def data_upgrade(seeded):
                                 "total")))
     written = (("/jurisdictions", "code", {
         "code": "U2", "name": "Upgradia Nova", "default_rate": "0.1",
-        "rates": "standard=0.1"}),
+        "rates": "standard=0.1"}, ()),
         ("/rules", "rule_id", {"rule_id": "u-pct-after",
                                "kind": "percentage", "sku": "UPG-2",
-                               "percent": "3"}),
+                               "percent": "3"}, ()),
 
         # And through the fields the change added, which a schema changed
-        # for new files alone refuses on an old one.
+        # for new files alone refuses on an old one, or drops. Each must be
+        # read back whole in the record's row, as any of the ways a page
+        # may write it.
         ("/jurisdictions", "code", {
             "code": "U3", "name": "Upgradia Capped", "default_rate": "0.2",
-            "rates": "standard=0.2,reduced=0.05", "caps": "reduced=50.00"}),
+            "rates": "standard=0.2,reduced=0.05", "caps": "reduced=50.00"},
+         ("reduced=50.00", "50.00")),
         ("/rules", "rule_id", {"rule_id": "u-threshold",
                                "kind": "threshold", "sku": "",
-                               "percent": "5", "minimum": "200.00"}))
-    for path, key, body in written:
+                               "percent": "5", "minimum": "200.00"},
+         ("200.00",)))
+    for path, key, body, shown_as in written:
         created(path, body)
-        if body[key] not in text_of(page(client, path)):
+        text = text_of(page(client, path))
+        if body[key] not in text:
             failures.append("a record posted to %s after the upgrade is not "
                             "listed" % path)
+            continue
+        if not shown_as:
+            continue
+        tokens = row_tokens(page(client, path).get_data(as_text=True),
+                            body[key])
+        if tokens is None:
+            unfound.append(body[key])
+        elif not any(token in tokens for token in shown_as):
+            failures.append("%s lists %s without the %s it was posted with"
+                            % (path, body[key], shown_as[0]))
     if not failures and unfound:
         return {"passed": None,
                 "missing": "row for %s not found" % unfound[0]}
@@ -2216,8 +2231,8 @@ def create_app(database):
 # jurisdiction's listed rates, which no invoice prices with and only its page
 # shows, `extending` appends a digit to them, the old rates still inside the
 # new, `fresh` adds the columns to new files alone and reads an old one
-# without them, refusing only a record that sets one, `fragile` cannot read
-# an old
+# without them, silently dropping the field a new record sets, `fragile`
+# cannot read an old
 # jurisdiction's empty cap, so old invoices break while new ones open, and
 # `refusing` will not open an old file at all. At version 1, `unlisting`
 # links no customer, so nothing can be seeded. `items`, at either version,
@@ -2322,8 +2337,7 @@ class App(object):
                          caps=None):
         names, values = ["code", "name", "default_rate", "rates"], [
             code, name, rate, rates]
-        if VERSION == 2 and (caps is not None or "caps" in columns(
-                connection, "jurisdictions")):
+        if VERSION == 2 and "caps" in columns(connection, "jurisdictions"):
             names.append("caps")
             values.append(caps or "{}")
         connection.execute("INSERT INTO jurisdictions (%s) VALUES (%s)" % (
@@ -2390,6 +2404,10 @@ class Client(object):
         if table == "products":
             rows = connection.execute("SELECT sku, name, unit_price FROM "
                                       "products")
+        elif table == "rules" and VERSION == 2 and "minimum" in columns(
+                connection, "rules"):
+            rows = connection.execute("SELECT rule_id, kind, minimum FROM "
+                                      "rules")
         elif table == "rules":
             rows = connection.execute("SELECT rule_id, kind FROM rules")
         elif VERSION == 2 and "caps" in columns(connection, "jurisdictions"):
@@ -2421,8 +2439,7 @@ class Client(object):
                 "percent", "buy", "pay", "code", "amount")})
             names, values = ["rule_id", "kind", "sku", "detail"], [
                 data["rule_id"], data["kind"], data.get("sku"), detail]
-            if VERSION == 2 and (data.get("minimum") or "minimum" in columns(
-                    connection, "rules")):
+            if VERSION == 2 and "minimum" in columns(connection, "rules"):
                 names.append("minimum")
                 values.append(data.get("minimum"))
             connection.execute("INSERT INTO rules (%s) VALUES (%s)" % (
@@ -2630,9 +2647,10 @@ def upgrade_self_checks(scratch):
          "fields",
          faults["fresh"].get("passed") is False
          and faults["fresh"].get("failures") == [
-             "a record posted to /jurisdictions after the upgrade is not "
-             "listed",
-             "a record posted to /rules after the upgrade is not listed"]),
+             "/jurisdictions lists U3 without the reduced=50.00 it was "
+             "posted with",
+             "/rules lists u-threshold without the 200.00 it was posted "
+             "with"]),
         ("old invoices that break on the new field fail the upgrade",
          faults["fragile"].get("passed") is False
          and any("/invoices/" in failure for failure in

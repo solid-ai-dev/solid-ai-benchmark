@@ -311,7 +311,18 @@ def figures(root, seed):
     results = report.round_contrasts(trials, table, seed)
     withdrawn = report.withdrawals(trials)
     report.withdraw(withdrawn, table, results)
+
+    # A named round's every task is read on its own radar, and its
+    # registered readings from those, so a change task's reading that
+    # changes, its data upgrade among them, shows as its figures do.
+    tasks = report.task_readings(trials, seed, withdrawn)
+    per_task = {task: {"iso": reading[0], "results": reading[1],
+                       "cost_usd": task_table["cost_usd"]}
+                for task, _, _, task_table, reading in tasks}
+    registered = (report.registered_figures(
+        tasks, seed, report.task_uses(root, tasks)) if tasks else None)
     return {"table": table, "results": results, "withdrawn": withdrawn,
+            "iso_tasks": per_task, "registered": registered,
             "owed_blocks": report.owed_blocks(trials),
             "reach": report.reaches(root),
             "lost": [{key: value for key, value in loss.items()
@@ -574,6 +585,10 @@ def self_test():
     dump_json(os.path.join(scoring_area(named), "scores-change",
                            "none-1.json"),
               {"name": "none-1", "change_suite": {"value": 0.9}})
+    dump_json(os.path.join(scoring_area(named), "quality-scores-change",
+                           "none-1.json"),
+              {"name": "none-1", "probes": {"data_upgrade": {
+                  "passed": True}}})
     named_into = os.path.join(scratch, "runs", "c1")
     archive(named, named_into)
     clean = verify(named, named_into, seed) == []
@@ -584,6 +599,18 @@ def self_test():
     checks.append(("a C1 change task's score changed in the archive fails "
                    "the verify",
                    clean and "table" in verify(named, named_into, seed)))
+
+    # A change task's quality reading flipped in the archive moves only its
+    # task's radar, never the combined table, and the verify still refuses.
+    dump_json(archived, dict(load_json(archived),
+                             change_suite={"value": 0.9}))
+    upgraded = os.path.join(scoring_area(named_into), "quality-scores-change",
+                            "none-1.json")
+    dump_json(upgraded, {"name": "none-1", "probes": {"data_upgrade": {
+        "passed": False}}})
+    checks.append(("a C1 change task's quality reading flipped in the "
+                   "archive fails the verify",
+                   verify(named, named_into, seed) == ["iso_tasks"]))
 
     # A round-5d root is verified by round 5d's rules, so reliability's
     # interval is Newcombe's there as it is in the report.
