@@ -3311,7 +3311,7 @@ SECTION_OPERAND = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
 # A skill's file named in an operand, by its path under the folder the arm
 # installs its skills in: reading it reads the skill, as loading it does.
 SKILL_OPERAND = re.compile(re.escape(SKILLS_INTO + "/")
-                           + r"([\w.*?\[\]-]+/SKILL\.md)")
+                           + r"([\w.*?\[\]-]+/[\w.*?\[\]-]+)")
 SKILL_FILE = "SKILL.md"
 
 # A redirection that writes no file: to the null device, or of one stream
@@ -3815,15 +3815,18 @@ def skill_reads(name, given, command, known, writes_at, first_write,
                 before):
     """The skills a read or a shell command reads the file of, by name, each
     a shell command read before its first write added to `before`."""
+    # A read names a skill's file, or matches it through a wildcard, which
+    # the shell's reading resolves against the skills' own files; any other
+    # file in a skill's folder is no reading of the skill.
     files = sorted("%s/%s" % (skill, SKILL_FILE) for skill in known)
     if name == "Read":
         path = str(given.get("file_path") or "").replace("\\", "/")
         return [read.split("/")[0] for read in SKILL_OPERAND.findall(path)
-                if read.split("/")[0] in known]
+                if read in files]
     found = []
     for index, read in shell_reads(command, files, SKILL_OPERAND):
         skill = read.split("/")[0]
-        if skill in known:
+        if read in files:
             found.append(skill)
             if first_write is None and (writes_at is None
                                         or index < writes_at):
@@ -6222,6 +6225,8 @@ def round3_checks(seed):
                                     "base-quality\\SKILL.md"}),
              ("Bash", {"command": "cat .claude/skills/backend-*/SKILL.md"}),
              ("Bash", {"command": "ls .claude/skills"}),
+             ("Bash", {"command": "cat .claude/skills/base-quality/*.md"}),
+             ("Read", {"file_path": "/pen/.claude/skills/backend-api/x.md"}),
              ("Read", {"file_path": "/pen/.claude/skills/other/SKILL.md"})]
     with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
         for turn, (name, given) in enumerate(calls, 1):
@@ -6250,6 +6255,11 @@ def round3_checks(seed):
          templates_read({"lazyskills-1": used}, "lazyskills") == 3.0
          and sorted({skill for _, skill in used["uses"]})
          == ["backend-api", "backend-auth", "base-quality"]),
+        ("a wildcard read of one skill's folder counts that skill once, "
+         "another file there none",
+         [skill for turn, skill in used["uses"] if turn == 5]
+         == ["base-quality"]
+         and not any(turn == 6 for turn, _ in used["uses"])),
         ("C1 reads an axis non-inferior only with its lower bound strictly "
          "above minus the margin",
          states(-margin, -margin) == "inconclusive"

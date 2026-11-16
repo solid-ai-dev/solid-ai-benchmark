@@ -1401,41 +1401,48 @@ def data_upgrade(seeded):
             failures.append("the first invoice saved again totals %r, not %r"
                             % (total, seeded["invoices"][0]["export"].get(
                                 "total")))
+    # Every value posted is read back whole in the record's row, by the
+    # rule the kept values are read by; a cap may be written as its amount
+    # alone, so either form of it reads.
     written = (("/jurisdictions", "code", {
         "code": "U2", "name": "Upgradia Nova", "default_rate": "0.1",
-        "rates": "standard=0.1"}, ()),
+        "rates": "standard=0.1"}, {}),
         ("/rules", "rule_id", {"rule_id": "u-pct-after",
                                "kind": "percentage", "sku": "UPG-2",
-                               "percent": "3"}, ()),
+                               "percent": "3"}, {}),
 
         # And through the fields the change added, which a schema changed
-        # for new files alone refuses on an old one, or drops. Each must be
-        # read back whole in the record's row, as any of the ways a page
-        # may write it.
+        # for new files alone refuses on an old one, or drops.
         ("/jurisdictions", "code", {
             "code": "U3", "name": "Upgradia Capped", "default_rate": "0.2",
             "rates": "standard=0.2,reduced=0.05", "caps": "reduced=50.00"},
-         ("reduced=50.00", "50.00")),
+         {"caps": ("reduced=50.00", "50.00")}),
         ("/rules", "rule_id", {"rule_id": "u-threshold",
                                "kind": "threshold", "sku": "",
-                               "percent": "5", "minimum": "200.00"},
-         ("200.00",)))
-    for path, key, body, shown_as in written:
+                               "percent": "5", "minimum": "200.00"}, {}))
+    for path, key, body, forms in written:
         created(path, body)
         text = text_of(page(client, path))
         if body[key] not in text:
             failures.append("a record posted to %s after the upgrade is not "
                             "listed" % path)
             continue
-        if not shown_as:
-            continue
         tokens = row_tokens(page(client, path).get_data(as_text=True),
                             body[key])
         if tokens is None:
             unfound.append(body[key])
-        elif not any(has_token(tokens, token) for token in shown_as):
-            failures.append("%s lists %s without the %s it was posted with"
-                            % (path, body[key], shown_as[0]))
+            continue
+        for field, value in body.items():
+            wanted = forms.get(field)
+            if wanted is None:
+                missed = [token for token in TOKEN_SPLIT.split(value)
+                          if token and not has_token(tokens, token)]
+            else:
+                missed = [] if any(has_token(tokens, token)
+                                   for token in wanted) else [value]
+            if missed:
+                failures.append("%s lists %s without the %s it was posted "
+                                "with" % (path, body[key], value))
     if not failures and unfound:
         return {"passed": None,
                 "missing": "row for %s not found" % unfound[0]}
@@ -2269,7 +2276,8 @@ def create_app(database):
 # jurisdiction's listed rates, which no invoice prices with and only its page
 # shows, `extending` appends a digit to them, the old rates still inside the
 # new, `fresh` adds the columns to new files alone and reads an old one
-# without them, silently dropping the field a new record sets, `fragile`
+# without them, silently dropping the field a new record sets, `garbling`
+# stores a new jurisdiction under another name and rates, `fragile`
 # cannot read an old
 # jurisdiction's empty cap, so old invoices break while new ones open, and
 # `refusing` will not open an old file at all. At version 1, `unlisting`
@@ -2456,12 +2464,16 @@ class Client(object):
         if table == "products":
             rows = connection.execute("SELECT sku, name, unit_price FROM "
                                       "products")
-        elif table == "rules" and VERSION == 2 and "minimum" in columns(
-                connection, "rules"):
-            rows = connection.execute("SELECT rule_id, kind, minimum FROM "
-                                      "rules")
         elif table == "rules":
-            rows = connection.execute("SELECT rule_id, kind FROM rules")
+            minimum = VERSION == 2 and "minimum" in columns(connection,
+                                                            "rules")
+            rows = []
+            for found in connection.execute(
+                    "SELECT rule_id, kind, sku, detail%s FROM rules"
+                    % (", minimum" if minimum else "")):
+                row = (found[0], found[1], found[2] or "",
+                       json.loads(found[3]).get("percent") or "")
+                rows.append(row + ((found[4] or "",) if minimum else ()))
         elif VERSION == 2 and "caps" in columns(connection, "jurisdictions"):
             rows = connection.execute("SELECT code, name, default_rate, "
                                       "rates, caps FROM jurisdictions")
@@ -2499,6 +2511,8 @@ class Client(object):
             connection.execute("INSERT INTO rules (%s) VALUES (%s)" % (
                 ", ".join(names), ", ".join("?" for _ in names)), values)
         else:
+            if MODE == "garbling":
+                data = dict(data, name="Garbled", rates="standard=0.9")
             self.app.add_jurisdiction(connection, data["code"], data["name"],
                                       data["default_rate"],
                                       data.get("rates") or "",
@@ -2616,7 +2630,7 @@ def create_app(database):
 
 # The faults the data upgrade must catch at version 2, and what each loses.
 UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "rerating",
-                  "extending", "fresh", "fragile", "refusing")
+                  "extending", "fresh", "garbling", "fragile", "refusing")
 
 
 def plant_upgrade(where, version, mode):
@@ -2706,6 +2720,15 @@ def upgrade_self_checks(scratch):
          hidden.get("passed") is None
          and hidden.get("missing", "").startswith("row for ")
          and hidden["missing"].endswith(" not found")),
+        ("a new record stored with other values than it was posted with "
+         "fails the upgrade",
+         faults["garbling"].get("passed") is False
+         and faults["garbling"].get("failures") == [
+             "/jurisdictions lists %s without the %s it was posted with"
+             % (code, value) for code, value in (
+                 ("U2", "Upgradia Nova"), ("U2", "standard=0.1"),
+                 ("U3", "Upgradia Capped"),
+                 ("U3", "standard=0.2,reduced=0.05"))]),
         ("a list-item row with a value the change adds keeps every old one",
          items.get("passed") is True and not items.get("failures")),
         ("a schema changed for new files alone fails on the change's own "

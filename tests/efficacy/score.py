@@ -1466,13 +1466,17 @@ def interfaces(build_suite, fixture):
             for module in INTERFACE_MODULES):
         return absent("the change task names no fixture whose interface "
                       "modules were frozen")
-    if build_suite.get("missing"):
+    # A suite that ran out of time was held there by the tree under it, so
+    # every interface fails, whether or not a report was left to read.
+    report = build_suite.get("report") or {}
+    timed_out = report.get("timed_out") is True
+    if build_suite.get("missing") and not timed_out:
         return absent("the build suite did not run on the changed tree: %s"
                       % build_suite["missing"])
-    report = build_suite.get("report")
     modules = {}
     for module in INTERFACE_MODULES:
-        before, after = baseline[module], module_whole(report, module)
+        before = baseline[module]
+        after = False if timed_out else module_whole(report, module)
         verdict = ({(True, True): "kept", (True, False): "broken",
                     (False, True): "repaired", (False, False): "inherited"}
                    [(before, after)])
@@ -1830,6 +1834,12 @@ def interface_checks():
     inherited = interfaces(suite(failing=[api]), fixture(failed=[api]))
     repaired = interfaces(suite(), fixture(failed=[api]))
     none_held = interfaces(suite(), fixture(failed=INTERFACE_MODULES))
+
+    # Out of time before a report was written, and after one was begun.
+    stopped = interfaces(absent("the grader wrote no report", report={
+        "timed_out": True}), fixture())
+    partway = interfaces(measured(None, report=dict(
+        suite()["report"], timed_out=True)), fixture())
     return [
         ("a change keeping every interface the fixture passed reads 1",
          kept["value"] == 1.0 and not kept["broken"]),
@@ -1844,6 +1854,10 @@ def interface_checks():
         ("a module the change repaired reads repaired",
          repaired["value"] == 1.0
          and repaired["modules"][api]["verdict"] == "repaired"),
+        ("a build suite that ran out of time fails every interface, not "
+         "missing",
+         stopped["value"] == 0.0 and stopped["broken"]
+         == list(INTERFACE_MODULES) and partway["value"] == 0.0),
         ("interfaces read missing with no frozen baseline, no build suite, "
          "or none the fixture passed",
          interfaces(suite(), None)["missing"] is not None
