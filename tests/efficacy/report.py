@@ -8002,6 +8002,36 @@ def iso_checks(seed):
     checks.append(("a lost quality probe reads failed, a missing one not "
                    "measured", got == (0.5, None, 1.0, None), got))
 
+    # Each reading the quality reader files, built by its own functions,
+    # reads as its target does: every probe lost fails, every probe missing,
+    # a trial whose tree is gone among them, is not measured, and the 500
+    # lines, priced as five times their first 100, pass or fail as one.
+    def read_as(probes):
+        trial = planted()
+        trial["quality"] = {"probes": probes}
+        run = {"hybrid-1": trial, "none-1": trial}
+        return {target[3]: target_met(trial, target[3], target[4], target[5])
+                for target in iso_targets(iso_axes_of(run))
+                if target[3].startswith("quality:")}
+
+    gone = read_as({name: quality.missing_reading(
+        name, "source tree not present: x") for name in quality.PROBES})
+    lost = read_as({name: quality.lost_reading(name, "would not boot")
+                    for name in quality.PROBES})
+    scaled = [read_as({"capacity_500_lines": {"passed": ok, "total": "1.00"}})[
+        "quality:capacity_500_lines"] for ok in (True, False)]
+    pass_fail = sorted("quality:" + name for name in quality.PROBES
+                       if name not in quality.MEASURED)
+    got = (sorted(gone) == sorted("quality:" + name
+                                  for name in quality.PROBES),
+           set(gone.values()), {name: lost[name] for name in pass_fail},
+           lost["quality:latency_p95_ms"], scaled)
+    checks.append(("every reading the quality reader files reads as its "
+                   "target: lost fails, missing or a gone tree is not "
+                   "measured",
+                   got == (True, {None}, dict.fromkeys(pass_fail, False),
+                           None, [True, False]), got))
+
     # The latency target reads the registered cutoff. With none registered
     # it is not measured, never met and never failed, and holds no screen;
     # with one, a latency within it is met, one past it or lost is not.
