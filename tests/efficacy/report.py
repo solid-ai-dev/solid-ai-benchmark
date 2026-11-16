@@ -111,7 +111,15 @@ CONTRASTS = (("short", "none"), ("hybrid", "none"), ("hand", "none"),
              ("lazyskills", "lazyref"),
              ("lazyref", "skills"), ("lazyskills", "reference"),
              ("lazyref", "hand"), ("lazyskills", "hand"),
-             ("lazyref", "short"), ("lazyskills", "short"))
+             ("lazyref", "short"), ("lazyskills", "short"),
+
+             # Round 6 (C1): each new arm against none; the check loop,
+             # lazyref against itself before the change; and the section
+             # files against the arms whose rules they repackage, lazyref
+             # read whole on demand and reference read up front.
+             ("lazysections", "none"), ("lazyrefold", "none"),
+             ("lazyref", "lazyrefold"),
+             ("lazysections", "lazyref"), ("lazysections", "reference"))
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -2235,6 +2243,10 @@ PLAIN_ARMS = {
                "read when that work starts",
     "lazyskills": "the same map, each template loaded as a skill when that "
                   "work starts",
+    "lazysections": "a short file that maps each topic to a small file of "
+                    "its rules, read when the work first touches it",
+    "lazyrefold": "the same map as lazyref, at the templates from before "
+                  "the one check command",
 }
 
 # Each radar axis in plain words, as a sentence names it.
@@ -8936,6 +8948,36 @@ def cross_checks(seed):
     ]
 
 
+def c1_contrast_checks(seed):
+    """A run of round 6's new arms alone reads each against the bare arm:
+    it has declared contrasts, and its report says each approach in plain
+    words."""
+    trials = {trial_name(arm, block): {
+        "scores": {}, "judge": None, "security": None, "round": "C1",
+        "change": {"suite_revision": "any-revision",
+                   "change_suite": {"value": 0.5 + block / 100.0,
+                                    "missing": None}}}
+        for arm in ("none", "lazysections", "lazyrefold")
+        for block in range(1, 4)}
+    active = active_contrasts(trials)
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-c1-contrasts-")
+    try:
+        text = "\n".join(plain_report_lines(scratch, trials, table, results,
+                                            {}, "appendix.md", 3))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return [
+        ("a run of round 6's new arms reads each against none, in plain "
+         "words", ("lazysections", "none") in active
+         and ("lazyrefold", "none") in active
+         and "### `lazysections`" in text and "### `lazyrefold`" in text
+         and all(PLAIN_ARMS.get(arm) for arm in ("lazysections",
+                                                 "lazyrefold")), active),
+    ]
+
+
 def named_map_use_checks(seed):
     """A named round's report reads its on-demand arms' use of their maps:
     a planted C1 run whose `lazysections` trial read two section files
@@ -9190,6 +9232,7 @@ def self_test(seed):
     checks.extend(executive_checks(seed))
     checks.extend(documents_checks(seed))
     checks.extend(named_map_use_checks(seed))
+    checks.extend(c1_contrast_checks(seed))
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
