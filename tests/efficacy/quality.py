@@ -22,6 +22,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import tarfile
 import tempfile
@@ -83,7 +84,7 @@ import builtins, csv, html, io, json, logging, math, os, platform, re, sqlite3
 import sys, tempfile, threading, time
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from urllib.request import url2pathname
 
 PACKAGE = "tariff"
@@ -94,22 +95,33 @@ MODE, PROGRESS, DATABASES = sys.argv[1], sys.argv[2], sys.argv[3]
 WORKSPACE = os.path.abspath(os.getcwd())
 os.environ["TARIFF_ADMIN_PASSWORD"] = PASSWORD
 
+# The standard library tries its temporary folder with a scratch file the
+# first time any code asks for it; asked here, before the watch below, that
+# try is not read as the build's write.
+tempfile.gettempdir()
+
 real_open = builtins.open
 real_os_open = os.open
 report = {"python": platform.python_version(), "probes": {},
           "running": "boot"}
 
 
+SAVING = threading.Lock()
+
+
 def save():
     """The report so far, replaced whole, so a stalled run leaves a whole
     file behind."""
-    with real_open(PROGRESS + ".part", "w", encoding="utf-8") as handle:
-        json.dump(report, handle)
-    os.replace(PROGRESS + ".part", PROGRESS)
+    with SAVING:
+        with real_open(PROGRESS + ".part", "w", encoding="utf-8") as handle:
+            json.dump(report, handle)
+        os.replace(PROGRESS + ".part", PROGRESS)
 
 
 def finish():
     report.pop("running", None)
+    if "leaked" in report["probes"].get("coexistence", {}):
+        settle_coexistence(report["probes"]["coexistence"])
     save()
     print(json.dumps(report))
     raise SystemExit(0)
@@ -129,13 +141,33 @@ def traced(statement):
     statements["total"] += 1
 
 
-# Where the application writes while the co-existence probe watches.
-watch = {"on": False, "paths": []}
+def inside(path, roots):
+    path = os.path.normcase(os.path.realpath(path))
+    for root in roots:
+        root = os.path.normcase(os.path.realpath(root))
+        try:
+            if os.path.commonpath([path, root]) == root:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
+# Every file the application opens to write, by name, for the whole run.
+# The watch is in place before the package is imported, so a handle opened
+# at import and written to later is seen. Every database of every probe sits
+# in a folder under the reader's own root, so the workspace and that root
+# are the only places a build may write; a database's sidecars, its `-wal`,
+# `-shm` and `-journal`, sit beside it. A write anywhere else is filed the
+# moment it is seen, so a run killed later cannot lose it.
 def note(path):
-    if watch["on"] and isinstance(path, (str, bytes, os.PathLike)):
-        watch["paths"].append(os.path.abspath(os.fsdecode(path)))
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return
+    path = os.path.abspath(os.fsdecode(path))
+    stray = report.setdefault("stray", [])
+    if not inside(path, [DATABASES, WORKSPACE]) and path not in stray:
+        stray.append(path)
+        save()
 
 
 real_connect = sqlite3.connect
@@ -144,11 +176,14 @@ real_connect = sqlite3.connect
 # A database named by a `file:` URI, as `Path.as_uri()` writes one with
 # `uri=True`, is read back to the path it names: its query, such as
 # `?mode=rwc`, dropped, its escapes undone, and `/C:/...` read as a drive.
+# Opened with `mode=ro`, it is read and never written, so it is no write.
 def database_file(target):
-    """The file a connection opens, or None for a database in memory."""
+    """The file a connection may write, or None for a database in memory
+    or one opened read-only."""
     if target.startswith("file:"):
         parts = urlsplit(target)
-        if "mode=memory" in parts.query:
+        mode = parse_qs(parts.query).get("mode", [""])[-1]
+        if mode in ("memory", "ro"):
             return None
         path = parts.path
         if parts.netloc and parts.netloc != "localhost":
@@ -244,37 +279,59 @@ class Raised(Exception):
 
 
 class Hidden(HTMLParser):
-    """Collects every hidden input, however its attributes are quoted, in
-    page order, with the action of the form it sits in."""
+    """Collects every form's action and id, every hidden input and every
+    submit control's `formaction`, however their attributes are quoted, in
+    page order, each with the form it belongs to."""
 
     def __init__(self):
         HTMLParser.__init__(self)
-        self.inputs = []
         self.forms = []
+        self.inputs = []
+        self.controls = []
         self.form = None
+
+    def owner(self, attributes):
+        """The form a control belongs to: the one its `form` attribute names
+        by id, else the one it sits in."""
+        named = attributes.get("form")
+        return ("id", named) if named else self.form
 
     def handle_starttag(self, tag, attrs):
         attributes = dict(attrs)
+        kind = (attributes.get("type") or "").lower()
         if tag == "form":
             self.form = len(self.forms)
-            self.forms.append(attributes.get("action") or "")
-        elif (tag == "input" and (attributes.get("type") or "").lower()
-                == "hidden" and attributes.get("name")):
-            self.inputs.append((self.form, attributes["name"],
+            self.forms.append((attributes.get("action") or "",
+                               attributes.get("id")))
+        elif tag == "input" and kind == "hidden" and attributes.get("name"):
+            self.inputs.append((self.owner(attributes), attributes["name"],
                                 attributes.get("value") or ""))
+        if ((tag == "button" and kind in ("", "submit"))
+                or (tag == "input" and kind in ("submit", "image"))) \
+                and attributes.get("formaction") is not None:
+            self.controls.append((self.owner(attributes),
+                                  attributes["formaction"]))
 
     def handle_endtag(self, tag):
         if tag == "form":
             self.form = None
 
+    def resolved(self, owner):
+        """A form's index from an owner, an index or an id."""
+        if isinstance(owner, tuple):
+            return next((index for index, (_, ident) in enumerate(self.forms)
+                         if ident == owner[1]), None)
+        return owner
+
 
 # A page may hold several forms, each with its own token, such as a sign-out
 # form beside the one being sent. The fields sent are those of the first form
-# whose action is the path posted to, read as the browser resolves it, its
-# query ignored, an empty action being the page's own path. A post no form's
-# action names takes every hidden field on the page, the first of each name.
-# A save control's `formaction` is not read: the builder's save is sent with
-# the builder form's fields by that fallback, which is how a browser sends it.
+# that posts to the path posted to: by its action, or by a submit control's
+# `formaction`, as the builder's save sends the builder form to `/invoices`;
+# a control outside the form, linked by its `form` attribute, counts too.
+# Each is read as the browser resolves it, its query ignored, an empty one
+# being the page's own path. A post no form sends takes every hidden field
+# on the page, the first of each name.
 def hidden_fields(text, page_path, target):
     """The hidden fields a post to `target` carries from the page at
     `page_path`."""
@@ -282,11 +339,18 @@ def hidden_fields(text, page_path, target):
     parser.feed(text)
     base = "http://localhost" + page_path
     wanted = urlsplit(target).path
-    for form, action in enumerate(parser.forms):
-        if urlsplit(urljoin(base, action or page_path)).path == wanted:
+
+    def path_of(address):
+        return urlsplit(urljoin(base, address or page_path)).path
+
+    for form, (action, _) in enumerate(parser.forms):
+        sends = {path_of(action)} | {
+            path_of(address) for owner, address in parser.controls
+            if parser.resolved(owner) == form}
+        if wanted in sends:
             fields = {}
             for owner, name, value in parser.inputs:
-                if owner == form:
+                if parser.resolved(owner) == form:
                     fields.setdefault(name, value)
             return fields
     fields = {}
@@ -305,15 +369,27 @@ def gated(response, token=True):
         return True
     if response.status_code not in REDIRECTS:
         return False
-    return urlsplit(response.headers.get("Location", "")).path == "/sign-in"
+    return location(response) == "/sign-in"
+
+
+# A redirect may name its target relative to the request, as `invoices/1`
+# after a post to `/invoices`; it is resolved against the path the answer
+# was asked on, as a browser resolves it.
+def location(response):
+    """The path a redirect sends to, resolved against its request's."""
+    asked = getattr(response, "asked_path", None) or "/"
+    return urlsplit(urljoin("http://localhost" + asked,
+                            response.headers.get("Location", ""))).path
 
 
 def ask(who, method, path, data=None, headers=None):
     try:
-        return who.open(path, method=method, data=data,
-                        headers=headers or {})
+        answer = who.open(path, method=method, data=data,
+                          headers=headers or {})
     except Exception as error:
         raise Raised(repr(error)[:300])
+    answer.asked_path = urlsplit(path).path
+    return answer
 
 
 def page(who, path):
@@ -388,7 +464,7 @@ def saved_page(answer):
     """The invoice page a save redirected to, or None."""
     if answer.status_code not in REDIRECTS:
         return None
-    path = urlsplit(answer.headers.get("Location", "")).path
+    path = location(answer)
     if re.match(r"^/invoices/[^/]+$", path) and path not in (
             "/invoices/new", "/invoices/preview"):
         return path
@@ -490,9 +566,12 @@ def n_plus_one():
 def exported(path, lines):
     """The saved invoice's JSON export read against the lines saved: its
     total, or None and why it does not hold them."""
+    answer = page(client, path + "/export.json")
+    if not ok(answer):
+        return None, ("the saved invoice's JSON export answered %d"
+                      % answer.status_code)
     try:
-        export = json.loads(page(client, path + "/export.json").get_data(
-            as_text=True))
+        export = json.loads(answer.get_data(as_text=True))
     except ValueError:
         return None, "the saved invoice's JSON export is not JSON"
     if not isinstance(export, dict) or not isinstance(export.get("lines"),
@@ -521,37 +600,35 @@ def exported(path, lines):
     return total, None
 
 
-# An amount as a page may write it: grouped by thousands with a comma, a
-# point, a space, a no-break or narrow no-break space, or an apostrophe, and
-# two decimals after a point or a comma. The page is read with its character
-# references resolved, so `&nbsp;` and `&#8239;` group as the characters do.
-AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:[,.\u00a0\u202f' ]\d{3})+"
-                    r"|\d+)[.,](\d{2})(?!\d)")
-
-
-def shows_total(answer, total, tolerance=Decimal("0")):
-    """Whether a page shows an amount within `tolerance` of `total`, however
-    it is grouped and whatever currency sign stands beside it."""
-    return any(abs(Decimal(re.sub(r"\D", "", whole) + "." + cents) - total)
-               <= tolerance for whole, cents in AMOUNT.findall(
-                   html.unescape(answer.get_data(as_text=True))))
-
-
 # Every line is the seed's Seed pack, SEE-5, so the invoice's total scales
 # with its lines: it is zero-rated, so no tax rounds per line; its one rule
 # is a bulk rule read per line; a quantity of 6, 12, 18, 24 or 30 makes each
 # line's net a whole multiple of 15.00; no coupon is sent; and the one rule
 # over the whole invoice is a percentage. 500 lines, five times the first
-# 100, then cost five times what those 100 cost, to the cent; a cent per 100
-# lines is allowed for rounding all the same.
+# 100, then cost five times what those 100 cost, to the cent; a cent is
+# allowed for rounding all the same.
 LINES = [("SEE-5", 6 * (1 + index % 5)) for index in range(500)]
 SAMPLE = 100
-CENT_PER_SAMPLE = Decimal("0.01")
+CENT = Decimal("0.01")
+
+
+def saved_export(lines, steps, key):
+    """Save an invoice of `lines` and read its export: the total, or None
+    and why it does not hold them."""
+    saved = held(form_post(client, "/invoices/new", "/invoices",
+                           builder_body(lines)), "the save")
+    steps["save" + key] = saved.status_code
+    path = saved_page(saved)
+    if path is None:
+        return None, None, ("the save of %d lines did not redirect to its "
+                            "page" % len(lines))
+    total, reason = exported(path, lines)
+    return path, total, reason
 
 
 def capacity_500_lines():
-    """An invoice of 500 lines previewed, saved and rendered, every line
-    kept in all three, and priced five times its first 100."""
+    """An invoice of 500 lines previewed, saved and rendered, its export
+    holding every line, and priced five times its first 100 saved alone."""
     lines = LINES
     steps = {}
     try:
@@ -560,63 +637,71 @@ def capacity_500_lines():
                                  headers={"HX-Request": "true"}),
                        "the preview")
         steps["preview"] = preview.status_code
-        sample = held(form_post(client, "/invoices/new", "/invoices/preview",
-                                builder_body(lines[:SAMPLE]),
-                                headers={"HX-Request": "true"}),
-                      "the preview of %d lines" % SAMPLE)
-        steps["preview_%d" % SAMPLE] = sample.status_code
-        saved = held(form_post(client, "/invoices/new", "/invoices",
-                               builder_body(lines)), "the save")
-        steps["save"] = saved.status_code
-        path = saved_page(saved)
-        if path is None:
-            return passed(False, steps=steps,
-                          reason="the save did not redirect to its page")
-        rendered = page(client, path)
-        steps["render"] = rendered.status_code
-        total, reason = exported(path, lines)
+        path, total, reason = saved_export(lines, steps, "")
+        if path is not None:
+            rendered = page(client, path)
+            steps["render"] = rendered.status_code
+        if not reason:
+            _, sample, sample_reason = saved_export(lines[:SAMPLE], steps,
+                                                    "_%d" % SAMPLE)
     except Raised as error:
         return passed(False, steps=steps, raised=str(error))
-    if not (ok(preview) and ok(rendered) and ok(sample)):
+
+    # The preview and the page are read for answering, never for the amounts
+    # they show: what a page writes beside a total, a subtotal among them,
+    # cannot be told apart from it. The amounts are the exports', in the
+    # spec's fixed form.
+    if path is not None and not (ok(preview) and ok(rendered)):
         return passed(False, steps=steps)
 
-    # A build that quietly keeps fewer lines answers 2xx on all three. The
-    # export, in the spec's fixed form, must list every line saved, each a
-    # well-formed record; a malformed one is the build's output, so it fails.
+    # A build that quietly keeps fewer lines answers 2xx everywhere. The
+    # export must list every line saved, in order, each a well-formed record,
+    # with a finite total; a malformed one is the build's output, so it fails.
     if reason:
         return passed(False, steps=steps, reason=reason)
 
-    # The preview and the page are read by their total alone, which only all
-    # 500 lines give, since every line adds to it. A page that paginates its
-    # rows but shows the whole invoice's total keeps every line, so it is no
-    # capacity failure; counting rows in HTML is left alone.
-    kept = {"preview": shows_total(preview, total),
-            "render": shows_total(rendered, total)}
-
-    # The total the export states is the build's own, so a calculation that
-    # reads only the first 100 lines would agree with itself everywhere. The
-    # first 100 lines priced alone must cost a fifth of it.
     # Every line is a Seed pack at a quantity of six or more, which costs
     # more than nothing under the seed's rules, so the invoice's total is
     # positive; a total of nothing scales with any count of lines.
     if total <= 0:
-        return passed(False, steps=steps, kept=kept, total=str(total),
+        return passed(False, steps=steps, total=str(total),
                       reason="500 lines that each cost more than nothing "
                              "were priced at %s" % total)
-    share = total * SAMPLE / len(lines)
-    kept["scales"] = shows_total(sample, share, CENT_PER_SAMPLE)
-    return passed(all(kept.values()), steps=steps, kept=kept,
-                  total=str(total), expected_sample=str(share))
+
+    # The total is the build's own, so a calculation that reads only the
+    # first 100 lines would agree with itself everywhere. Those 100 lines,
+    # saved alone, must cost a fifth of it.
+    if sample_reason:
+        return passed(False, steps=steps,
+                      reason="the invoice of %d lines: %s"
+                             % (SAMPLE, sample_reason))
+    scales = abs(total - sample * len(lines) / SAMPLE) <= CENT
+    return passed(scales, steps=steps, total=str(total),
+                  sample_total=str(sample))
 
 
 LOCKED = re.compile(r"database (table )?is locked", re.IGNORECASE)
 
+# How long each writer is waited for. The self-test shortens it; a run
+# against a build never sets it.
+WRITE_SECONDS = float(os.environ.get("QUALITY_PROBE_WRITE_SECONDS") or 120)
+
 
 def concurrent_writes():
     """Two clients, each saving 20 products at once."""
-    writers = [app.test_client(), app.test_client()]
-    if not all(sign_in(writer) for writer in writers):
-        return lost("concurrent_writes", "a second client could not sign in")
+
+    # Run after the fuzzing, the writes go to an instance of their own on a
+    # fresh database, so no product a malformed request stored can reach
+    # their reading.
+    try:
+        own = package.create_app(os.path.join(folder(), "concurrent.sqlite"))
+    except Exception as error:
+        return passed(False, reason="a fresh instance would not boot: %s"
+                      % repr(error)[:300])
+    writers = [own.test_client(), own.test_client()]
+    reader = own.test_client()
+    if not all(sign_in(who) for who in writers + [reader]):
+        return lost("concurrent_writes", "a writing client could not sign in")
     start = threading.Barrier(len(writers))
     outcomes = [[] for _ in writers]
     logged = len(records)
@@ -648,14 +733,16 @@ def concurrent_writes():
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=120)
+        thread.join(timeout=WRITE_SECONDS)
     if any(thread.is_alive() for thread in threads):
-        return passed(False, reason="the writes did not finish in 120 s")
+        return passed(False, hung=True, reason=(
+            "a write did not finish in %g s: the application hung it"
+            % WRITE_SECONDS))
     entries = [entry for outcome in outcomes for entry in outcome]
     if any(entry.get("gated") for entry in entries):
         return lost("concurrent_writes", "a write was turned away by the "
                     "sign-in")
-    listing = page(client, "/products").get_data(as_text=True)
+    listing = page(reader, "/products").get_data(as_text=True)
     unsaved = [entry["sku"] for entry in entries
                if entry["sku"] not in listing]
     failed = [entry for entry in entries if entry.get("raised")
@@ -667,18 +754,6 @@ def concurrent_writes():
                   failed=failed[:5], locked=locked)
 
 
-def inside(path, roots):
-    path = os.path.normcase(os.path.realpath(path))
-    for root in roots:
-        root = os.path.normcase(os.path.realpath(root))
-        try:
-            if os.path.commonpath([path, root]) == root:
-                return True
-        except ValueError:
-            continue
-    return False
-
-
 PRODUCT = {"sku": "QCO-1", "name": "Coexistence probe", "unit_price": "2.00",
            "tax_category": "standard"}
 
@@ -688,37 +763,44 @@ def coexistence():
     out of the other, and neither writes outside its folder or the
     workspace."""
 
-    # A database's sidecars, its `-wal`, `-shm` and `-journal`, sit in its
-    # folder, so the two folders admit them.
     folders_given = [folder(), folder()]
-    watch["paths"] = []
-    watch["on"] = True
     try:
-        try:
-            first, second = [
-                package.create_app(os.path.join(where, "coexist.sqlite"))
-                for where in folders_given]
-        except Exception as error:
-            return passed(False, reason="a second instance would not boot: "
-                          "%s" % repr(error)[:300])
-        one, other = first.test_client(), second.test_client()
-        if not (sign_in(one) and sign_in(other)):
-            return lost("coexistence", "an instance's administrator could "
-                        "not sign in")
-        held(form_post(one, "/products", "/products", PRODUCT),
-             "the product's post")
-        stored = PRODUCT["sku"] in page(one, "/products").get_data(
-            as_text=True)
-        leaked = PRODUCT["sku"] in page(other, "/products").get_data(
-            as_text=True)
-    finally:
-        watch["on"] = False
+        first, second = [
+            package.create_app(os.path.join(where, "coexist.sqlite"))
+            for where in folders_given]
+    except Exception as error:
+        return passed(False, reason="a second instance would not boot: "
+                      "%s" % repr(error)[:300])
+    one, other = first.test_client(), second.test_client()
+    if not (sign_in(one) and sign_in(other)):
+        return lost("coexistence", "an instance's administrator could not "
+                    "sign in")
+    held(form_post(one, "/products", "/products", PRODUCT),
+         "the product's post")
+    listed, other_listed = page(one, "/products"), page(other, "/products")
+
+    # A list that does not answer cannot show the product, so its absence
+    # there says nothing about isolation.
+    if not (ok(listed) and ok(other_listed)):
+        return passed(False, reason=(
+            "the instances' product lists answered %d and %d, so neither's "
+            "contents could be read" % (listed.status_code,
+                                        other_listed.status_code)))
+    stored = PRODUCT["sku"] in listed.get_data(as_text=True)
+    leaked = PRODUCT["sku"] in other_listed.get_data(as_text=True)
     if not stored:
         return lost("coexistence", "the product written through the first "
                     "instance was not stored")
-    stray = sorted(set(path for path in watch["paths"]
-                       if not inside(path, folders_given + [WORKSPACE])))
-    return passed(not leaked and not stray, leaked=leaked, stray=stray[:10])
+    return settle_coexistence({"leaked": leaked})
+
+
+def settle_coexistence(reading):
+    """The co-existence reading with every write outside the places a build
+    may write, so far."""
+    stray = report.get("stray") or []
+    reading["stray"] = sorted(stray)[:10]
+    reading["passed"] = not reading["leaked"] and not stray
+    return reading
 
 
 # A number past any bound a price, percentage, rate or tier can have. The
@@ -746,7 +828,11 @@ def preview(**fields):
 # Each malformed request: a label, the method, the path, the form whose
 # hidden fields it carries (None for none), its body, and whether it is sent
 # signed out. Every one is a request the specification defines an answer to:
-# a re-rendered form, a 400, a 404 or a 405.
+# a re-rendered form, a 400, a 404 or a 405. Only these answers are read,
+# never a later page after one stored an extreme value, such as a price of
+# `1e999999`: the specification bounds no price's size, so it defines no
+# answer for such a page, and reading one would measure that gap, not the
+# build.
 FUZZ = (
     ("POST /products unit_price=abc", "POST", "/products", "/products",
      product(unit_price="abc"), False),
@@ -856,32 +942,85 @@ FUZZ = (
 )
 
 
+# Each case is sent to an instance of its own, on a fresh database and
+# signed in afresh, so no case meets what another stored. A case sent with
+# its form's token needs that form first: a form page that does not answer
+# 200 gives no token, and a refusal for want of one would read as handled,
+# so the case fails as its form not reached. A case sent without a token on
+# purpose fetches no form.
+def fuzz_case(method, path, form, body, signed_out):
+    """One malformed request's outcome, on a fresh instance."""
+    entry = {}
+    try:
+        own = package.create_app(os.path.join(folder(), "fuzz.sqlite"))
+    except Exception as error:
+        entry["reason"] = "a fresh instance would not boot: %s" % (
+            repr(error)[:200])
+        return entry
+    who = own.test_client()
+    if not signed_out and not sign_in(who):
+        entry["gated"] = True
+        return entry
+    try:
+        data = body
+        if form:
+            sent_from = ask(who, "GET", form)
+            if not signed_out and gated(sent_from):
+                entry["gated"] = True
+                return entry
+            if sent_from.status_code != 200:
+                entry["reason"] = ("the form could not be reached: %s "
+                                   "answered %d"
+                                   % (form, sent_from.status_code))
+                return entry
+            data = dict(body)
+            for name, value in hidden_fields(
+                    sent_from.get_data(as_text=True), form, path).items():
+                data.setdefault(name, value)
+        answer = ask(who, method, path, data=data)
+        entry["status"] = answer.status_code
+
+        # Signed out, the sign-in's own answer may be its redirect.
+        entry["gated"] = not signed_out and gated(
+            answer, token=method == "GET" or form is not None)
+    except Raised as error:
+        entry["raised"] = str(error)
+    return entry
+
+
 def fuzz_robustness():
-    """Malformed requests to the specification's routes, none answered 500
-    and none raising out of the client."""
-    stranger = app.test_client()
+    """Malformed requests to the specification's routes, each reaching
+    its route, none answered 500 and none raising out of the client."""
     answers = []
     for label, method, path, form, body, signed_out in FUZZ:
-        who = stranger if signed_out else client
         entry = {"request": label}
-        try:
-            answer = (form_post(who, form, path, body, method=method)
-                      if form else ask(who, method, path, data=body))
-            entry["status"] = answer.status_code
-
-            # Signed out, the sign-in's own answer may be its redirect.
-            entry["gated"] = not signed_out and gated(
-                answer, token=method == "GET" or form is not None)
-        except Raised as error:
-            entry["raised"] = str(error)
+        entry.update(fuzz_case(method, path, form, body, signed_out))
         answers.append(entry)
     asked = [entry["request"] for entry in answers if entry.get("gated")]
     if asked:
         return lost("fuzz_robustness", "%d malformed requests were turned "
                     "away by the sign-in" % len(asked), asked=asked)
     failed = [entry for entry in answers if entry.get("raised")
-              or (entry.get("status") or 0) >= 500]
-    return passed(not failed, requests=len(answers), failed=failed)
+              or entry.get("reason") or (entry.get("status") or 0) >= 500]
+    return passed(not failed, requests=len(answers), failed=failed,
+                  statuses=[entry.get("status") for entry in answers])
+
+
+# An amount as a page may write it, which the data upgrade reads an old
+# invoice's price back by: grouped by thousands with a comma, a point, a
+# space, a no-break or narrow no-break space, or an apostrophe, and two
+# decimals after a point or a comma. The page is read with its character
+# references resolved, so `&nbsp;` and `&#8239;` group as the characters do.
+AMOUNT = re.compile(r"(?<![\d.,])(\d{1,3}(?:[,.\u00a0\u202f' ]\d{3})+"
+                    r"|\d+)[.,](\d{2})(?!\d)")
+
+
+def shows_total(answer, total, tolerance=Decimal("0")):
+    """Whether a page shows an amount within `tolerance` of `total`, however
+    it is grouped and whatever currency sign stands beside it."""
+    return any(abs(Decimal(re.sub(r"\D", "", whole) + "." + cents) - total)
+               <= tolerance for whole, cents in AMOUNT.findall(
+                   html.unescape(answer.get_data(as_text=True))))
 
 
 # What the data upgrade seeds through the fixture's own application: a
@@ -1279,13 +1418,15 @@ if MODE in ("seed", "upgrade"):
         report["reader_error"] = repr(error)[:300]
     finish()
 
-# Fuzzing comes last: what a malformed request stores cannot reach another
-# probe's reading.
+# Fuzzing comes after the readings a malformed request's leftovers could
+# reach, and the concurrent writes come last of all: a writer the build hangs
+# outlives its wait, and nothing may run beside it. Where one does, the run
+# stops there, the readings before it kept.
 PROBES = (("latency_p95_ms", latency_p95_ms), ("n_plus_one", n_plus_one),
           ("capacity_500_lines", capacity_500_lines),
-          ("concurrent_writes", concurrent_writes),
           ("coexistence", coexistence),
-          ("fuzz_robustness", fuzz_robustness))
+          ("fuzz_robustness", fuzz_robustness),
+          ("concurrent_writes", concurrent_writes))
 for name, probe in PROBES:
     report["running"] = name
     save()
@@ -1300,8 +1441,19 @@ for name, probe in PROBES:
         key = "value" if name == "latency_p95_ms" else "passed"
         report["probes"][name] = {key: None, "missing": "the reader failed: "
                                   "%s" % repr(error)[:300]}
+    if report["probes"][name].get("hung"):
+        break
 finish()
 '''
+
+
+# The stray writes are filed apart from the probe that reads them, so a run
+# killed after one keeps it; the reader folds them into co-existence again.
+def stray_read(reading, stray):
+    """A co-existence reading with `stray` writes counted against it."""
+    reading["stray"] = sorted(stray)[:10]
+    reading["passed"] = not reading["leaked"] and not stray
+    return reading
 
 
 def lost_reading(name, reason):
@@ -1352,6 +1504,8 @@ def probe_results(payload, reason=None, lost=False, stalled=None):
         else:
             readings[name] = missing_reading(
                 name, "the in-process probe did not report it")
+    if payload.get("stray") and "leaked" in readings["coexistence"]:
+        stray_read(readings["coexistence"], payload["stray"])
     return readings
 
 
@@ -1474,6 +1628,16 @@ def read_trial(area, name, scores_file, other, task="build"):
     tree = scores.get("workspace")
     result = {"name": name, "read_at": datetime.datetime.now().isoformat(
         timespec="seconds")}
+
+    # An archived round drops its extracted trees. With no tree there is
+    # nothing to install, which is no fault of the build's, so nothing is
+    # measured; the tree is not restored here.
+    if not tree or not os.path.isdir(tree):
+        reason = "source tree not present: %s" % tree
+        result["probes"] = {probe: missing_reading(probe, reason)
+                            for probe in PROBES + (
+                                CHANGE_PROBES if task == "change" else ())}
+        return result
     where = os.path.join(area, task_folder("quality", task), name)
     os.makedirs(where, exist_ok=True)
 
@@ -1670,20 +1834,30 @@ def upgrade_with(python, where, seeded, env, origin):
 # `cramped` refuses over 100 lines, `crowded` saves them and will not show
 # them, `chatty` reads each invoice line's product on its own, `shared` keeps
 # its products in one store for every instance, `stray` writes a fixed file
-# outside its folder, `truncating` keeps the first 100 lines of an invoice,
-# answering as if it kept them all, `miscounting` shows a total of 100 of
-# them, `nulling` exports one line as null, and `capped` prices the first
-# 100 lines alone wherever it prices them, while it keeps and exports all;
-# `unpriced` exports its total as NaN, and `free` prices every line at
-# nothing. Every mode opens its database by a `file:` URI with a query.
-# `paginating` shows 100 rows and the whole total, which is no fault. Pages
-# write amounts grouped by thousands beside the euro's sign, the preview's
-# with `&nbsp;`. `bouncing` answers a price it cannot parse with the
-# sign-in's redirect and `forbidding` with a 403;
-# `gated` never keeps its sign-in, and `refusing` neither keeps it nor
-# redirects, answering 401; `broken` will not boot, and `unportable` boots
-# on no Python but the one it names. Every mode's sign-in form quotes its
-# attributes with single quotes.
+# outside its folder through a handle opened at import, `truncating` keeps
+# the first 100 lines of an invoice, answering as if it kept them all,
+# `nulling` exports one line as null, `capped` prices the first 100 lines
+# alone wherever it prices them while it keeps and exports all, `unpriced`
+# exports its total as NaN, `free` prices every line at nothing,
+# `unexported` answers its export with a 500 and the JSON all the same,
+# `unformed` answers 500 on its rules page, `unlisted` answers 500 on the
+# product list of the third instance made, the second co-existence's, and
+# `hanging` holds one concurrent write, and its lock, for a minute;
+# `late-stray` writes outside on its first malformed request, then hangs.
+# `reader` reads a database outside its folder, opened read-only, and
+# `relative` answers a save with a location relative to `/invoices`, which
+# are no faults.
+# `poisoned` stores a price it cannot then list, so its products page
+# answers 500 once fuzzing has stored one, which is no fault of any probe's;
+# `detached` and `plain-save` place the builder's save control and the
+# sign-out form otherwise, which is none either. Every mode opens its
+# database by a `file:` URI with a query, and puts a sign-out form carrying
+# another token on its pages. `bouncing`
+# answers a price it cannot parse with the sign-in's redirect and
+# `forbidding` with a 403; `gated` never keeps its sign-in, and `refusing`
+# neither keeps it nor redirects, answering 401; `broken` will not boot, and
+# `unportable` boots on no Python but the one it names. Every mode's sign-in
+# form quotes its attributes with single quotes.
 FAKE_APP = '''import decimal
 import json
 import logging
@@ -1704,13 +1878,22 @@ SIGN_OUT = ('<form method="post" action="/sign-out"><input type="hidden" '
 
 def form_page(path, body):
     """A page whose main form posts to its own route, the builder's to its
-    preview, with a sign-out form carrying another token beside it: before
-    the main form on the products page, after it everywhere else."""
+    preview with a save control sending it to `/invoices`, and a sign-out
+    form carrying another token before it. `plain-save` has no save control
+    and puts the sign-out form after; `detached` puts the save control
+    after the builder form, linked to it by its id."""
     action = "/invoices/preview" if path == "/invoices/new" else path
-    main = '<form method="post" action="%s">%s</form>' % (action, TOKEN)
-    if path == "/products":
-        return SIGN_OUT + body + main
-    return body + main + SIGN_OUT
+    save = control = ""
+    if path == "/invoices/new" and MODE == "detached":
+        control = ('<button form="builder" formaction="/invoices">Save'
+                   '</button>')
+    elif path == "/invoices/new" and MODE != "plain-save":
+        save = '<button type="submit" formaction="/invoices">Save</button>'
+    main = ('<form id="builder" method="post" action="%s">%s%s</form>%s'
+            % (action, TOKEN, save, control))
+    if MODE == "plain-save":
+        return body + main + SIGN_OUT
+    return SIGN_OUT + body + main
 SKUS = {"WID-1": "10.00", "GAD-2": "24.50", "BOK-3": "12.00",
         "SRV-4": "80.00", "SEE-5": "3.75"}
 LOG = logging.getLogger("tariff")
@@ -1718,6 +1901,11 @@ SHARED = {}
 IN_FLIGHT = []
 GUARD = threading.Lock()
 STRAY = os.path.join(tempfile.gettempdir(), "tariff-quality-stray.log")
+HANDLE = open(STRAY, "a") if MODE == "stray" else None
+LATE = os.path.join(tempfile.gettempdir(), "tariff-quality-late.log")
+REFERENCE = os.path.join(tempfile.gettempdir(),
+                         "tariff-quality-reference.sqlite")
+INSTANCES = []
 
 
 class Response(object):
@@ -1744,26 +1932,13 @@ def summed(rows):
     return str(total.quantize(decimal.Decimal("0.01")))
 
 
-def written(amount, style):
-    """An amount as a page writes it: `EUR12,345.67` grouped by commas in
-    English, `12&nbsp;345,67&nbsp;EUR` by no-break spaces otherwise, with
-    the euro's sign."""
-    whole, cents = amount.split(".")
-    grouped = format(int(whole), ",")
-    if style == "en":
-        return "\u20ac" + grouped + "." + cents
-    return grouped.replace(",", "&nbsp;") + "," + cents + "&nbsp;\u20ac"
-
-
-def table(rows, style):
+def table(rows):
     """The export's total, and the page: each line's sku and quantity, and
     the total, from (sku, unit price, quantity) rows."""
     total = summed(rows[:100] if MODE == "capped" else rows)
-    shown = rows[:100] if MODE in ("paginating", "miscounting") else rows
-    page_total = summed(shown) if MODE == "miscounting" else total
     return total, "<table>%s</table><p>Total %s</p>" % ("".join(
         "<tr><td>%s</td><td>%d</td></tr>" % (sku, quantity)
-        for sku, _, quantity in shown), written(page_total, style))
+        for sku, _, quantity in rows), total)
 
 
 def number(text):
@@ -1777,9 +1952,15 @@ def number(text):
 
 class App(object):
     def __init__(self, database):
-        if MODE == "stray":
-            with open(STRAY, "a") as handle:
-                handle.write("booted\\n")
+        INSTANCES.append(self)
+        self.number = len(INSTANCES)
+        if MODE == "reader":
+            uri = pathlib.Path(REFERENCE).as_uri() + "?mode=ro"
+            sqlite3.connect(uri, uri=True).execute(
+                "SELECT COUNT(*) FROM rates").fetchone()
+        if HANDLE is not None:
+            HANDLE.write("booted\\n")
+            HANDLE.flush()
         self.database = database
         self.products = SHARED if MODE == "shared" else None
         self.connect().executescript(
@@ -1801,6 +1982,13 @@ class App(object):
 
     def test_client(self):
         return Client(self)
+
+    def prices(self):
+        """Every product's price to the cent, which no price past a
+        Decimal's precision survives."""
+        return [decimal.Decimal(row[0]).quantize(decimal.Decimal("0.01"))
+                for row in self.connect().execute(
+                    "SELECT unit_price FROM products")]
 
     def skus(self):
         if self.products is not None:
@@ -1825,13 +2013,15 @@ class App(object):
             finally:
                 IN_FLIGHT.remove(sku)
             return
-        connection = self.connect(0 if MODE == "locking" else 10.0)
+        hangs = MODE == "hanging" and sku == "QCW-1-00"
+        wait = {"locking": 0, "hanging": 0.1}.get(MODE, 10.0)
+        connection = self.connect(10.0 if hangs else wait)
         connection.isolation_level = None
         try:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("INSERT INTO products VALUES (?, ?, ?)",
                                (sku, name, price))
-            time.sleep(0.005)
+            time.sleep(60 if hangs else 0.005)
             connection.execute("COMMIT")
         finally:
             if connection.in_transaction:
@@ -1883,6 +2073,13 @@ class Client(object):
         parts = path.strip("/").split("/")
         if method == "GET" and path in pages:
             listing = " ".join(self.app.skus()) if path == "/products" else ""
+            if (path == "/products" and MODE == "unlisted"
+                    and self.app.number == 3):
+                raise RuntimeError("the second instance's list is broken")
+            if path == "/products" and MODE == "poisoned":
+                self.app.prices()
+            if path == "/rules" and MODE == "unformed":
+                raise RuntimeError("the rules page is broken")
             return Response(200, form_page(path, "<p>%s</p>" % listing))
         if method == "POST" and (path in posts or path.endswith("/delete")
                                  or path.endswith("/erase")):
@@ -1916,8 +2113,13 @@ class Client(object):
                     return Response(302, "", {"Location": "/sign-in"})
                 if MODE == "forbidding":
                     return Response(403, "forbidden")
+                if MODE == "late-stray":
+                    with open(LATE, "a") as handle:
+                        handle.write("late\\n")
+                    time.sleep(600)
                 return Response(200, "unit_price is not a number" + TOKEN)
-        if not price.is_finite() or price < 0 or price > 10 ** 12:
+        if not price.is_finite() or price < 0 or (
+                price > 10 ** 12 and MODE != "poisoned"):
             return Response(200, "unit_price is out of range" + TOKEN)
         if sku in self.app.skus():
             return Response(200, "sku exists" + TOKEN)
@@ -1942,7 +2144,7 @@ class Client(object):
             lines = lines[:100]
         if path == "/invoices/preview":
             return Response(200, table([(sku, SKUS.get(sku, "1.00"), quantity)
-                                        for sku, quantity in lines], "eu")[1])
+                                        for sku, quantity in lines])[1])
         if not lines:
             return Response(400, "no lines")
         with self.app.connect() as connection:
@@ -1952,7 +2154,9 @@ class Client(object):
                 "INSERT INTO lines VALUES (?, ?, ?, ?)",
                 [(invoice, position, sku, quantity)
                  for position, (sku, quantity) in enumerate(lines)])
-        return Response(302, "", {"Location": "/invoices/%d" % invoice})
+        target = ("invoices/%d" if MODE == "relative"
+                  else "/invoices/%d") % invoice
+        return Response(302, "", {"Location": target})
 
     def show(self, parts):
         if parts[0] != "invoices" or len(parts) > 2 and parts[2] not in (
@@ -1980,15 +2184,16 @@ class Client(object):
                 (invoice,)).fetchall()
         if MODE == "crowded" and len(rows) > 100:
             return Response(413, "too many lines to show")
-        total, shown = table(rows, "en")
+        total, shown = table(rows)
         if parts[-1] == "export.json":
             records = [{"sku": sku, "quantity": quantity}
                        for sku, _, quantity in rows]
             if MODE == "nulling" and len(records) > 100:
                 records[100] = None
-            return Response(200, json.dumps({
+            export = json.dumps({
                 "lines": records,
-                "total": "NaN" if MODE == "unpriced" else total}))
+                "total": "NaN" if MODE == "unpriced" else total})
+            return Response(500 if MODE == "unexported" else 200, export)
         return Response(200, shown)
 
 
@@ -2446,7 +2651,8 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "locking": "concurrent_writes", "lossy": "concurrent_writes",
           "cramped": "capacity_500_lines", "crowded": "capacity_500_lines",
           "truncating": "capacity_500_lines",
-          "miscounting": "capacity_500_lines",
+          "hanging": "concurrent_writes", "unformed": "fuzz_robustness",
+          "unexported": "capacity_500_lines", "unlisted": "coexistence",
           "nulling": "capacity_500_lines", "capped": "capacity_500_lines",
           "unpriced": "capacity_500_lines", "free": "capacity_500_lines",
           "bouncing": "fuzz_robustness",
@@ -2454,7 +2660,7 @@ FAULTS = {"fragile": "fuzz_robustness", "brittle": "fuzz_robustness",
           "shared": "coexistence", "stray": "coexistence"}
 
 
-def fake_readings(scratch, modes, mode_arg="all"):
+def fake_readings(scratch, modes, mode_arg="all", timeout=300):
     """Run the in-process probes against the stand-in in each mode."""
     readings = {}
     for mode in modes:
@@ -2464,9 +2670,10 @@ def fake_readings(scratch, modes, mode_arg="all"):
         with io.open(os.path.join(package, "__init__.py"), "w",
                      encoding="utf-8") as handle:
             handle.write(FAKE_APP.replace("__MODE__", mode))
-        env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"))
+        env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"),
+                   QUALITY_PROBE_WRITE_SECONDS="5")
         readings[mode] = probe_runtime(sys.executable, where, mode_arg,
-                                       env=env, timeout=300)
+                                       env=env, timeout=timeout)
     return readings
 
 
@@ -2479,7 +2686,15 @@ def failing(probes):
 def runtime_self_checks(scratch):
     """Each planted fault fails its own probe and no other; an app that
     keeps the probes from running loses them."""
-    modes = (["sound", "slow", "paginating", "gated", "refusing", "broken"]
+    reference = os.path.join(tempfile.gettempdir(),
+                             "tariff-quality-reference.sqlite")
+    connection = sqlite3.connect(reference)
+    connection.execute("CREATE TABLE IF NOT EXISTS rates (code TEXT)")
+    connection.commit()
+    connection.close()
+    modes = (["sound", "slow", "poisoned", "detached", "plain-save", "reader",
+              "relative",
+              "gated", "refusing", "broken"]
              + sorted(FAULTS))
     readings = fake_readings(scratch, modes)
     probes = {mode: probe_results(*readings[mode]) for mode in modes}
@@ -2500,28 +2715,26 @@ def runtime_self_checks(scratch):
          sound["concurrent_writes"].get("passed") is True
          and sound["coexistence"].get("passed") is True
          and "return SIGN_OUT + body + main" in FAKE_APP),
-        ("a post no form's action names carries the page's first token",
+        ("a save sent by its control's formaction carries its form's token",
          sound["n_plus_one"].get("passed") is True
          and sound["capacity_500_lines"].get("passed") is True
-         and "return body + main + SIGN_OUT" in FAKE_APP),
-        ("a total grouped by thousands beside a currency sign is read",
-         sound["capacity_500_lines"].get("passed") is True
-         and "€" in FAKE_APP and 'format(int(whole), ",")' in FAKE_APP),
-        ("a total grouped by no-break-space references, with a decimal "
-         "comma, is read",
-         sound["capacity_500_lines"].get("kept", {}).get("preview") is True
-         and "&nbsp;" in FAKE_APP),
-        ("a page showing fewer rows but the whole total passes "
-         "capacity_500_lines", failing(probes["paginating"]) == []),
+         and 'formaction="/invoices"' in FAKE_APP),
+        ("a save control outside its form, linked by its id, carries that "
+         "form's token", failing(probes["detached"]) == []),
+        ("a post no form's action names carries the page's first token",
+         failing(probes["plain-save"]) == []),
         ("the latency is two repeats of 30 requests each",
          latency.get("requests") == 30
          and len(latency.get("repeats") or []) == 2
          and all(value > 0 for value in latency["repeats"])
          and latency["value"] == max(latency["repeats"])),
+        # Each answer is delayed 20 ms, so each repeat's p95 is at least
+        # that whatever the machine's load; a comparison with the sound
+        # run's would read the load instead.
         ("a slowed app reads slower by its delay",
          failing(probes["slow"]) == []
-         and (probes["slow"]["latency_p95_ms"].get("value") or 0) >= 20
-         and probes["slow"]["latency_p95_ms"]["value"] > latency["value"]),
+         and len(probes["slow"]["latency_p95_ms"].get("repeats") or []) == 2
+         and min(probes["slow"]["latency_p95_ms"]["repeats"]) >= 20),
         ("statements are counted per page, and did not grow",
          sound["n_plus_one"].get("one_line", 0) > 0
          and sound["n_plus_one"]["twenty_lines"]
@@ -2542,8 +2755,12 @@ def runtime_self_checks(scratch):
                       "fuzz_robustness",
         "truncating": "an app keeping 100 of 500 lines fails "
                       "capacity_500_lines",
-        "miscounting": "a page showing a total other than the export's "
-                       "fails capacity_500_lines",
+        "hanging": "a writer the app hangs fails concurrent_writes",
+        "unformed": "an app whose form page answers 500 fails "
+                    "fuzz_robustness",
+        "unexported": "an export answered 500 fails capacity_500_lines",
+        "unlisted": "a second instance whose product list answers 500 fails "
+                    "coexistence",
         "nulling": "an export with a null line fails capacity_500_lines",
         "unpriced": "an export whose total is NaN fails capacity_500_lines",
         "free": "an app pricing every line at nothing fails "
@@ -2559,6 +2776,37 @@ def runtime_self_checks(scratch):
                        failing(probes[mode]) == [FAULTS[mode]]
                        and probes[mode][FAULTS[mode]].get("passed") is False))
     checks.extend([
+        ("a product a malformed request stored does not reach the "
+         "concurrent writes", failing(probes["poisoned"]) == []),
+        ("a value one malformed request stored reaches no other case",
+         probes["poisoned"]["fuzz_robustness"].get("passed") is True
+         and len(sound["fuzz_robustness"].get("statuses") or [])
+         == sound["fuzz_robustness"].get("requests", 0) > 0
+         and [index for index, (poisoned, clean) in enumerate(zip(
+             probes["poisoned"]["fuzz_robustness"].get("statuses") or [],
+             sound["fuzz_robustness"]["statuses"]))
+             if poisoned == 400 and clean != 400] == []),
+        ("a form that cannot be reached is no handled request",
+         any("could not be reached" in entry.get("reason", "")
+             for entry in probes["unformed"]["fuzz_robustness"].get(
+                 "failed", []))),
+        ("a save redirected to a relative location reads as the sound "
+         "app's", failing(probes["relative"]) == []
+         and probes["relative"]["latency_p95_ms"].get("value") is not None
+         and all(probes["relative"][name].get("passed")
+                 is sound[name].get("passed") is True
+                 for name in ("capacity_500_lines", "n_plus_one"))),
+        ("a database outside, opened read-only, is no stray write",
+         failing(probes["reader"]) == []
+         and probes["reader"]["coexistence"].get("stray") == []),
+        ("a hung writer stops the run, every reading before it kept",
+         "hung it" in probes["hanging"]["concurrent_writes"].get(
+             "reason", "")
+         and {name: probe.get("passed")
+              for name, probe in probes["hanging"].items()
+              if name != "concurrent_writes"}
+         == {name: probe.get("passed") for name, probe in sound.items()
+             if name != "concurrent_writes"}),
         ("the redirect is read as lost, not as an answer",
          "turned away by the sign-in" in probes["bouncing"][
              "fuzz_robustness"].get("lost", "")),
@@ -2580,9 +2828,24 @@ def runtime_self_checks(scratch):
          all("would not boot" in probe.get("lost", "")
              for probe in probes["broken"].values())),
     ])
-    stray = os.path.join(tempfile.gettempdir(), "tariff-quality-stray.log")
-    if os.path.exists(stray):
-        os.remove(stray)
+
+    # The first malformed request writes outside and then hangs, so the run
+    # is killed in its fuzzing, long after co-existence passed.
+    payload, reason, stalled = fake_readings(scratch, ["late-stray"],
+                                             timeout=40)["late-stray"]
+    late = probe_results(payload, reason, stalled=stalled)
+    checks.append((
+        "a write outside before a hang still fails coexistence, the path kept",
+        late["coexistence"].get("passed") is False
+        and any(path.endswith("tariff-quality-late.log")
+                for path in late["coexistence"].get("stray", []))
+        and "stopped during fuzz_robustness" in late["fuzz_robustness"].get(
+            "lost", "")))
+    for name in ("tariff-quality-stray.log", "tariff-quality-late.log",
+                 "tariff-quality-reference.sqlite"):
+        path = os.path.join(tempfile.gettempdir(), name)
+        if os.path.exists(path):
+            os.remove(path)
     return checks
 
 
@@ -2652,6 +2915,23 @@ def claim_self_checks(scratch):
         handle.write("{}")
     label, refused = claim_refusal_check(SCRIPT, main, root)
     return [(label, refused
+             and not os.path.exists(os.path.join(area, "quality")))]
+
+
+def absent_tree_self_checks(scratch):
+    """A trial whose tree is gone has nothing measured, and installs
+    nothing."""
+    area = os.path.join(scratch, "absent")
+    os.makedirs(area)
+    scores_file = os.path.join(area, "none-1.json")
+    with io.open(scores_file, "w", encoding="utf-8") as handle:
+        json.dump({"workspace": os.path.join(area, "dropped")}, handle)
+    result = read_trial(area, "none-1", scores_file, None)
+    return [("a trial whose source tree is gone is missing, not lost",
+             sorted(result["probes"]) == sorted(PROBES)
+             and all("source tree not present" in (probe.get("missing") or "")
+                     and not probe.get("lost")
+                     for probe in result["probes"].values())
              and not os.path.exists(os.path.join(area, "quality")))]
 
 
@@ -2726,6 +3006,7 @@ def self_test():
     os.makedirs(scratch)
     checks = (runtime_self_checks(scratch) + reading_self_checks()
               + portability_self_checks(scratch) + claim_self_checks(scratch)
+              + absent_tree_self_checks(scratch)
               + leftover_self_checks(scratch) + upgrade_self_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))

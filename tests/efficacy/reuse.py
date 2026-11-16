@@ -308,10 +308,7 @@ def plant_source(scratch, name="earlier", identity=None, changes=False):
         with io.open(os.path.join(folder, "planted.jsonl"), "w",
                      encoding="utf-8") as handle:
             handle.write("{}\n")
-
-        # Each reading the scoring area holds, named here rather than taken
-        # from what a reuse copies, so a kind it stops copying shows.
-        for kind in ("scores", "security-scores", "quality-scores"):
+        for kind in READINGS:
             os.makedirs(os.path.join(area, kind), exist_ok=True)
             with io.open(os.path.join(area, kind, "%s.json" % old), "w",
                          encoding="utf-8") as handle:
@@ -445,16 +442,16 @@ def self_test():
              for name, old in (("inline-1", "inline-1"), ("hand-1", "hand-1")))
          and not os.path.exists(os.path.join(area, "scores",
                                              "none-1.json"))),
-        ("the quality readings come along beside the security readings",
-         all(os.path.isfile(os.path.join(area, kind, "%s.json" % name))
-             for kind in ("security-scores", "quality-scores")
-             for name in ("inline-1", "hand-1"))),
         ("the judgings keep their labels and the map is theirs alone",
          loaded(area, "judge", "T2.json")["trial"] == "inline-1"
          and loaded(area, "judge", "T1.json")["trial"] == "hand-1"
          and not os.path.exists(os.path.join(area, "judge", "T3.json"))
          and loaded(area, "judge", "map.json")["blind"]
          == {"inline-1": "T2", "hand-1": "T1"}),
+        ("a quality reading comes along with its trial",
+         os.path.isfile(os.path.join(area, "quality-scores", "inline-1.json"))
+         and loaded(area, "quality-scores", "inline-1.json")["reused_from"][
+             "name"] == "inline-1"),
         ("the earlier round's tool lock comes along",
          io.open(os.path.join(area, "tool-lock.txt"),
                  encoding="utf-8").read() == "ruler==1.0\n"),

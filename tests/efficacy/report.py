@@ -112,7 +112,15 @@ CONTRASTS = (("short", "none"), ("hybrid", "none"), ("hand", "none"),
              ("lazyskills", "lazyref"),
              ("lazyref", "skills"), ("lazyskills", "reference"),
              ("lazyref", "hand"), ("lazyskills", "hand"),
-             ("lazyref", "short"), ("lazyskills", "short"))
+             ("lazyref", "short"), ("lazyskills", "short"),
+
+             # Round 6 (C1): each new arm against none; the check loop,
+             # lazyref against itself before the change; and the section
+             # files against the arms whose rules they repackage, lazyref
+             # read whole on demand and reference read up front.
+             ("lazysections", "none"), ("lazyrefold", "none"),
+             ("lazyref", "lazyrefold"),
+             ("lazysections", "lazyref"), ("lazysections", "reference"))
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -2329,6 +2337,10 @@ PLAIN_ARMS = {
                "read when that work starts",
     "lazyskills": "the same map, each template loaded as a skill when that "
                   "work starts",
+    "lazysections": "a short file that maps each topic to a small file of "
+                    "its rules, read when the work first touches it",
+    "lazyrefold": "the same map as lazyref, at the templates from before "
+                  "the one check command",
 }
 
 # Each radar axis in plain words, as a sentence names it.
@@ -7245,16 +7257,25 @@ def quality_value(trial, name):
 
 def module_value(trial, module):
     """1.0 where a hidden-suite module passed whole, 0.0 where any of its
-    checks failed, errored or was skipped, or where the suite's revision
-    held it and it did not run; None where the suite did not run, or its
-    revision did not hold the module."""
+    checks failed, errored or was skipped, where the suite ran out of time,
+    or where the suite's revision held it and it did not run; None where the
+    suite was not run, or its revision did not hold the module."""
     record = path(trial, "scores", "hidden_suite")
-    if not isinstance(record, dict) or record.get("missing"):
+    if not isinstance(record, dict):
+        return None
+    revision = path(record, "report", "suite_revision")
+    if module in SUITE_LACKS.get(revision, ()):
+        return None
+
+    # A suite that ran out of time was held there by the build under it, so
+    # every module fails, even where the scorer kept no rate from the run.
+    if path(record, "report", "timed_out") is True:
+        return 0.0
+    if record.get("missing"):
         return None
     counts = path(record, "report", "modules", module)
     if not isinstance(counts, dict):
-        revision = path(record, "report", "suite_revision")
-        return None if module in SUITE_LACKS.get(revision, ()) else 0.0
+        return 0.0
 
     # A skipped check is one nobody ran, so it cannot show the module whole.
     unproven = sum(counts.get(key) or 0
@@ -9561,6 +9582,36 @@ def iso_checks(seed):
     checks.append(("a lost quality probe reads failed, a missing one not "
                    "measured", got == (0.5, None, 1.0, None), got))
 
+    # Each reading the quality reader files, built by its own functions,
+    # reads as its target does: every probe lost fails, every probe missing,
+    # a trial whose tree is gone among them, is not measured, and the 500
+    # lines, priced as five times their first 100, pass or fail as one.
+    def read_as(probes):
+        trial = planted()
+        trial["quality"] = {"probes": probes}
+        run = {"hybrid-1": trial, "none-1": trial}
+        return {target[3]: target_met(trial, target[3], target[4], target[5])
+                for target in iso_targets(iso_axes_of(run))
+                if target[3].startswith("quality:")}
+
+    gone = read_as({name: quality.missing_reading(
+        name, "source tree not present: x") for name in quality.PROBES})
+    lost = read_as({name: quality.lost_reading(name, "would not boot")
+                    for name in quality.PROBES})
+    scaled = [read_as({"capacity_500_lines": {"passed": ok, "total": "1.00"}})[
+        "quality:capacity_500_lines"] for ok in (True, False)]
+    pass_fail = sorted("quality:" + name for name in quality.PROBES
+                       if name not in quality.MEASURED)
+    got = (sorted(gone) == sorted("quality:" + name
+                                  for name in quality.PROBES),
+           set(gone.values()), {name: lost[name] for name in pass_fail},
+           lost["quality:latency_p95_ms"], scaled)
+    checks.append(("every reading the quality reader files reads as its "
+                   "target: lost fails, missing or a gone tree is not "
+                   "measured",
+                   got == (True, {None}, dict.fromkeys(pass_fail, False),
+                           None, [True, False]), got))
+
     # The latency target reads the registered cutoff. With none registered
     # it is not measured, never met and never failed, and holds no screen;
     # with one, a latency within it is met, one past it or lost is not.
@@ -9612,6 +9663,61 @@ def iso_checks(seed):
     checks.append(("a module passes whole only where no check failed, "
                    "errored or was skipped",
                    got == [1.0, 0.0, 0.0, 0.0, None], got))
+
+    # A suite the build held past its time fails every module, both where
+    # pytest wrote no report, which the scorer files as missing, and where
+    # it wrote one partway; the records are the scorer's own, from the
+    # grader's timed-out report. A suite never run is still not measured.
+    import score
+
+    def timed_out(raw):
+        def grader(argv, cwd=None, env=None, timeout=None, stdin=None):
+            report = {"ok": False, "timed_out": True, "exit_status": None,
+                      "suite_revision": env["HIDDEN_SUITE_REVISION"],
+                      "suite": "build", "python": "3.12.10",
+                      "elapsed_seconds": 1800.0}
+            if raw:
+                report["modules"] = {module: dict(whole) for module in raw}
+                counts = dict(passed=5 * len(raw), failed=0, skipped=0,
+                              error=0, total=5 * len(raw))
+            else:
+                report["reason"] = "pytest wrote no report"
+                report["output_tail"] = ""
+                counts = dict(passed=0, failed=0, skipped=0, error=0,
+                              total=0)
+            graded = counts["passed"] + counts["failed"] + counts["error"]
+            report.update(counts=counts, graded=graded,
+                          pass_rate=counts["passed"] / graded if graded
+                          else 0.0)
+            with io.open(argv[argv.index("--report") + 1], "w",
+                         encoding="utf-8") as handle:
+                json.dump(report, handle)
+            return {"argv": list(argv), "cwd": cwd, "status": None,
+                    "stdout": "", "stderr": "", "failed": None}
+
+        trial = planted()
+        held = tempfile.mkdtemp(prefix="efficacy-report-suite-")
+        real = score.run
+        score.run = grader
+        try:
+            trial["scores"]["hidden_suite"] = score.run_hidden_suite(
+                os.path.join(held, "venv"), {
+                    "revision": "a8e79354eda873c72c6da7319cd0f93865a16812",
+                    "path": held}, held, "build")
+        finally:
+            score.run = real
+            shutil.rmtree(held, ignore_errors=True)
+        return trial
+
+    unreported, partway = timed_out(()), timed_out(HIDDEN_MODULES[:10])
+    unrun = suite({}, "the trial did not install")
+    got = (bool(path(unreported, "scores", "hidden_suite", "missing")),
+           {module_value(unreported, module) for module in HIDDEN_MODULES},
+           {module_value(partway, module) for module in HIDDEN_MODULES},
+           module_value(unrun, "test_seed.py"))
+    checks.append(("a suite the build held past its time fails every module, "
+                   "and one never run is not measured",
+                   got == (True, {0.0}, {0.0}, None), got))
 
     # A module absent from a report graded by a revision that did not hold
     # it is not measured, so correctness is the share of the modules that
@@ -9973,6 +10079,36 @@ def cross_checks(seed):
     ]
 
 
+def c1_contrast_checks(seed):
+    """A run of round 6's new arms alone reads each against the bare arm:
+    it has declared contrasts, and its report says each approach in plain
+    words."""
+    trials = {trial_name(arm, block): {
+        "scores": {}, "judge": None, "security": None, "round": "C1",
+        "change": {"suite_revision": "any-revision",
+                   "change_suite": {"value": 0.5 + block / 100.0,
+                                    "missing": None}}}
+        for arm in ("none", "lazysections", "lazyrefold")
+        for block in range(1, 4)}
+    active = active_contrasts(trials)
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-c1-contrasts-")
+    try:
+        text = "\n".join(plain_report_lines(scratch, trials, table, results,
+                                            {}, "appendix.md", 3))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return [
+        ("a run of round 6's new arms reads each against none, in plain "
+         "words", ("lazysections", "none") in active
+         and ("lazyrefold", "none") in active
+         and "### `lazysections`" in text and "### `lazyrefold`" in text
+         and all(PLAIN_ARMS.get(arm) for arm in ("lazysections",
+                                                 "lazyrefold")), active),
+    ]
+
+
 def named_map_use_checks(seed):
     """A named round's report reads its on-demand arms' use of their maps:
     a planted C1 run whose `lazysections` trial read two section files
@@ -10227,6 +10363,7 @@ def self_test(seed):
     checks.extend(executive_checks(seed))
     checks.extend(documents_checks(seed))
     checks.extend(named_map_use_checks(seed))
+    checks.extend(c1_contrast_checks(seed))
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
