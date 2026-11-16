@@ -365,7 +365,9 @@ of a block starts from one fixture, a qualifying `none` build of round 5e,
 so the changed tree is read on every ISO axis the build is. It gets the
 same scoring, security and quality readings and judge, each filed apart
 from the build's under a `-change` folder of its own (FR-16-01, FR-16-03,
-FR-16-05). A changed tree that does not install loses its probes and goes
+FR-16-05). The judge reads a changed tree against the specification and
+the pinned change prompt, told that the change extends the specification,
+so the API the change adds is not counted as surface beyond it. A changed tree that does not install loses its probes and goes
 unjudged, as a build does; a reading the reader could not take is missing.
 
 Two readings compare the changed tree with its fixture, each counted on one

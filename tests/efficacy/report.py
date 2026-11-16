@@ -1236,10 +1236,13 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
     reader can see the number and what produced it, and nothing downstream
     counts it as a win, a fail or a finding.
     """
+    # The pairs read are kept apart from each contrast's differences, which
+    # are worked out afresh for every metric.
+    selected = list(pairs or CONTRASTS)
     results = {}
     for key, entry in table.items():
         per_contrast = {}
-        for treatment, baseline in pairs or CONTRASTS:
+        for treatment, baseline in selected:
             label = "%s-%s" % (treatment, baseline)
             if only and label not in only:
                 continue
@@ -1252,19 +1255,19 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
                     key, entry["direction"], left, right, seed,
                     margins or MARGINS, resamples, label in crossed)
                 continue
-            pairs = []
+            differences = []
             for index in sorted(set(left) & set(right)):
                 if left[index] is None or right[index] is None:
                     continue
-                pairs.append(left[index] - right[index])
-            if not pairs:
+                differences.append(left[index] - right[index])
+            if not differences:
                 per_contrast[label] = {
                     "pairs": [], "mean": None,
                     "interval": {"low": None, "high": None,
                                  "method": "no complete pair was measured"},
                     "verdict": "not computed", "non_inferior": None}
                 continue
-            interval = bca_interval(pairs, seed)
+            interval = bca_interval(differences, seed)
             observed = [value for value in right.values() if value is not None]
             across = label in crossed
             read = verdict(interval, entry["direction"])
@@ -1275,8 +1278,8 @@ def contrasts(table, seed, crossed=(), margins=None, strict=False,
                                       band[1] * abs(statistics.fmean(
                                           observed)))
             per_contrast[label] = {
-                "pairs": pairs,
-                "mean": round(statistics.fmean(pairs), 4),
+                "pairs": differences,
+                "mean": round(statistics.fmean(differences), 4),
                 "interval": interval,
                 "verdict": CROSSING_VERDICT if across else read,
                 "non_inferior": None if across else non_inferior(
@@ -1930,7 +1933,10 @@ def write_report(root, trials, table, results, seed, out_dir,
                    active_contrasts(reading[2])), iso_radar_svg))
              for reading in tasks]
     lines.extend(executive_section(trials, table, results, withdrawn or {},
-                                   lost, scans, radar, iso, drawn))
+                                   lost, scans, radar, iso, drawn,
+                                   finding_reading(tasks, trials, table,
+                                                   results, iso, seed,
+                                                   withdrawn)))
     lines.append("")
 
     # A named round prints the readings it registered, each per task, the
@@ -2093,6 +2099,22 @@ def write_report(root, trials, table, results, seed, out_dir,
                      newline="\n") as handle:
             handle.write(report_text(text, width))
     return os.path.join(out_dir, report)
+
+
+def finding_reading(tasks, trials, table, results, iso, seed, withdrawn=None):
+    """What a named round's finding table reads, as (trials, table,
+    contrasts, ISO reading, task): the run's own where its first task is
+    the build, and the change task's own view, read afresh, where it has no
+    build; None for a pilot round."""
+    if not tasks:
+        return None
+    task, label, view, view_table, reading = tasks[0]
+    if task == "build":
+        return trials, table, results, iso, label
+    view_results = round_contrasts(view, view_table, seed)
+    if withdrawn:
+        withdraw(withdrawn, view_table, view_results)
+    return view, view_table, view_results, reading, label
 
 
 def draw_radar(out_dir, stem, panels, draw):
@@ -3233,6 +3255,11 @@ TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
 TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
                               + r"(templates/[\w./*?\[\]-]+)")
 
+# The same for a section file, named by its path under the folder the
+# `lazysections` arm's map points at.
+SECTION_OPERAND = re.compile(re.escape(SECTIONS_INTO + "/")
+                             + r"([\w./*?\[\]-]+)")
+
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
@@ -3436,11 +3463,11 @@ def shell_writes(command):
     return first_writing_command(command) is not None
 
 
-def shell_reads(command, known=()):
+def shell_reads(command, known=(), operand_of=TEMPLATE_OPERAND):
     """The templates a shell command reads, as (index of its simple
     command, template) in order: every one a reading command names under
-    the vendored copy, a wildcard operand standing for each template of the
-    map it matches."""
+    the vendored copy, or where `operand_of` finds them, a wildcard operand
+    standing for each template of the map it matches."""
     found = []
     directory = ""
     commands = simple_commands(command, keep_quotes=True)
@@ -3457,12 +3484,12 @@ def shell_reads(command, known=()):
         templates = []
         for token in itertools.chain.from_iterable(map(brace_expanded,
                                                        tokens)):
-            matched = TEMPLATE_OPERAND.findall(token)
+            matched = operand_of.findall(token)
 
             # A path with no vendored copy in it may be relative to the
             # directory an earlier command of the call moved into.
             if not matched and directory and not token.startswith("-"):
-                matched = TEMPLATE_OPERAND.findall(posixpath.normpath(
+                matched = operand_of.findall(posixpath.normpath(
                     posixpath.join(directory, token.strip("'\""))))
             for operand in matched:
                 if any(mark in operand for mark in "*?["):
@@ -3517,7 +3544,8 @@ def shell_reads(command, known=()):
         if word in SHELL_PROGRAMS:
             for piece in program_code(text, bodies).split("\n"):
                 found.extend((index, template) for _, template
-                             in shell_reads(unquoted(piece), known))
+                             in shell_reads(unquoted(piece), known,
+                                            operand_of))
             continue
         if word not in READ_COMMANDS:
             continue
@@ -3651,8 +3679,8 @@ def map_use(files, arm, templates=None, delegated=()):
     marker = VENDORED["into"] + "/"
     named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
 
-    # A section file is named by its path under the folder the arm's map
-    # points at, wherever a read or a shell command names it.
+    # A section file a read names, by its path under the folder the arm's
+    # map points at.
     section = re.compile(re.escape(SECTIONS_INTO) + r"/([\w./-]+\.md)")
 
     def mapped(templates):
@@ -3694,8 +3722,13 @@ def map_use(files, arm, templates=None, delegated=()):
         # writing one came before the write.
         if name in SHELLS:
             writes_at = first_writing_command(command)
-        if name in SHELLS and entry.get("vendor"):
-            for index, template in shell_reads(command, sorted(known)):
+        # A section file is read by a shell command as a vendored template
+        # is: only by a reading command, a wildcard standing for each one.
+        if name in SHELLS and (entry.get("vendor") or entry.get("sections")):
+            operand_of = (SECTION_OPERAND if entry.get("sections")
+                          else TEMPLATE_OPERAND)
+            for index, template in shell_reads(command, sorted(known),
+                                               operand_of):
                 if template in known or not known:
                     found.append(template)
                     if first_write is None and (writes_at is None
@@ -3704,10 +3737,9 @@ def map_use(files, arm, templates=None, delegated=()):
         elif name == "Read" and entry.get("vendor"):
             path = str(given.get("file_path") or "").replace("\\", "/")
             found = mapped(named.findall(path))
-        elif name in SHELLS + ("Read",) and entry.get("sections"):
-            text = (command if name in SHELLS
-                    else str(given.get("file_path") or "").replace("\\", "/"))
-            found = mapped(section.findall(text))
+        elif name == "Read" and entry.get("sections"):
+            path = str(given.get("file_path") or "").replace("\\", "/")
+            found = mapped(section.findall(path))
         elif name == "Skill" and entry.get("skills"):
             skill = str(given.get("skill") or "").strip()
             found = [skill] if skill in known else []
@@ -5840,6 +5872,8 @@ def registered_checks(seed):
     uses.update(counted("lazysections", 2))
     demand = text(plant(cheaper, flaky=("lazysections",)),
                   {"build": uses, "change": uses})
+    builds_alone = text({name: dict(trial, change=None)
+                         for name, trial in plant(cheaper).items()})
 
     # Both documents a reader opens carry the readings.
     scratch = tempfile.mkdtemp(prefix="efficacy-report-registered-")
@@ -5860,6 +5894,9 @@ def registered_checks(seed):
          "axis worse",
          "**Kept.**" in kept and "| build task | 20 % |" in kept
          and "| change task | 20 % |" in kept),
+        ("the check loop is not kept on the build task's readings alone",
+         "**Not decided.**" in builds_alone
+         and "| build task | 20 % |" in builds_alone),
         ("a cost drop under 10 % on one task does not keep the check loop",
          "**Not kept.**" in slight and "| change task | 5 % |" in slight),
         ("an axis worse on either task does not keep the check loop",
@@ -5902,7 +5939,13 @@ def task_use_checks():
     from harness import project_folder
     scratch = tempfile.mkdtemp(prefix="efficacy-report-task-uses-")
     root = os.path.join(scratch, "run")
-    sections = mapped_templates("lazysections")[:2]
+    every = mapped_templates("lazysections")
+    sections = every[:2]
+
+    # A listing reads nothing; a wildcard read reads each file it matches.
+    folder = sections[0].split("/")[0]
+    last = every[-1].split("/")[0]
+    matched = [name for name in every if name.startswith(last + "/")]
 
     def call(name, **given):
         return {"type": "tool_use", "id": "t", "name": name, "input": given}
@@ -5914,8 +5957,9 @@ def task_use_checks():
         SECTIONS_INTO.replace("/", "\\"), sections[0].replace("/", "\\")))],
              "change": [call("Read", file_path="/pen/%s/%s" % (
                  SECTIONS_INTO, sections[0])), call(
-                     "Bash", command="cat %s/%s | head" % (
-                         SECTIONS_INTO, sections[1])),
+                     "Bash", command="ls %s/%s" % (SECTIONS_INTO, folder)),
+                 call("Bash", command="cat %s/%s/*.md | head" % (
+                     SECTIONS_INTO, last)),
                  call("Read", file_path="/pen/src/app.py")]}
     records = []
     for task, made in calls.items():
@@ -5938,8 +5982,57 @@ def task_use_checks():
     shutil.rmtree(scratch, ignore_errors=True)
     return [("each task's templates read are counted from its own "
              "transcripts, a section file by a read or a shell command",
-             len(sections) == 2 and counted == {"build": 1.0,
-                                                "change": 2.0})]
+             len(sections) == 2 and folder != last and matched
+             and counted == {"build": 1.0, "change": 1.0 + len(matched)})]
+
+
+def pair_contrast_checks(seed):
+    """Contrasts read for named pairs, over several metrics: the pairs asked
+    for stay the pairs read for every metric."""
+    table = {key: {"label": key, "direction": UP, "values": {
+        "lazyskills": {1: 1.0, 2: 2.0}, "short": {1: 0.5, 2: 1.0}}}
+        for key in ("first", "second")}
+    try:
+        got = contrasts(table, seed, pairs=[("lazyskills", "short")])
+        read = [got[key]["lazyskills-short"]["mean"]
+                for key in ("first", "second")]
+    except (TypeError, KeyError):
+        read = None
+    return [("named pairs are read for every metric of a table",
+             read == [0.75, 0.75])]
+
+
+def change_finding_checks(seed):
+    """A named round with change tasks and no build reads its finding table
+    from the change task's own view, cost and contrasts."""
+    def reading(value):
+        return {"value": value, "missing": None}
+
+    trials = {}
+    for arm, cost in ((BARE, 0.5), ("inline", 0.8)):
+        for block in range(1, 6):
+            name = trial_name(arm, block)
+            trials[name] = change_only({"round": "C1", "change": {
+                "name": name, "install": reading(True),
+                "boot": reading({"factory": True, "index_status": 200}),
+                "cost": reading({"cost_usd": cost})}})
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-change-finding-")
+    table = collect(trials)
+    write_report(os.path.join(scratch, "run"), trials, table,
+                 contrasts(table, seed), seed, scratch)
+    with io.open(next(os.path.join(scratch, file)
+                      for file in os.listdir(scratch)
+                      if file.endswith("efficacy-record.md")),
+                 encoding="utf-8") as handle:
+        record = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    finding = record.split("## Arms against `none`, change task")[-1]
+    rows = [line for line in finding.splitlines()
+            if line.startswith("| `inline` |")]
+    return [("a named round with no build reads its finding table from the "
+             "change task's own trials and cost",
+             "## Arms against `none`, change task" in record
+             and len(rows) == 1 and "$0.80" in rows[0])]
 
 
 def change_only_checks():
@@ -7580,12 +7673,17 @@ def percent(share):
 
 def check_loop_kept(reads):
     """Whether the check loop is kept: its mean billed cost per trial drops
-    by at least COST_DROP on each task, and no axis reads worse on either;
-    None where a task's cost or axes were not read."""
-    if not reads or any(read["cost"][0] is None for read in reads.values()):
+    by at least COST_DROP on each task, and no axis reads worse on either.
+    A task that misses either is enough to refuse it; keeping it needs both
+    tasks read, so it is None while one is not."""
+    if any(read["worse"] or (read["cost"][0] is not None
+                             and read["cost"][0] < COST_DROP)
+           for read in reads.values()):
+        return False
+    if set(reads) != {task for task, _ in TASKS} or any(
+            read["cost"][0] is None for read in reads.values()):
         return None
-    return all(read["cost"][0] >= COST_DROP and not read["worse"]
-               for read in reads.values())
+    return True
 
 
 def templates_read(uses, arm):
@@ -7717,14 +7815,16 @@ ISO_TABLE_READING = (
 
 
 def executive_section(trials, table, results, withdrawn=None, lost=(),
-                      scans=(), radar=None, iso=None, tasks=()):
+                      scans=(), radar=None, iso=None, tasks=(), finding=None):
     """The report's first sections: the summary, a radar per file arm read
     against no file where `radar` names its two images, light and dark;
     then the arms against no file: the finding table, one line per file on
     why it scored so, the reading, the contrasts between files scored, and
     the caveats. `iso` is the ISO reading where the round draws that radar;
     `tasks`, for a named round, holds each task's reading and its images,
-    and each task gets a radar and a verdict of its own.
+    and each task gets a radar and a verdict of its own; `finding` is what
+    the finding table reads, as (trials, table, contrasts, ISO reading,
+    task), by default the run's own under the first task's name.
 
     Like the score, it digests the verdict vector and decides nothing.
     """
@@ -7733,8 +7833,10 @@ def executive_section(trials, table, results, withdrawn=None, lost=(),
     if tasks:
         for reading, images in tasks:
             lines.extend(task_lines(reading, images) + [""])
-        lines.extend(finding_lines(trials, table, results, active, iso,
-                                   tasks[0][0][1]))
+        view, view_table, view_results, view_iso, label = (
+            finding or (trials, table, results, iso, tasks[0][0][1]))
+        lines.extend(finding_lines(view, view_table, view_results,
+                                   active_contrasts(view), view_iso, label))
         lines.extend(["", caveats_line(trials, withdrawn or {}, lost,
                                        scans)])
         return lines
@@ -9837,6 +9939,9 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in task_radar_checks(seed))
     checks.extend((label, ok, ok) for label, ok in registered_checks(seed))
     checks.extend((label, ok, ok) for label, ok in task_use_checks())
+    checks.extend((label, ok, ok) for label, ok in pair_contrast_checks(seed))
+    checks.extend((label, ok, ok) for label, ok
+                  in change_finding_checks(seed))
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))

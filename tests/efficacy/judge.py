@@ -33,8 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lib  # noqa: E402
 import score  # noqa: E402
 from harness import (LiveRunError, TrialError, canonical,  # noqa: E402
-                     claim_area, claim_refusal_check, release_area,
-                     task_folder)
+                     claim_area, claim_refusal_check, read_change_prompt,
+                     release_area, task_folder)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.basename(__file__)
@@ -259,6 +259,26 @@ conditional ladder stands instead.
 Answer with JSON only, in the shape the schema requires.
 """
 
+# Where a changed tree's bundle carries the change it was asked for: the
+# change prompt as pinned, unmasked, since every arm was given the same one.
+CHANGE_FILE = "CHANGE.md"
+
+# What a changed tree's judge is told besides, after the build's prompt,
+# which stays as it is: the change extends the specification, so the API
+# it adds is required and the isp row does not count it against the tree.
+CHANGE_NOTE = """
+This submission was then changed to meet CHANGE.md, also in the directory.
+CHANGE.md extends SPEC.md: every name, route and field it adds is part of
+the specification, and the isp dimension reads them as required, not as
+surface beyond what the specification asks for.
+"""
+
+
+def prompt_for(task):
+    """The judging prompt for a tree of `task`: the build's alone, or the
+    build's with the change's note after it."""
+    return PROMPT if task == "build" else PROMPT + CHANGE_NOTE
+
 
 def schema():
     """The rubric as a JSON Schema, so the CLI enforces the shape.
@@ -344,9 +364,10 @@ def copied_dir(base, name):
                    for cache, inner in USER_CACHE_DIRS)
 
 
-def build_bundle(tree, target, trial=None):
+def build_bundle(tree, target, trial=None, change=None):
     """Copy one trial's tree into a blind bundle and return what was stripped;
-    `trial` names the trial where the tree's own folder does not.
+    `trial` names the trial where the tree's own folder does not, and
+    `change`, a changed tree's, the change requirements it carries.
 
     The context file is the loudest marker but not the only one: a README that
     credits its conventions names the arm just as clearly, so the text files
@@ -387,13 +408,21 @@ def build_bundle(tree, target, trial=None):
     if spec:
         with io.open(os.path.join(target, "SPEC.md"), "wb") as handle:
             handle.write(spec.pop("text"))
+    if change is not None:
+        with io.open(os.path.join(target, CHANGE_FILE), "w",
+                     encoding="utf-8", newline="") as handle:
+            handle.write(change)
     # A changed tree's folder carries the task beside the trial's name, and
     # a path through its scoring area the trial's name alone.
     names = {os.path.basename(tree), trial or os.path.basename(tree)}
     leaks = [leak for name in sorted(names)
              for leak in surviving_markers(target, name)]
-    return {"removed": removed, "markers_masked": masked, "spec": spec,
-            "leaks": leaks, "digest": digest(target)}
+    stripped = {"removed": removed, "markers_masked": masked, "spec": spec,
+                "leaks": leaks, "digest": digest(target)}
+    if change is not None:
+        stripped["change"] = {"file": CHANGE_FILE, "sha256": hashlib.sha256(
+            change.encode("utf-8")).hexdigest()}
+    return stripped
 
 
 def spec_text(path):
@@ -548,8 +577,8 @@ def codex_version(executable):
     return version
 
 
-def judge_bundle(bundle, options, schema_path):
-    """Run the judge over one bundle and return its answer.
+def judge_bundle(bundle, options, schema_path, prompt=PROMPT):
+    """Run the judge over one bundle with `prompt` and return its answer.
 
     Read-only and ephemeral: the judge inspects a tree and writes nothing, and
     no session file carries one trial's reading into the next.
@@ -558,7 +587,7 @@ def judge_bundle(bundle, options, schema_path):
                         os.path.basename(bundle) + "-message.json")
 
     if options.cli == "claude":
-        return judge_through_claude(bundle, options, schema_path)
+        return judge_through_claude(bundle, options, schema_path, prompt)
 
     # The prompt goes on standard input, named by `-`, never as an argument:
     # the Windows shim runs through `cmd.exe`, which ends a command at a
@@ -576,7 +605,7 @@ def judge_bundle(bundle, options, schema_path):
     if options.dry_run:
         return {"argv": argv, "dry_run": True}
     outcome = score.run(argv, cwd=bundle, timeout=options.timeout,
-                        stdin=PROMPT)
+                        stdin=prompt)
     if not os.path.exists(last):
         return {"argv": argv, "error": "the judge wrote no final message: %s"
                 % cli_said(outcome)}
@@ -600,7 +629,7 @@ def cli_said(outcome):
     return (outcome["stderr"] or outcome["stdout"] or "").strip()[-400:]
 
 
-def judge_through_claude(bundle, options, schema_path):
+def judge_through_claude(bundle, options, schema_path, judging=PROMPT):
     """Run the judge through the `claude` CLI, the rounds' judge.
 
     A reading is recorded under its own CLI and model and is never meaned
@@ -632,7 +661,7 @@ def judge_through_claude(bundle, options, schema_path):
               "prose before or after it, no code fence, no summary. It must "
               "match this schema exactly:\n\n%s\n\n%s\n\nThe submission is the "
               "tree at %s. Read it, then reply with the JSON object alone."
-              % (shape, PROMPT, bundle))
+              % (shape, judging, bundle))
 
     # On standard input, as the other backend does: the schema carries the
     # prompt past the command-line length this platform allows.
@@ -902,18 +931,21 @@ def judge_trials(options, available, wanted):
     with io.open(schema_path, "w", encoding="utf-8") as handle:
         json.dump(schema(), handle, indent=2)
 
+    # A changed tree is judged against the change it was asked for too.
+    change = read_change_prompt() if options.task == "change" else None
     results, failures = [], 0
     for position, name in enumerate(order):
         label = labels[position]
         repeats.setdefault(name, []).append(label)
         print("%s  as %s" % (name, label))
         bundle = os.path.join(bundles, label)
-        stripped = build_bundle(available[name], bundle, name)
+        stripped = build_bundle(available[name], bundle, name, change)
         refused = refusal(stripped)
         if refused:
             answer = {"argv": None, "error": refused}
         else:
-            answer = judge_bundle(bundle, options, schema_path)
+            answer = judge_bundle(bundle, options, schema_path,
+                                  prompt_for(options.task))
 
         record = {"trial": name, "task": options.task, "blind_id": label,
                   "model": options.model,
@@ -1174,6 +1206,37 @@ with open(last, "w", encoding="utf-8") as handle:
 """
 
 
+def change_run(scratch):
+    """Judge one planted changed tree through `main` with the CLI on PATH:
+    whether the judge read the change's note on stdin, beside a bundle
+    carrying the change requirements."""
+    root = os.path.join(scratch, "change-run")
+    tree = os.path.join(score.scoring_area(root), "scoring-change", "none-1",
+                        "tree", "change-none-1")
+    os.makedirs(tree)
+    with io.open(SPEC, "rb") as source, io.open(
+            os.path.join(tree, "SPEC.md"), "wb") as target:
+        target.write(source.read())
+    saved, sys.stdout = sys.stdout, io.StringIO()
+    try:
+        main(["--root", root, "--task", "change", "--repeat", "1"])
+    finally:
+        sys.stdout = saved
+    judging = os.path.join(score.scoring_area(root), "judge-change")
+    try:
+        with io.open(os.path.join(judging, "T1.json"),
+                     encoding="utf-8") as handle:
+            record = json.load(handle)
+        told = ((record.get("answer") or {}).get("stdin") or "").replace(
+            "\r\n", "\n")
+    except (OSError, ValueError):
+        return False
+    return (told == prompt_for("change") and os.path.isfile(os.path.join(
+        judging, BUNDLES, "T1", CHANGE_FILE))
+        and (record.get("bundle") or {}).get("change", {}).get("file")
+        == CHANGE_FILE)
+
+
 def launch_checks(scratch):
     """Prove the judge launches through a shim, with the prompt on stdin.
 
@@ -1229,12 +1292,17 @@ def launch_checks(scratch):
                                      effort="high", dry_run=False,
                                      cli="codex", timeout=120)
         answer = judge_bundle(bundle, options, os.path.join(scratch, "s.json"))
+        changed = judge_bundle(bundle, options,
+                               os.path.join(scratch, "s.json"),
+                               prompt_for("change"))
 
         # The refusal leaves the message file empty, so the failure is read
         # from the branch that finds a file and no JSON in it.
         os.environ["FAKE_CODEX_REFUSES"] = REFUSAL
         refused = judge_bundle(bundle, options,
                                os.path.join(scratch, "s.json"))
+        os.environ.pop("FAKE_CODEX_REFUSES", None)
+        judged_change = change_run(scratch)
     finally:
         os.environ["PATH"] = saved
         os.environ.pop("FAKE_CODEX_REFUSES", None)
@@ -1243,6 +1311,15 @@ def launch_checks(scratch):
     stdin = (received.get("stdin") or "").replace("\r\n", "\n")
     checks.append(("the prompt reaches the CLI whole, on stdin",
                    stdin == PROMPT and PROMPT not in answer["argv"]))
+    told = ((changed.get("payload") or {}).get("stdin") or "").replace(
+        "\r\n", "\n")
+    checks.append(("a change task's judging run hands the judge the change's "
+                   "note and the bundle its requirements", judged_change))
+    checks.append(("a changed tree's judge is told the change extends the "
+                   "spec, after the build's prompt unchanged",
+                   told == PROMPT + CHANGE_NOTE and told.startswith(PROMPT)
+                   and "CHANGE.md extends SPEC.md" in told
+                   and prompt_for("build") == PROMPT))
     checks.append(("every argument reaches the CLI intact",
                    received.get("argv") == answer["argv"][1:]))
     message = bundle + "-message.json"
@@ -1395,13 +1472,26 @@ def change_checks(scratch):
     plant(changed, {"notes.txt": "built under %s\n" % changed.replace(
         "change-none-1", "x")})
     stripped = build_bundle(changed, os.path.join(scratch, "change-bundle"),
-                            "none-1")
+                            "none-1", read_change_prompt())
+    carried = None
+    if os.path.isfile(os.path.join(scratch, "change-bundle", CHANGE_FILE)):
+        with io.open(os.path.join(scratch, "change-bundle", CHANGE_FILE),
+                     encoding="utf-8", newline="") as handle:
+            carried = handle.read()
+    plain = build_bundle(built, os.path.join(scratch, "build-bundle"))
     return [("a change task's trees are found by their trial, apart from "
              "the build's",
              trees(root, "change") == {"none-1": changed}
              and trees(root) == {"none-1": built}),
             ("a changed tree's bundle naming its trial in a path leaks",
-             any(leak[1] == "none-1" for leak in stripped["leaks"]))]
+             any(leak[1] == "none-1" for leak in stripped["leaks"])),
+            ("a changed tree's bundle carries the pinned change requirements, "
+             "a build's none",
+             carried == read_change_prompt()
+             and stripped["change"]["file"] == CHANGE_FILE
+             and "change" not in plain
+             and not os.path.exists(os.path.join(scratch, "build-bundle",
+                                                 CHANGE_FILE)))]
 
 
 def claim_checks(scratch):
