@@ -40,7 +40,8 @@ import lib  # noqa: E402
 from generate_arm import RECORDED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
                      ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
-                     ROUND5E_ARMS, SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING,
+                     ROUND5E_ARMS, SCORABLE, SECTIONS_INTO, TEMPLATES_ENV,
+                     VENDORED, VOIDING,
                      TrialError, canonical, git, reach, read_transcripts,
                      read_change_prompt, recorded_round,
                      registration_digest, scoring_area, split_name,
@@ -3128,6 +3129,12 @@ TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
 TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
                               + r"(templates/[\w./*?\[\]-]+)")
 
+# A section file named in an operand, by its path in the workspace: the
+# `lazysections` arm's map names each so, and a read under any directory
+# above it, the workspace's own included, reads the same file.
+SECTION_OPERAND = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                             + r"[\w./*?\[\]-]+)")
+
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
@@ -3331,11 +3338,11 @@ def shell_writes(command):
     return first_writing_command(command) is not None
 
 
-def shell_reads(command, known=()):
+def shell_reads(command, known=(), operand=TEMPLATE_OPERAND):
     """The templates a shell command reads, as (index of its simple
     command, template) in order: every one a reading command names under
-    the vendored copy, a wildcard operand standing for each template of the
-    map it matches."""
+    the vendored copy, or as `operand` names one, a wildcard operand
+    standing for each template of the map it matches."""
     found = []
     directory = ""
     commands = simple_commands(command, keep_quotes=True)
@@ -3352,19 +3359,19 @@ def shell_reads(command, known=()):
         templates = []
         for token in itertools.chain.from_iterable(map(brace_expanded,
                                                        tokens)):
-            matched = TEMPLATE_OPERAND.findall(token)
+            matched = operand.findall(token)
 
             # A path with no vendored copy in it may be relative to the
             # directory an earlier command of the call moved into.
             if not matched and directory and not token.startswith("-"):
-                matched = TEMPLATE_OPERAND.findall(posixpath.normpath(
+                matched = operand.findall(posixpath.normpath(
                     posixpath.join(directory, token.strip("'\""))))
-            for operand in matched:
-                if any(mark in operand for mark in "*?["):
+            for path in matched:
+                if any(mark in path for mark in "*?["):
                     templates.extend(template for template in known
-                                     if glob_matches(operand, template))
-                elif operand.endswith(".md"):
-                    templates.append(operand)
+                                     if glob_matches(path, template))
+                elif path.endswith(".md"):
+                    templates.append(path)
         return templates
     for index, (word, text) in enumerate(commands):
         words = [token for token in words_of(text)
@@ -3412,7 +3419,8 @@ def shell_reads(command, known=()):
         if word in SHELL_PROGRAMS:
             for piece in program_code(text, bodies).split("\n"):
                 found.extend((index, template) for _, template
-                             in shell_reads(unquoted(piece), known))
+                             in shell_reads(unquoted(piece), known,
+                                            operand))
             continue
         if word not in READ_COMMANDS:
             continue
@@ -3447,9 +3455,14 @@ def pattern_attached(token):
 
 def mapped_templates(arm):
     """What an arm's file points the agent at: the skills it carries, by
-    name, or the templates it vendors, by path; empty for an arm with
-    neither."""
+    name, its section files, by their path in the workspace, or the
+    templates it vendors, by path; empty for an arm with none of them."""
     entry = ARMS.get(arm) or {}
+    if entry.get("sections"):
+        folder = os.path.join(ARMS_DIR, entry["sections"])
+        return sorted("%s/%s" % (SECTIONS_INTO, os.path.relpath(
+            os.path.join(base, name), folder).replace(os.sep, "/"))
+            for base, _, names in os.walk(folder) for name in names)
     if entry.get("skills"):
         folder = os.path.join(ARMS_DIR, entry["skills"])
         return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
@@ -3529,7 +3542,8 @@ def map_use(files, arm, templates=None, delegated=()):
     """How one trial used what its file points at, from its transcripts:
     each template read from the vendored copy or loaded as a skill, as
     (turn, template) in order, the turn of the trial's first write to a
-    file of its own, or None, and how many of the uses a subagent made.
+    file of its own, or None, and how many of the uses a subagent made. A
+    section file counts as a template, by its path in the workspace.
 
     A subagent's transcript, in `delegated`, is read after the session's,
     its calls charged to the turn of the session's line it points back to,
@@ -3540,6 +3554,10 @@ def map_use(files, arm, templates=None, delegated=()):
     known = set(mapped_templates(arm) if templates is None else templates)
     marker = VENDORED["into"] + "/"
     named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
+    reads = entry.get("vendor") or entry.get("sections")
+    if entry.get("sections"):
+        named = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                           + r"[\w./-]+\.md)")
 
     def mapped(templates):
         """Those of the templates that are on the arm's map."""
@@ -3580,14 +3598,17 @@ def map_use(files, arm, templates=None, delegated=()):
         # writing one came before the write.
         if name in SHELLS:
             writes_at = first_writing_command(command)
-        if name in SHELLS and entry.get("vendor"):
-            for index, template in shell_reads(command, sorted(known)):
+        if name in SHELLS and reads:
+            for index, template in shell_reads(
+                    command, sorted(known),
+                    SECTION_OPERAND if entry.get("sections")
+                    else TEMPLATE_OPERAND):
                 if template in known or not known:
                     found.append(template)
                     if first_write is None and (writes_at is None
                                                 or index < writes_at):
                         before.add(template)
-        elif name == "Read" and entry.get("vendor"):
+        elif name == "Read" and reads:
             path = str(given.get("file_path") or "").replace("\\", "/")
             found = mapped(named.findall(path))
         elif name == "Skill" and entry.get("skills"):
@@ -4519,6 +4540,40 @@ def round5e_checks():
            len(mapped_templates("lazyref")))
     checks.append(("an arm's map is its skills or its vendored chain, and the "
                    "bare arm has none", got == ([], 13, 13), got))
+
+    # The sections arm's map is its section files, by their path in the
+    # workspace, and a Read or a shell read of one is a use: by its path,
+    # through a wildcard, or relative to a directory moved into.
+    sections = mapped_templates("lazysections")
+    folder = tempfile.mkdtemp(prefix="efficacy-report-sections-")
+    planted = os.path.join(folder, "sections.jsonl")
+    static = "%s/base-quality/static-checks.md" % SECTIONS_INTO
+    contract = "%s/backend-api/api-contract.md" % SECTIONS_INTO
+    first = "%s/backend-api/api-first.md" % SECTIONS_INTO
+    naming = "%s/base-quality/naming.md" % SECTIONS_INTO
+    with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "c1", call(
+            "Read", file_path="C:\\pen\\%s" % static.replace("/", "\\"))))
+        handle.write(line("assistant", "c2", call(
+            "Bash", command="cat %s/backend-api/api-*.md" % SECTIONS_INTO)))
+        handle.write(line("assistant", "c3", call("Write", file_path="x.py")))
+        handle.write(line("assistant", "c4", call(
+            "Bash", command="cd %s && head base-quality/naming.md"
+            % SECTIONS_INTO)))
+        handle.write(line("assistant", "c5", call(
+            "Read", file_path="/pen/%s/templates/core/quality.md" % into)))
+    used = map_use([planted], "lazysections", sections)
+    shutil.rmtree(folder, ignore_errors=True)
+    wanted = {"uses": [(1, static), (2, contract), (2, first), (4, naming)],
+              "first_write": 3,
+              "before_write": sorted([static, contract, first]),
+              "by_subagent": 0}
+    checks.append(("the sections arm's map is its section files, and a Read "
+                   "or a shell read of one counts as a use",
+                   len(sections) > 1 and static in sections
+                   and all(path.startswith(SECTIONS_INTO + "/")
+                           for path in sections)
+                   and used == wanted, used))
 
     # Two arms better on two rows, the cheaper first; one out on task
     # success; three held, by cost; the fifth in rank stays out of round 6.

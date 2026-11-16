@@ -1,12 +1,11 @@
 {
   "arm": "lazyref",
   "kind": "map",
-  "output_model": null,
-  "ref": "9abed019",
+  "ref": "a8079352",
   "source": {
     "remote": "https://github.com/solid-ai-dev/solid-ai-templates.git",
-    "ref": "9abed019",
-    "commit": "9abed01916b941d9ed2f8daa8ff8c3b28f0718fd"
+    "ref": "a8079352",
+    "commit": "a8079352249dec0db5cdabc9f2e78d1c49362154"
   },
   "roots": [
     "backend-api",
@@ -16,8 +15,8 @@
     "base-security",
     "base-data-governance"
   ],
-  "started_at": "2026-11-13T14:45:13",
-  "commit": "9abed01916b941d9ed2f8daa8ff8c3b28f0718fd",
+  "started_at": "2026-11-16T08:09:29",
+  "commit": "a8079352249dec0db5cdabc9f2e78d1c49362154",
   "resolved_files": [
     "templates/core/quality.md",
     "templates/core/git.md",
@@ -101,10 +100,10 @@
       "file": "templates/data/data-governance.md"
     }
   ],
-  "budget": null,
   "output_leak": null,
+  "named_tooling": [],
   "outcome": "generated",
-  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark-regen\\tests\\efficacy\\arms\\lazyref\\CLAUDE.md",
+  "output": "C:\\Work\\products\\solid-ai\\solid-ai-benchmark-arms\\tests\\efficacy\\arms\\lazyref\\CLAUDE.md",
   "output_lines": 40,
   "output_words": 393
 }
