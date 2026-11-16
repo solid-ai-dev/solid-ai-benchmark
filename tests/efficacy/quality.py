@@ -972,17 +972,21 @@ CELL_OPEN = re.compile(r"<t[dh]\b[^>]*>", re.IGNORECASE)
 TAG = re.compile(r"<[^>]+>")
 
 
-def row_cells(text, key):
-    """The text of each cell of the first row a page shows `key` in, as the
-    page writes it, a row being a table row, a list item or a paragraph;
-    None where no row shows it."""
+# What a row's text is split into whole values on: white space and the
+# separators a page writes a list in, so `standard=0.2` stays one value.
+TOKEN_SPLIT = re.compile(r"[\s,;|]+")
+
+
+def row_tokens(text, key):
+    """The whole values the first row a page shows `key` in writes, in
+    order, a row being a table row, a list item or a paragraph, however its
+    cells are marked up; None where no row shows it."""
     for chunk in ROW_OPEN.split(text)[1:]:
         chunk = ROW_CLOSE.split(chunk)[0]
-        cells = [" ".join(html.unescape(TAG.sub(" ", cell)).split())
-                 for cell in CELL_OPEN.split(chunk)]
-        cells = [cell for cell in cells if cell]
-        if any(key in cell for cell in cells):
-            return cells
+        tokens = [token for token in TOKEN_SPLIT.split(html.unescape(
+            TAG.sub(" ", chunk))) if token]
+        if key in tokens:
+            return tokens
     return None
 
 
@@ -1001,7 +1005,7 @@ def shown_rows():
     rows = {}
     for path, keys in row_keys().items():
         text = page(client, path).get_data(as_text=True)
-        rows[path] = {key: row_cells(text, key) for key in keys}
+        rows[path] = {key: row_tokens(text, key) for key in keys}
     return rows
 
 
@@ -1118,17 +1122,17 @@ def data_upgrade(seeded):
         failures += ["%s no longer lists %s" % (path, value)
                      for value in values if value not in shown]
 
-        # Each field the fixture's page wrote of a seeded record, its price
-        # or rate as much as its name, still shows whole as a cell of that
-        # record's row, never only inside a longer one; a column the change
-        # adds is its own, and is no loss.
+        # Each value the fixture's page wrote of a seeded record, its price
+        # or rate as much as its name, still shows whole in that record's
+        # row, never only inside a longer one; a value the change adds is
+        # its own, and is no loss.
         text = answer.get_data(as_text=True)
-        for key, cells in (seeded.get("rows") or {}).get(path, {}).items():
-            now = row_cells(text, key)
-            if not cells or now is None:
+        for key, tokens in (seeded.get("rows") or {}).get(path, {}).items():
+            now = row_tokens(text, key)
+            if not tokens or now is None:
                 continue
-            failures += ["%s no longer shows %r for %s" % (path, cell, key)
-                         for cell in cells if cell not in now]
+            failures += ["%s no longer shows %r for %s" % (path, token, key)
+                         for token in tokens if token not in now]
     for old in seeded["invoices"]:
         now = invoice_reading(old["path"])
         if not 200 <= now["status"] < 300:
@@ -1186,7 +1190,16 @@ def data_upgrade(seeded):
         "rates": "standard=0.1"}),
         ("/rules", "rule_id", {"rule_id": "u-pct-after",
                                "kind": "percentage", "sku": "UPG-2",
-                               "percent": "3"}))
+                               "percent": "3"}),
+
+        # And through the fields the change added, which a schema changed
+        # for new files alone refuses on an old one.
+        ("/jurisdictions", "code", {
+            "code": "U3", "name": "Upgradia Capped", "default_rate": "0.2",
+            "rates": "standard=0.2,reduced=0.05", "caps": "reduced=50.00"}),
+        ("/rules", "rule_id", {"rule_id": "u-threshold",
+                               "kind": "threshold", "sku": "",
+                               "percent": "5", "minimum": "200.00"}))
     for path, key, body in written:
         created(path, body)
         if body[key] not in text_of(page(client, path)):
@@ -1955,10 +1968,13 @@ def create_app(database):
 # jurisdiction's rate, rows all kept, `rerating` migrates and clears every
 # jurisdiction's listed rates, which no invoice prices with and only its page
 # shows, `extending` appends a digit to them, the old rates still inside the
-# new, `fragile` cannot read an old
+# new, `fresh` adds the columns to new files alone and reads an old one
+# without them, refusing only a record that sets one, `fragile` cannot read
+# an old
 # jurisdiction's empty cap, so old invoices break while new ones open, and
 # `refusing` will not open an old file at all. At version 1, `unlisting`
-# links no customer, so nothing can be seeded.
+# links no customer, so nothing can be seeded. `items`, at either version,
+# lists jurisdictions as list items rather than table rows, and is sound.
 UPGRADE_APP = '''import decimal
 import json
 import os
@@ -2027,7 +2043,7 @@ class App(object):
             "jurisdiction TEXT, customer TEXT, coupons TEXT);"
             "CREATE TABLE IF NOT EXISTS lines (invoice INTEGER, position "
             "INTEGER, sku TEXT, quantity INTEGER);" % (added, capped))
-        if stale and MODE not in ("unmigrated", "dropping"):
+        if stale and MODE not in ("unmigrated", "dropping", "fresh"):
             for table, column in ADDED:
                 connection.execute("ALTER TABLE %s ADD COLUMN %s TEXT"
                                    % (table, column))
@@ -2053,14 +2069,16 @@ class App(object):
     def connect(self):
         return sqlite3.connect(self.database)
 
-    def add_jurisdiction(self, connection, code, name, rate, rates):
-        if VERSION == 2:
-            connection.execute("INSERT INTO jurisdictions VALUES "
-                               "(?, ?, ?, ?, ?)", (code, name, rate, rates,
-                                                   "{}"))
-        else:
-            connection.execute("INSERT INTO jurisdictions VALUES "
-                               "(?, ?, ?, ?)", (code, name, rate, rates))
+    def add_jurisdiction(self, connection, code, name, rate, rates,
+                         caps=None):
+        names, values = ["code", "name", "default_rate", "rates"], [
+            code, name, rate, rates]
+        if VERSION == 2 and (caps is not None or "caps" in columns(
+                connection, "jurisdictions")):
+            names.append("caps")
+            values.append(caps or "{}")
+        connection.execute("INSERT INTO jurisdictions (%s) VALUES (%s)" % (
+            ", ".join(names), ", ".join("?" for _ in names)), values)
 
     def test_client(self):
         return Client(self)
@@ -2125,12 +2143,16 @@ class Client(object):
                                       "products")
         elif table == "rules":
             rows = connection.execute("SELECT rule_id, kind FROM rules")
-        elif VERSION == 2:
+        elif VERSION == 2 and "caps" in columns(connection, "jurisdictions"):
             rows = connection.execute("SELECT code, name, default_rate, "
                                       "rates, caps FROM jurisdictions")
         else:
             rows = connection.execute("SELECT code, name, default_rate, "
                                       "rates FROM jurisdictions")
+        if MODE == "items":
+            return "<ul>%s</ul>" % "".join(
+                "<li>%s</li>" % " ".join(str(value) for value in row)
+                for row in rows)
         return "<table>%s</table>" % "".join(
             "<tr>%s</tr>" % "".join("<td>%s</td>" % value for value in row)
             for row in rows)
@@ -2143,18 +2165,19 @@ class Client(object):
         elif table == "rules":
             detail = json.dumps({key: data.get(key) for key in (
                 "percent", "buy", "pay", "code", "amount")})
-            if VERSION == 2:
-                connection.execute("INSERT INTO rules VALUES (?, ?, ?, ?, ?)",
-                                   (data["rule_id"], data["kind"],
-                                    data.get("sku"), detail, None))
-            else:
-                connection.execute("INSERT INTO rules VALUES (?, ?, ?, ?)",
-                                   (data["rule_id"], data["kind"],
-                                    data.get("sku"), detail))
+            names, values = ["rule_id", "kind", "sku", "detail"], [
+                data["rule_id"], data["kind"], data.get("sku"), detail]
+            if VERSION == 2 and (data.get("minimum") or "minimum" in columns(
+                    connection, "rules")):
+                names.append("minimum")
+                values.append(data.get("minimum"))
+            connection.execute("INSERT INTO rules (%s) VALUES (%s)" % (
+                ", ".join(names), ", ".join("?" for _ in names)), values)
         else:
             self.app.add_jurisdiction(connection, data["code"], data["name"],
                                       data["default_rate"],
-                                      data.get("rates") or "")
+                                      data.get("rates") or "",
+                                      data.get("caps"))
         return Response(302, "", {"Location": "/" + table})
 
     def customers(self, connection, parts, method, data):
@@ -2189,7 +2212,8 @@ class Client(object):
             raise LookupError(jurisdiction)
         rate = decimal.Decimal(found[2])
         if VERSION == 2:
-            json.loads(found[4] if MODE == "fragile" else found[4] or "{}")
+            caps = found[4] if len(found) > 4 else "{}"
+            json.loads(caps if MODE == "fragile" else caps or "{}")
         rules = [(kind, sku, json.loads(detail)) for kind, sku, detail
                  in connection.execute("SELECT kind, sku, detail FROM rules")]
         net = []
@@ -2266,7 +2290,7 @@ def create_app(database):
 
 # The faults the data upgrade must catch at version 2, and what each loses.
 UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "rerating",
-                  "extending", "fragile", "refusing")
+                  "extending", "fresh", "fragile", "refusing")
 
 
 def plant_upgrade(where, version, mode):
@@ -2303,6 +2327,7 @@ def upgrade_self_checks(scratch):
     faults = {mode: upgrade_reading(scratch, "sound", mode)
               for mode in UPGRADE_FAULTS}
     unseeded = upgrade_reading(scratch, "unlisting", "sound")
+    items = upgrade_reading(scratch, "items", "items")
     failed = sorted(mode for mode, reading in faults.items()
                     if reading.get("passed") is False)
     return [
@@ -2325,13 +2350,21 @@ def upgrade_self_checks(scratch):
          "fails the upgrade",
          faults["rerating"].get("passed") is False
          and faults["rerating"].get("failures") == [
-             "/jurisdictions no longer shows 'standard=0.2,reduced=0.05' "
-             "for UP"]),
+             "/jurisdictions no longer shows 'standard=0.2' for UP",
+             "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
         ("a listed field kept only inside a longer one fails the upgrade",
          faults["extending"].get("passed") is False
          and faults["extending"].get("failures") == [
-             "/jurisdictions no longer shows 'standard=0.2,reduced=0.05' "
-             "for UP"]),
+             "/jurisdictions no longer shows 'reduced=0.05' for UP"]),
+        ("a list-item row with a value the change adds keeps every old one",
+         items.get("passed") is True and not items.get("failures")),
+        ("a schema changed for new files alone fails on the change's own "
+         "fields",
+         faults["fresh"].get("passed") is False
+         and faults["fresh"].get("failures") == [
+             "a record posted to /jurisdictions after the upgrade is not "
+             "listed",
+             "a record posted to /rules after the upgrade is not listed"]),
         ("old invoices that break on the new field fail the upgrade",
          faults["fragile"].get("passed") is False
          and any("/invoices/" in failure for failure in
