@@ -39,7 +39,7 @@
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge. | Report |
+| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge; `main` read as the local branch, else as `origin/main`, and a clone holding neither refused with its reason. | Report |
 | FR-01-02 | The benchmark shall refuse a registration that differs from `main`'s copy or has changes not committed. | Report |
 | FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content; a named round's trials each against its entry's spec and the prompt pinned for their task. | Report |
 | FR-01-04 | The benchmark shall refuse a trial with something to score that records no spec or no prompt. | Report |
@@ -223,8 +223,8 @@
 | FR-13-19 | The benchmark shall refuse a named round's report unless the document its registration entry names exists and landed on `main` before the round's first trial, unchanged since, a trial reused within the round counting toward its start. | Report |
 | FR-13-20 | The benchmark shall verify an archive by the report's own reading of its round, through one entry point, a named round's change tasks and its reach rule included. | Archive, Report |
 | FR-13-21 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
-| FR-13-22 | The benchmark shall build the `lazysections` arm with the templates' emitter in its sections mode, for the chain and declined list the other emitted arms take, place its section files where its map names them, out of the workspace's index, and fail its self-test where the section files' rule blocks differ from the inline root's, or the map names a section file other than once. | Arm generator, Harness |
-| FR-13-23 | The benchmark shall build the `lazyrefold` arm as `lazyref` at the parent of the templates commit that cuts the check loop to one check command, and fail its self-test where the two arms' files differ by other than that commit's lines, all within the section it changes. | Arm generator |
+| FR-13-22 | The benchmark shall build the `lazysections` arm with the templates' emitter in its sections mode, for the chain and declined list the other emitted arms take, place its section files where its map names them, out of the workspace's index, and fail its self-test where the section files' rule blocks differ from the inline root's, or the map names a section file other than once; and count a trial's Read or shell read of a section file as a use of its map, printed in a named round's report. | Arm generator, Harness, Report |
+| FR-13-23 | The benchmark shall build the `lazyrefold` arm as `lazyref` at the parent of the templates commit that cuts the check loop to one check command, and fail its self-test where the two committed arms' workspace files, at the refs their records name, differ by other than that commit's lines, all within the section it changes. | Arm generator |
 | FR-13-24 | The benchmark shall refuse an on-demand arm (`lazyref`, `lazyskills`, `lazysections`, `lazyrefold`) whose files tell the agent to read everything at the start. | Arm generator |
 
 ### 14 One run at a time

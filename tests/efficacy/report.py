@@ -1671,25 +1671,42 @@ def registration_problem(root, registration, repository=REPOSITORY):
     first = min(moments)
     if git(repository, "status", "--porcelain", "--", registration):
         return "%s has changes that are not committed" % registration
-    if git(repository, "diff", "--name-only", REGISTRATION_BRANCH, "--",
-           registration):
+    base = registration_base(repository)
+    if base is None:
+        return ("neither %s nor origin/%s is in %s, so %s cannot be shown to "
+                "have landed; fetch %s"
+                % (REGISTRATION_BRANCH, REGISTRATION_BRANCH, repository,
+                   registration, REGISTRATION_BRANCH))
+    if git(repository, "diff", "--name-only", base, "--", registration):
         return ("%s differs from %s's copy, so it has not landed; merge it "
-                "or pull %s" % (registration, REGISTRATION_BRANCH,
-                                REGISTRATION_BRANCH))
+                "or pull %s" % (registration, base, REGISTRATION_BRANCH))
 
     # The first-parent line is the main branch's own history, so a merge that
     # brought the registration in is read at the merge, not at the branch
     # commit beneath it. GitHub's squash and rebase merges stamp the commit
     # with the merge time; a fast-forward pushed from a clone keeps the
     # branch commit's date, which this cannot see past.
-    landed = git(repository, "log", REGISTRATION_BRANCH, "--first-parent",
-                 "-1", "--format=%cI", "--", registration)
+    landed = git(repository, "log", base, "--first-parent", "-1",
+                 "--format=%cI", "--", registration)
     if not landed:
-        return "%s is not on %s" % (registration, REGISTRATION_BRANCH)
+        return "%s is not on %s" % (registration, base)
     if datetime.datetime.fromisoformat(landed) > first:
         return ("%s landed on %s at %s, after the first trial started at %s"
-                % (registration, REGISTRATION_BRANCH, landed,
-                   first.isoformat()))
+                % (registration, base, landed, first.isoformat()))
+    return None
+
+
+def registration_base(repository):
+    """The ref the main branch is read at: its local branch, else the
+    remote's copy of it, or None where the clone holds neither."""
+
+    # A clone of one branch, as a CI checkout is, holds no local main.
+    for ref in (REGISTRATION_BRANCH, "origin/" + REGISTRATION_BRANCH):
+        try:
+            git(repository, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        except TrialError:
+            continue
+        return ref
     return None
 
 
@@ -1941,8 +1958,8 @@ def write_report(root, trials, table, results, seed, out_dir,
 
     # A named round prints the readings it registered, each per task, the
     # templates read on each counted from that task's own transcripts.
-    registered = (registered_lines(tasks, seed, task_uses(root, tasks))
-                  if tasks else [])
+    by_task = task_uses(root, tasks) if tasks else {}
+    registered = registered_lines(tasks, seed, by_task) if tasks else []
     lines.extend(registered)
 
     lines.extend(["## What produced these numbers", ""])
@@ -2008,6 +2025,17 @@ def write_report(root, trials, table, results, seed, out_dir,
         lines.extend(round5e_section(root, trials, table, results, seed,
                                      margins_of(trials), uses, iso))
         lines.append("")
+
+    # A named round reads its on-demand arms' use of their maps too, with
+    # no pilot hypothesis beside it, once a task, each over that task's own
+    # trials and transcripts.
+    for task, label, view, _, _ in tasks:
+        found = by_task.get(task) or {}
+        if found and map_use_rows(view, found):
+            lines.extend(map_use_lines(view, found,
+                                       "## Use of the map, %s" % label,
+                                       h7=False))
+            lines.append("")
 
     lines.append("## Raw numbers, per trial")
     lines.append("")
@@ -3261,10 +3289,11 @@ TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
 TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
                               + r"(templates/[\w./*?\[\]-]+)")
 
-# The same for a section file, named by its path under the folder the
-# `lazysections` arm's map points at.
-SECTION_OPERAND = re.compile(re.escape(SECTIONS_INTO + "/")
-                             + r"([\w./*?\[\]-]+)")
+# A section file named in an operand, by its path in the workspace: the
+# `lazysections` arm's map names each so, and a read under any directory
+# above it, the workspace's own included, reads the same file.
+SECTION_OPERAND = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                             + r"[\w./*?\[\]-]+)")
 
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
@@ -3469,10 +3498,10 @@ def shell_writes(command):
     return first_writing_command(command) is not None
 
 
-def shell_reads(command, known=(), operand_of=TEMPLATE_OPERAND):
+def shell_reads(command, known=(), operand=TEMPLATE_OPERAND):
     """The templates a shell command reads, as (index of its simple
     command, template) in order: every one a reading command names under
-    the vendored copy, or where `operand_of` finds them, a wildcard operand
+    the vendored copy, or as `operand` names one, a wildcard operand
     standing for each template of the map it matches."""
     found = []
     directory = ""
@@ -3490,19 +3519,19 @@ def shell_reads(command, known=(), operand_of=TEMPLATE_OPERAND):
         templates = []
         for token in itertools.chain.from_iterable(map(brace_expanded,
                                                        tokens)):
-            matched = operand_of.findall(token)
+            matched = operand.findall(token)
 
             # A path with no vendored copy in it may be relative to the
             # directory an earlier command of the call moved into.
             if not matched and directory and not token.startswith("-"):
-                matched = operand_of.findall(posixpath.normpath(
+                matched = operand.findall(posixpath.normpath(
                     posixpath.join(directory, token.strip("'\""))))
-            for operand in matched:
-                if any(mark in operand for mark in "*?["):
+            for path in matched:
+                if any(mark in path for mark in "*?["):
                     templates.extend(template for template in known
-                                     if glob_matches(operand, template))
-                elif operand.endswith(".md"):
-                    templates.append(operand)
+                                     if glob_matches(path, template))
+                elif path.endswith(".md"):
+                    templates.append(path)
         return templates
     for index, (word, text) in enumerate(commands):
         words = [token for token in words_of(text)
@@ -3551,7 +3580,7 @@ def shell_reads(command, known=(), operand_of=TEMPLATE_OPERAND):
             for piece in program_code(text, bodies).split("\n"):
                 found.extend((index, template) for _, template
                              in shell_reads(unquoted(piece), known,
-                                            operand_of))
+                                            operand))
             continue
         if word not in READ_COMMANDS:
             continue
@@ -3586,20 +3615,20 @@ def pattern_attached(token):
 
 def mapped_templates(arm):
     """What an arm's file points the agent at: the skills it carries, by
-    name, or the templates it vendors, by path; empty for an arm with
-    neither."""
+    name, its section files, by their path in the workspace, or the
+    templates it vendors, by path; empty for an arm with none of them."""
     entry = ARMS.get(arm) or {}
+    if entry.get("sections"):
+        folder = os.path.join(ARMS_DIR, entry["sections"])
+        return sorted("%s/%s" % (SECTIONS_INTO, os.path.relpath(
+            os.path.join(base, name), folder).replace(os.sep, "/"))
+            for base, _, names in os.walk(folder) for name in names)
     if entry.get("skills"):
         folder = os.path.join(ARMS_DIR, entry["skills"])
         return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
     if entry.get("vendor"):
         record = generation_records().get(arm) or {}
         return list(record.get("resolved_files") or [])
-    if entry.get("sections"):
-        folder = os.path.join(ARMS_DIR, entry["sections"])
-        return sorted(os.path.relpath(os.path.join(base, name), folder)
-                      .replace(os.sep, "/")
-                      for base, _, names in os.walk(folder) for name in names)
     return []
 
 
@@ -3673,7 +3702,8 @@ def map_use(files, arm, templates=None, delegated=()):
     """How one trial used what its file points at, from its transcripts:
     each template read from the vendored copy or loaded as a skill, as
     (turn, template) in order, the turn of the trial's first write to a
-    file of its own, or None, and how many of the uses a subagent made.
+    file of its own, or None, and how many of the uses a subagent made. A
+    section file counts as a template, by its path in the workspace.
 
     A subagent's transcript, in `delegated`, is read after the session's,
     its calls charged to the turn of the session's line it points back to,
@@ -3684,10 +3714,10 @@ def map_use(files, arm, templates=None, delegated=()):
     known = set(mapped_templates(arm) if templates is None else templates)
     marker = VENDORED["into"] + "/"
     named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
-
-    # A section file a read names, by its path under the folder the arm's
-    # map points at.
-    section = re.compile(re.escape(SECTIONS_INTO) + r"/([\w./-]+\.md)")
+    reads = entry.get("vendor") or entry.get("sections")
+    if entry.get("sections"):
+        named = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                           + r"[\w./-]+\.md)")
 
     def mapped(templates):
         """Those of the templates that are on the arm's map."""
@@ -3728,24 +3758,19 @@ def map_use(files, arm, templates=None, delegated=()):
         # writing one came before the write.
         if name in SHELLS:
             writes_at = first_writing_command(command)
-        # A section file is read by a shell command as a vendored template
-        # is: only by a reading command, a wildcard standing for each one.
-        if name in SHELLS and (entry.get("vendor") or entry.get("sections")):
-            operand_of = (SECTION_OPERAND if entry.get("sections")
-                          else TEMPLATE_OPERAND)
-            for index, template in shell_reads(command, sorted(known),
-                                               operand_of):
+        if name in SHELLS and reads:
+            for index, template in shell_reads(
+                    command, sorted(known),
+                    SECTION_OPERAND if entry.get("sections")
+                    else TEMPLATE_OPERAND):
                 if template in known or not known:
                     found.append(template)
                     if first_write is None and (writes_at is None
                                                 or index < writes_at):
                         before.add(template)
-        elif name == "Read" and entry.get("vendor"):
+        elif name == "Read" and reads:
             path = str(given.get("file_path") or "").replace("\\", "/")
             found = mapped(named.findall(path))
-        elif name == "Read" and entry.get("sections"):
-            path = str(given.get("file_path") or "").replace("\\", "/")
-            found = mapped(section.findall(path))
         elif name == "Skill" and entry.get("skills"):
             skill = str(given.get("skill") or "").strip()
             found = [skill] if skill in known else []
@@ -3759,6 +3784,15 @@ def map_use(files, arm, templates=None, delegated=()):
     return {"uses": uses, "first_write": first_write,
             "before_write": sorted(before) if first_write is not None
             else None, "by_subagent": by_subagent}
+
+
+def report_uses(root, trials, task="build"):
+    """The map uses a report reads on `task`: every trial's, wherever the run
+    holds an arm whose file points at a map, named round or not; None where
+    it holds none."""
+    if not any(mapped_templates(arm_of(name)) for name in trials):
+        return None
+    return map_uses(root, trials, task)
 
 
 def map_uses(root, trials, task="build"):
@@ -3871,10 +3905,10 @@ def map_use_detail(trials, uses):
     return lines
 
 
-def map_use_lines(trials, uses):
-    """The use-of-the-map table and the note beside H7."""
+def map_use_lines(trials, uses, heading="### Use of the map", h7=True):
+    """The use-of-the-map table and, with `h7`, the note beside H7."""
     rows = map_use_rows(trials, uses)
-    lines = ["### Use of the map", "",
+    lines = [heading, "",
              "From each trial's transcript: the templates it read from the "
              "vendored copy or loaded as skills, counted once each, the "
              "turn the first happened at, and how many came before the "
@@ -3895,7 +3929,7 @@ def map_use_lines(trials, uses):
             row["arm"], row["trials"], row["total"], shown(row["read"]),
             shown(row["before"]), shown(row["first"], 0), row["up_front"],
             row["wrote"]))
-    note = h7_note(rows)
+    note = h7_note(rows) if h7 else None
     if note:
         lines.extend(["", "Beside H7: %s" % note])
     lines.append("")
@@ -4683,6 +4717,40 @@ def round5e_checks():
            len(mapped_templates("lazyref")))
     checks.append(("an arm's map is its skills or its vendored chain, and the "
                    "bare arm has none", got == ([], 13, 13), got))
+
+    # The sections arm's map is its section files, by their path in the
+    # workspace, and a Read or a shell read of one is a use: by its path,
+    # through a wildcard, or relative to a directory moved into.
+    sections = mapped_templates("lazysections")
+    folder = tempfile.mkdtemp(prefix="efficacy-report-sections-")
+    planted = os.path.join(folder, "sections.jsonl")
+    static = "%s/base-quality/static-checks.md" % SECTIONS_INTO
+    contract = "%s/backend-api/api-contract.md" % SECTIONS_INTO
+    first = "%s/backend-api/api-first.md" % SECTIONS_INTO
+    naming = "%s/base-quality/naming.md" % SECTIONS_INTO
+    with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "c1", call(
+            "Read", file_path="C:\\pen\\%s" % static.replace("/", "\\"))))
+        handle.write(line("assistant", "c2", call(
+            "Bash", command="cat %s/backend-api/api-*.md" % SECTIONS_INTO)))
+        handle.write(line("assistant", "c3", call("Write", file_path="x.py")))
+        handle.write(line("assistant", "c4", call(
+            "Bash", command="cd %s && head base-quality/naming.md"
+            % SECTIONS_INTO)))
+        handle.write(line("assistant", "c5", call(
+            "Read", file_path="/pen/%s/templates/core/quality.md" % into)))
+    used = map_use([planted], "lazysections", sections)
+    shutil.rmtree(folder, ignore_errors=True)
+    wanted = {"uses": [(1, static), (2, contract), (2, first), (4, naming)],
+              "first_write": 3,
+              "before_write": sorted([static, contract, first]),
+              "by_subagent": 0}
+    checks.append(("the sections arm's map is its section files, and a Read "
+                   "or a shell read of one counts as a use",
+                   len(sections) > 1 and static in sections
+                   and all(path.startswith(SECTIONS_INTO + "/")
+                           for path in sections)
+                   and used == wanted, used))
 
     # Two arms better on two rows, the cheaper first; one out on task
     # success; three held, by cost; the fifth in rank stays out of round 6.
@@ -5959,9 +6027,9 @@ def task_use_checks():
     sections = every[:2]
 
     # A listing reads nothing; a wildcard read reads each file it matches.
-    folder = sections[0].split("/")[0]
-    last = every[-1].split("/")[0]
-    matched = [name for name in every if name.startswith(last + "/")]
+    folder = posixpath.dirname(sections[0])
+    last = posixpath.dirname(every[-1])
+    matched = [name for name in every if posixpath.dirname(name) == last]
 
     def call(name, **given):
         return {"type": "tool_use", "id": "t", "name": name, "input": given}
@@ -5969,14 +6037,12 @@ def task_use_checks():
     def line(message_id, block):
         return json.dumps({"type": "assistant", "message": {
             "id": message_id, "content": [block]}}) + "\n"
-    calls = {"build": [call("Read", file_path="C:\\pen\\%s\\%s" % (
-        SECTIONS_INTO.replace("/", "\\"), sections[0].replace("/", "\\")))],
-             "change": [call("Read", file_path="/pen/%s/%s" % (
-                 SECTIONS_INTO, sections[0])), call(
-                     "Bash", command="ls %s/%s" % (SECTIONS_INTO, folder)),
-                 call("Bash", command="cat %s/%s/*.md | head" % (
-                     SECTIONS_INTO, last)),
-                 call("Read", file_path="/pen/src/app.py")]}
+    calls = {"build": [call("Read", file_path="C:\\pen\\"
+                            + sections[0].replace("/", "\\"))],
+             "change": [call("Read", file_path="/pen/" + sections[0]),
+                        call("Bash", command="ls " + folder),
+                        call("Bash", command="cat %s/*.md | head" % last),
+                        call("Read", file_path="/pen/src/app.py")]}
     records = []
     for block, (task, made) in itertools.product((1, 2), calls.items()):
         workspace = os.path.join(scratch, "pen-%s-%d" % (task, block))
@@ -6070,6 +6136,28 @@ def change_finding_checks(seed):
              "change task's own trials and cost",
              "## Arms against `none`, change task" in record
              and len(rows) == 1 and "$0.80" in rows[0])]
+
+
+# The registration a planted repository holds, landed before any planted
+# trial starts.
+PLANTED_REGISTRATION = "docs/rounds/round.md"
+
+
+def planted_registry(repository, branch=REGISTRATION_BRANCH):
+    """A git repository holding a registration committed on `branch` at
+    2026-10-01, for a self-test that must read no branch of this one."""
+    path = os.path.join(repository, *PLANTED_REGISTRATION.split("/"))
+    os.makedirs(os.path.dirname(path))
+    with io.open(path, "w", encoding="utf-8") as handle:
+        handle.write("# Round\n")
+    when = "2026-10-01T10:00:00+00:00"
+    env = dict(os.environ, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+    git(repository, "init", "-q", "-b", branch)
+    git(repository, "add", PLANTED_REGISTRATION)
+    git(repository, "-c", "user.name=self-test",
+        "-c", "user.email=self-test@example.invalid", "commit", "-q", "-m",
+        "register", env=env)
+    return repository
 
 
 def change_only_checks():
@@ -6212,9 +6300,11 @@ def change_only_checks():
                    and "inline-none" in mixed({})
                    and "inline-none" in mixed({"round": "C1",
                                                "registration": "0" * 64})))
+
     # A trial copied within C1, which started after its registration
     # landed, is when the round began; the pilot's skip of reused trials
-    # would leave the round with no first trial.
+    # would leave the round with no first trial. The registration lands in
+    # a repository planted here, so no branch of this one is read.
     began = tempfile.mkdtemp(prefix="efficacy-report-began-")
     with io.open(os.path.join(began, "run-1.json"), "w",
                  encoding="utf-8") as handle:
@@ -6222,10 +6312,31 @@ def change_only_checks():
                                "reused_from": {"round": "C1"},
                                "started_at": "2026-11-15T12:00:00+00:00"}]},
                   handle)
-    counted = registration_problem(began, ROUND5E_REGISTRATION)
-    shutil.rmtree(began, ignore_errors=True)
+    registry = planted_registry(os.path.join(began, "repository"))
+    counted = registration_problem(began, PLANTED_REGISTRATION, registry)
     checks.append(("a trial reused within its named round counts toward when "
                    "the round began", counted is None))
+
+    # The main branch read as origin's where the clone has no local one, as
+    # in a CI checkout, and a clone with neither refused with its reason.
+    remote = planted_registry(os.path.join(began, "remote"), "work")
+    git(remote, "update-ref", "refs/remotes/origin/" + REGISTRATION_BRANCH,
+        "HEAD")
+    bare = planted_registry(os.path.join(began, "bare"), "work")
+    try:
+        missing = registration_problem(began, PLANTED_REGISTRATION, bare)
+    except Exception as error:
+        missing = "crashed: %s" % error
+    checks.append(("the main branch is read locally, else as origin's, and a "
+                   "clone with neither is refused, not crashed",
+                   registration_base(registry) == REGISTRATION_BRANCH
+                   and registration_base(remote)
+                   == "origin/" + REGISTRATION_BRANCH
+                   and registration_problem(began, PLANTED_REGISTRATION,
+                                            remote) is None
+                   and registration_base(bare) is None
+                   and "neither" in (missing or "")))
+    shutil.rmtree(began, ignore_errors=True)
     checks.append(("a change task standing alone reads no build Python",
                    python_problem({"none-1": both("none-1"),
                                    "none-3": standing}) is None))
@@ -9760,6 +9871,62 @@ def cross_checks(seed):
     ]
 
 
+def named_map_use_checks(seed):
+    """A named round's report reads its on-demand arms' use of their maps:
+    a planted C1 run whose `lazysections` trial read two section files
+    before its first write prints that arm's row, through the same reading
+    of the root `main()` makes."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-named-map-use-")
+    workspace = os.path.join(scratch, "pen", "lazysections-1")
+    folder = os.path.join(scratch, "home", ".claude", "projects",
+                          re.sub(r"[^A-Za-z0-9]", "-",
+                                 os.path.abspath(workspace)))
+    os.makedirs(folder)
+    first = "%s/base-quality/static-checks.md" % SECTIONS_INTO
+    second = "%s/base-quality/naming.md" % SECTIONS_INTO
+    calls = [("Read", {"file_path": "%s/%s" % (workspace, first)}),
+             ("Bash", {"command": "cat %s" % second}),
+             ("Write", {"file_path": "%s/app.py" % workspace})]
+    with io.open(os.path.join(folder, "session.jsonl"), "w",
+                 encoding="utf-8", newline="\n") as handle:
+        for turn, (name, given) in enumerate(calls, 1):
+            handle.write(json.dumps({"type": "assistant", "message": {
+                "id": "m%d" % turn, "content": [{
+                    "type": "tool_use", "id": "t%d" % turn, "name": name,
+                    "input": given}]}}) + "\n")
+    with io.open(os.path.join(scratch, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"round": "C1", "trials": [{
+            "round": "C1", "task": "build", "arm": "lazysections",
+            "block": 1, "trial": 1, "outcome": "completed",
+            "workspace": workspace,
+            "started_at": "2000-01-01T00:00:00"}]}, handle)
+    trials = planted_change_run("any-revision")
+    trials["lazysections-1"] = {"scores": {}, "judge": None,
+                                "security": None, "change": None}
+    for trial in trials.values():
+        trial["round"] = "C1"
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    target = write_report(scratch, trials, table, results, seed,
+                          out_dir=os.path.join(scratch, "out"),
+                          uses=report_uses(scratch, trials))
+    with io.open(target[:-len(".md")] + "-record.md",
+                 encoding="utf-8") as handle:
+        text = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    row = next((line for line in text.splitlines()
+                if line.startswith("| lazysections | 1 |")), None)
+    total = len(mapped_templates("lazysections"))
+    return [
+        ("a named round's report prints its sections arm's use of the map",
+         "## Use of the map, build task" in text and "Beside H7" not in text
+         and row == "| lazysections | 1 | %d | 2.0 | 2.0 | 1 | 0 of 1 |"
+         % total and "| lazysections-1 | 3 | 0 | 1: %s, 2: %s |"
+         % (first, second) in text, row),
+    ]
+
+
 def documents_checks(seed):
     """A run writes three documents: a plain report with the radars and a
     verdict per approach naming its deciding measures, an appendix of three
@@ -9957,6 +10124,7 @@ def self_test(seed):
     checks.extend(withdrawal_checks(seed))
     checks.extend(executive_checks(seed))
     checks.extend(documents_checks(seed))
+    checks.extend(named_map_use_checks(seed))
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
@@ -10188,7 +10356,11 @@ def main(argv):
                           iso[3] if iso else None)
     if tasks and tasks[0][0] == "build":
         iso = tasks[0][4]
-    uses = map_uses(options.root, trials) if is_round5e(trials) else None
+
+    # A named round reads each task's map use over that task's own trials;
+    # the build's is the one the aggregate keeps.
+    uses = (task_uses(options.root, tasks).get("build") if tasks
+            else report_uses(options.root, trials))
     target = write_report(options.root, trials, table, results, options.seed,
                           out_dir, withdrawn, check, iso, uses, tasks)
 
