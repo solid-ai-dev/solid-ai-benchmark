@@ -1941,9 +1941,8 @@ def write_report(root, trials, table, results, seed, out_dir,
 
     # A named round prints the readings it registered, each per task, the
     # templates read on each counted from that task's own transcripts.
-    registered = (registered_lines(tasks, seed, {
-        task: map_uses(root, trials, task) for task, _ in TASKS})
-        if tasks else [])
+    registered = (registered_lines(tasks, seed, task_uses(root, tasks))
+                  if tasks else [])
     lines.extend(registered)
 
     lines.extend(["## What produced these numbers", ""])
@@ -2099,6 +2098,13 @@ def write_report(root, trials, table, results, seed, out_dir,
                      newline="\n") as handle:
             handle.write(report_text(text, width))
     return os.path.join(out_dir, report)
+
+
+def task_uses(root, tasks):
+    """Each task's map use, read over that task's own trials, so a reading
+    left out of one task, as a reach leaves it, counts in none."""
+    return {task: map_uses(root, view, task)
+            for task, _, view, _, _ in tasks}
 
 
 def finding_reading(tasks, trials, table, results, iso, seed, withdrawn=None):
@@ -5872,6 +5878,11 @@ def registered_checks(seed):
     uses.update(counted("lazysections", 2))
     demand = text(plant(cheaper, flaky=("lazysections",)),
                   {"build": uses, "change": uses})
+    exact = cost_drop({"cost_usd": {
+        "label": "cost", "direction": DOWN, "values": {
+            CHECK_LOOP[0]: {block: 0.111105 for block in range(1, 6)},
+            CHECK_LOOP[1]: {block: 0.12345 for block in range(1, 6)}}}},
+        seed, CHECK_LOOP)
     builds_alone = text({name: dict(trial, change=None)
                          for name, trial in plant(cheaper).items()})
 
@@ -5925,6 +5936,11 @@ def registered_checks(seed):
         ("the report and its full record print the registered readings",
          all("## The registered readings" in document
              and "**Kept.**" in document for document in documents)),
+        ("a cost drop of exactly 10 % keeps the gate, read from the "
+         "unrounded differences",
+         exact[0] >= COST_DROP and round(exact[0], 6) == COST_DROP
+         and check_loop_kept({task: {"cost": exact, "worse": []}
+                              for task, _ in TASKS}) is True),
         ("a round running none of the registered pairs prints none of them",
          registered_lines(task_readings({
              name: trial for name, trial in plant(cheaper).items()
@@ -5962,16 +5978,16 @@ def task_use_checks():
                      SECTIONS_INTO, last)),
                  call("Read", file_path="/pen/src/app.py")]}
     records = []
-    for task, made in calls.items():
-        workspace = os.path.join(scratch, "pen-%s" % task)
+    for block, (task, made) in itertools.product((1, 2), calls.items()):
+        workspace = os.path.join(scratch, "pen-%s-%d" % (task, block))
         folder = os.path.join(root, "home", ".claude", "projects",
                               project_folder(workspace))
         os.makedirs(folder)
         with io.open(os.path.join(folder, "t.jsonl"), "w",
                      encoding="utf-8") as handle:
-            for index, block in enumerate(made):
-                handle.write(line("m%d" % index, block))
-        records.append({"arm": "lazysections", "trial": 1, "task": task,
+            for index, call_made in enumerate(made):
+                handle.write(line("m%d" % index, call_made))
+        records.append({"arm": "lazysections", "trial": block, "task": task,
                         "outcome": "completed", "workspace": workspace})
     with io.open(os.path.join(root, "run-1.json"), "w",
                  encoding="utf-8") as handle:
@@ -5979,11 +5995,32 @@ def task_use_checks():
     trials = {"lazysections-1": {}}
     counted = {task: templates_read(map_uses(root, trials, task),
                                     "lazysections") for task in calls}
+
+    # Each task's uses are read over its own trials: the first trial's change
+    # reading left out, as a reach leaves it, counts on the change task
+    # nowhere, and its build left out counts on the build nowhere.
+    def standing(build, change):
+        def trial(name, kept_build, kept_change):
+            made = {"round": "C1", "scores": {"name": name}, "judge": None,
+                    "judgings": [], "security": None, "quality": None,
+                    "change": {"name": name} if kept_change else None}
+            return made if kept_build else change_only(made)
+        uses = task_uses(root, task_readings({
+            "lazysections-1": trial("lazysections-1", build, change),
+            "lazysections-2": trial("lazysections-2", True, True)}, 1))
+        return {task: sorted(found) for task, found in uses.items()}
+    dropped = (standing(True, False), standing(False, True))
     shutil.rmtree(scratch, ignore_errors=True)
     return [("each task's templates read are counted from its own "
              "transcripts, a section file by a read or a shell command",
              len(sections) == 2 and folder != last and matched
-             and counted == {"build": 1.0, "change": 1.0 + len(matched)})]
+             and counted == {"build": 1.0, "change": 1.0 + len(matched)}),
+            ("a task's reading left out of the report counts no template "
+             "use on that task",
+             dropped == ({"build": ["lazysections-1", "lazysections-2"],
+                          "change": ["lazysections-2"]},
+                         {"build": ["lazysections-2"],
+                          "change": ["lazysections-1", "lazysections-2"]}))]
 
 
 def pair_contrast_checks(seed):
@@ -7620,10 +7657,13 @@ def cost_drop(table, seed, pair):
               if left[index] is not None and right[index] is not None]
     base = statistics.fmean(paired) if paired else None
     interval = contrast.get("interval") or {}
-    if not base or contrast.get("mean") is None:
+    if not base or not contrast.get("pairs"):
         return None, None, None
+
+    # The gate reads the paired differences as measured; the contrast's own
+    # mean is rounded for display, and a rounded mean can cross the gate.
     low, high = interval.get("low"), interval.get("high")
-    return (-contrast["mean"] / base,
+    return (-statistics.fmean(contrast["pairs"]) / base,
             None if high is None else -high / base,
             None if low is None else -low / base)
 

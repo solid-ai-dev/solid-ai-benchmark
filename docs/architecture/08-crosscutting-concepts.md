@@ -382,7 +382,7 @@ axis only:
   failed is the fixture's, not the change's, and counts neither way
   (FR-16-02).
 - **Values, not counts.** Each record is read back as the fixture showed
-  it: the list pages, each invoice's JSON and CSV exports, the customer's
+  it: every field of its row on the list pages, each invoice's JSON and CSV exports, the customer's
   export, and the old invoice priced again. A key or column only the
   changed tree has is the change's own, and is no loss (FR-16-04).
 - **Lost and missing.** A changed tree that will not open the file, or

@@ -966,6 +966,45 @@ def invoice_reading(path):
             "csv": csv_text.get_data(as_text=True)}
 
 
+ROW_OPEN = re.compile(r"<(?:tr|li|p)\b[^>]*>", re.IGNORECASE)
+ROW_CLOSE = re.compile(r"</(?:tr|li|p)>", re.IGNORECASE)
+CELL_OPEN = re.compile(r"<t[dh]\b[^>]*>", re.IGNORECASE)
+TAG = re.compile(r"<[^>]+>")
+
+
+def row_cells(text, key):
+    """The text of each cell of the first row a page shows `key` in, as the
+    page writes it, a row being a table row, a list item or a paragraph;
+    None where no row shows it."""
+    for chunk in ROW_OPEN.split(text)[1:]:
+        chunk = ROW_CLOSE.split(chunk)[0]
+        cells = [" ".join(html.unescape(TAG.sub(" ", cell)).split())
+                 for cell in CELL_OPEN.split(chunk)]
+        cells = [cell for cell in cells if cell]
+        if any(key in cell for cell in cells):
+            return cells
+    return None
+
+
+def row_keys():
+    """The value each seeded record's row is found by, on each list page."""
+    return {
+        "/products": [item["sku"] for item in UPGRADE_PRODUCTS],
+        "/customers": [UPGRADE_CUSTOMER["email"]],
+        "/rules": [item["rule_id"] for item in UPGRADE_RULES],
+        "/jurisdictions": [UPGRADE_JURISDICTION["code"]]}
+
+
+def shown_rows():
+    """Every seeded record's row as its list page shows it: each field the
+    page writes, its price, rate or kind among them, by page and key."""
+    rows = {}
+    for path, keys in row_keys().items():
+        text = page(client, path).get_data(as_text=True)
+        rows[path] = {key: row_cells(text, key) for key in keys}
+    return rows
+
+
 def seed_upgrade():
     """Seed the records through the fixture's forms and read each back as
     the fixture shows it; the readings, or why the fixture could not."""
@@ -1021,7 +1060,7 @@ def seed_upgrade():
         customer_export = json.loads(export.get_data(as_text=True))
     except ValueError:
         return None, "the seeded customer's export is not JSON"
-    return {"invoices": invoices, "pages": pages,
+    return {"invoices": invoices, "pages": pages, "rows": shown_rows(),
             "customer": {"id": customer, "export": customer_export}}, None
 
 
@@ -1078,6 +1117,17 @@ def data_upgrade(seeded):
             continue
         failures += ["%s no longer lists %s" % (path, value)
                      for value in values if value not in shown]
+
+        # Each field the fixture's page wrote of a seeded record, its price
+        # or rate as much as its name, still shows in that record's row; a
+        # column the change adds is its own, and is no loss.
+        text = answer.get_data(as_text=True)
+        for key, cells in (seeded.get("rows") or {}).get(path, {}).items():
+            now = row_cells(text, key)
+            if not cells or now is None:
+                continue
+            failures += ["%s no longer shows %r for %s" % (path, cell, key)
+                         for cell in cells if cell not in " ".join(now)]
     for old in seeded["invoices"]:
         now = invoice_reading(old["path"])
         if not 200 <= now["status"] < 300:
@@ -1901,7 +1951,9 @@ def create_app(database):
 # all of that. Each other mode plants one fault in version 2 alone:
 # `unmigrated` adds the columns to new files only and then reads them,
 # `dropping` rebuilds an old file empty, `rewriting` migrates and resets every
-# jurisdiction's rate, rows all kept, `fragile` cannot read an old
+# jurisdiction's rate, rows all kept, `rerating` migrates and clears every
+# jurisdiction's listed rates, which no invoice prices with and only its page
+# shows, `fragile` cannot read an old
 # jurisdiction's empty cap, so old invoices break while new ones open, and
 # `refusing` will not open an old file at all. At version 1, `unlisting`
 # links no customer, so nothing can be seeded.
@@ -1968,7 +2020,7 @@ class App(object):
             "CREATE TABLE IF NOT EXISTS rules (rule_id TEXT PRIMARY KEY, "
             "kind TEXT, sku TEXT, detail TEXT%s);"
             "CREATE TABLE IF NOT EXISTS jurisdictions (code TEXT PRIMARY "
-            "KEY, name TEXT, default_rate TEXT%s);"
+            "KEY, name TEXT, default_rate TEXT, rates TEXT%s);"
             "CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY, "
             "jurisdiction TEXT, customer TEXT, coupons TEXT);"
             "CREATE TABLE IF NOT EXISTS lines (invoice INTEGER, position "
@@ -1980,6 +2032,8 @@ class App(object):
             if MODE == "rewriting":
                 connection.execute("UPDATE jurisdictions SET "
                                    "default_rate = '0'")
+            if MODE == "rerating":
+                connection.execute("UPDATE jurisdictions SET rates = ''")
         if not connection.execute("SELECT * FROM admin").fetchone():
             connection.execute("INSERT INTO admin VALUES (?)", (
                 os.environ.get("TARIFF_ADMIN_PASSWORD"),))
@@ -1987,20 +2041,21 @@ class App(object):
             connection.executemany("INSERT INTO products VALUES "
                                    "(?, ?, ?, ?)", SEED)
             for code, rate in (("DE", "0.19"), ("IE", "0.23")):
-                self.add_jurisdiction(connection, code, code, rate)
+                self.add_jurisdiction(connection, code, code, rate, "")
         connection.commit()
         connection.close()
 
     def connect(self):
         return sqlite3.connect(self.database)
 
-    def add_jurisdiction(self, connection, code, name, rate):
+    def add_jurisdiction(self, connection, code, name, rate, rates):
         if VERSION == 2:
             connection.execute("INSERT INTO jurisdictions VALUES "
-                               "(?, ?, ?, ?)", (code, name, rate, "{}"))
+                               "(?, ?, ?, ?, ?)", (code, name, rate, rates,
+                                                   "{}"))
         else:
-            connection.execute("INSERT INTO jurisdictions VALUES (?, ?, ?)",
-                               (code, name, rate))
+            connection.execute("INSERT INTO jurisdictions VALUES "
+                               "(?, ?, ?, ?)", (code, name, rate, rates))
 
     def test_client(self):
         return Client(self)
@@ -2061,16 +2116,19 @@ class Client(object):
 
     def listing(self, connection, table):
         if table == "products":
-            rows = connection.execute("SELECT sku, name FROM products")
+            rows = connection.execute("SELECT sku, name, unit_price FROM "
+                                      "products")
         elif table == "rules":
             rows = connection.execute("SELECT rule_id, kind FROM rules")
         elif VERSION == 2:
-            rows = connection.execute("SELECT code, name, caps FROM "
-                                      "jurisdictions")
+            rows = connection.execute("SELECT code, name, default_rate, "
+                                      "rates, caps FROM jurisdictions")
         else:
-            rows = connection.execute("SELECT code, name FROM jurisdictions")
-        return "".join("<p>%s</p>" % " ".join(str(value) for value in row)
-                       for row in rows)
+            rows = connection.execute("SELECT code, name, default_rate, "
+                                      "rates FROM jurisdictions")
+        return "<table>%s</table>" % "".join(
+            "<tr>%s</tr>" % "".join("<td>%s</td>" % value for value in row)
+            for row in rows)
 
     def create(self, connection, table, data):
         if table == "products":
@@ -2090,7 +2148,8 @@ class Client(object):
                                     data.get("sku"), detail))
         else:
             self.app.add_jurisdiction(connection, data["code"], data["name"],
-                                      data["default_rate"])
+                                      data["default_rate"],
+                                      data.get("rates") or "")
         return Response(302, "", {"Location": "/" + table})
 
     def customers(self, connection, parts, method, data):
@@ -2125,7 +2184,7 @@ class Client(object):
             raise LookupError(jurisdiction)
         rate = decimal.Decimal(found[2])
         if VERSION == 2:
-            json.loads(found[3] if MODE == "fragile" else found[3] or "{}")
+            json.loads(found[4] if MODE == "fragile" else found[4] or "{}")
         rules = [(kind, sku, json.loads(detail)) for kind, sku, detail
                  in connection.execute("SELECT kind, sku, detail FROM rules")]
         net = []
@@ -2201,8 +2260,8 @@ def create_app(database):
 '''
 
 # The faults the data upgrade must catch at version 2, and what each loses.
-UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "fragile",
-                  "refusing")
+UPGRADE_FAULTS = ("unmigrated", "dropping", "rewriting", "rerating",
+                  "fragile", "refusing")
 
 
 def plant_upgrade(where, version, mode):
@@ -2257,6 +2316,12 @@ def upgrade_self_checks(scratch):
          faults["rewriting"].get("passed") is False
          and any("no longer reads the same" in failure for failure in
                  faults["rewriting"].get("failures") or [])),
+        ("a listed field changed by the migration, no invoice priced by it, "
+         "fails the upgrade",
+         faults["rerating"].get("passed") is False
+         and faults["rerating"].get("failures") == [
+             "/jurisdictions no longer shows 'standard=0.2,reduced=0.05' "
+             "for UP"]),
         ("old invoices that break on the new field fail the upgrade",
          faults["fragile"].get("passed") is False
          and any("/invoices/" in failure for failure in
