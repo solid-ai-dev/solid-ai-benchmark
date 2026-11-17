@@ -41,7 +41,8 @@ import lib  # noqa: E402
 from generate_arm import RECORDED, record_path  # noqa: E402
 from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
                      ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
-                     ROUND5E_ARMS, SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING,
+                     ROUND5E_ARMS, SCORABLE, SECTIONS_INTO, TEMPLATES_ENV,
+                     VENDORED, VOIDING,
                      TrialError, canonical, git, reach, read_transcripts,
                      read_change_prompt, recorded_round,
                      registration_digest, scoring_area, split_name,
@@ -110,7 +111,15 @@ CONTRASTS = (("short", "none"), ("hybrid", "none"), ("hand", "none"),
              ("lazyskills", "lazyref"),
              ("lazyref", "skills"), ("lazyskills", "reference"),
              ("lazyref", "hand"), ("lazyskills", "hand"),
-             ("lazyref", "short"), ("lazyskills", "short"))
+             ("lazyref", "short"), ("lazyskills", "short"),
+
+             # Round 6 (C1): each new arm against none; the check loop,
+             # lazyref against itself before the change; and the section
+             # files against the arms whose rules they repackage, lazyref
+             # read whole on demand and reference read up front.
+             ("lazysections", "none"), ("lazyrefold", "none"),
+             ("lazyref", "lazyrefold"),
+             ("lazysections", "lazyref"), ("lazysections", "reference"))
 
 # Declared before the run. "up" improves upward, "down"
 # improves downward, "neutral" is reported without a verdict.
@@ -1973,6 +1982,15 @@ def write_report(root, trials, table, results, seed, out_dir,
                                      margins_of(trials), uses, iso))
         lines.append("")
 
+    # A named round reads its on-demand arms' use of their maps too, with
+    # no pilot hypothesis beside it.
+    if named_round(trials) is not None:
+        uses = report_uses(root, trials) if uses is None else uses
+        if uses and map_use_rows(trials, uses):
+            lines.extend(map_use_lines(trials, uses, "## Use of the map",
+                                       h7=False))
+            lines.append("")
+
     lines.append("## Raw numbers, per trial")
     lines.append("")
     lines.append("| Metric | %s |" % " | ".join(names))
@@ -2226,6 +2244,10 @@ PLAIN_ARMS = {
                "read when that work starts",
     "lazyskills": "the same map, each template loaded as a skill when that "
                   "work starts",
+    "lazysections": "a short file that maps each topic to a small file of "
+                    "its rules, read when the work first touches it",
+    "lazyrefold": "the same map as lazyref, at the templates from before "
+                  "the one check command",
 }
 
 # Each radar axis in plain words, as a sentence names it.
@@ -3147,6 +3169,12 @@ TEMPLATE_PATH = re.compile(re.escape(VENDORED["into"] + "/")
 TEMPLATE_OPERAND = re.compile(re.escape(VENDORED["into"] + "/")
                               + r"(templates/[\w./*?\[\]-]+)")
 
+# A section file named in an operand, by its path in the workspace: the
+# `lazysections` arm's map names each so, and a read under any directory
+# above it, the workspace's own included, reads the same file.
+SECTION_OPERAND = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                             + r"[\w./*?\[\]-]+)")
+
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
@@ -3350,11 +3378,11 @@ def shell_writes(command):
     return first_writing_command(command) is not None
 
 
-def shell_reads(command, known=()):
+def shell_reads(command, known=(), operand=TEMPLATE_OPERAND):
     """The templates a shell command reads, as (index of its simple
     command, template) in order: every one a reading command names under
-    the vendored copy, a wildcard operand standing for each template of the
-    map it matches."""
+    the vendored copy, or as `operand` names one, a wildcard operand
+    standing for each template of the map it matches."""
     found = []
     directory = ""
     commands = simple_commands(command, keep_quotes=True)
@@ -3371,19 +3399,19 @@ def shell_reads(command, known=()):
         templates = []
         for token in itertools.chain.from_iterable(map(brace_expanded,
                                                        tokens)):
-            matched = TEMPLATE_OPERAND.findall(token)
+            matched = operand.findall(token)
 
             # A path with no vendored copy in it may be relative to the
             # directory an earlier command of the call moved into.
             if not matched and directory and not token.startswith("-"):
-                matched = TEMPLATE_OPERAND.findall(posixpath.normpath(
+                matched = operand.findall(posixpath.normpath(
                     posixpath.join(directory, token.strip("'\""))))
-            for operand in matched:
-                if any(mark in operand for mark in "*?["):
+            for path in matched:
+                if any(mark in path for mark in "*?["):
                     templates.extend(template for template in known
-                                     if glob_matches(operand, template))
-                elif operand.endswith(".md"):
-                    templates.append(operand)
+                                     if glob_matches(path, template))
+                elif path.endswith(".md"):
+                    templates.append(path)
         return templates
     for index, (word, text) in enumerate(commands):
         words = [token for token in words_of(text)
@@ -3431,7 +3459,8 @@ def shell_reads(command, known=()):
         if word in SHELL_PROGRAMS:
             for piece in program_code(text, bodies).split("\n"):
                 found.extend((index, template) for _, template
-                             in shell_reads(unquoted(piece), known))
+                             in shell_reads(unquoted(piece), known,
+                                            operand))
             continue
         if word not in READ_COMMANDS:
             continue
@@ -3466,9 +3495,14 @@ def pattern_attached(token):
 
 def mapped_templates(arm):
     """What an arm's file points the agent at: the skills it carries, by
-    name, or the templates it vendors, by path; empty for an arm with
-    neither."""
+    name, its section files, by their path in the workspace, or the
+    templates it vendors, by path; empty for an arm with none of them."""
     entry = ARMS.get(arm) or {}
+    if entry.get("sections"):
+        folder = os.path.join(ARMS_DIR, entry["sections"])
+        return sorted("%s/%s" % (SECTIONS_INTO, os.path.relpath(
+            os.path.join(base, name), folder).replace(os.sep, "/"))
+            for base, _, names in os.walk(folder) for name in names)
     if entry.get("skills"):
         folder = os.path.join(ARMS_DIR, entry["skills"])
         return sorted(os.listdir(folder)) if os.path.isdir(folder) else []
@@ -3548,7 +3582,8 @@ def map_use(files, arm, templates=None, delegated=()):
     """How one trial used what its file points at, from its transcripts:
     each template read from the vendored copy or loaded as a skill, as
     (turn, template) in order, the turn of the trial's first write to a
-    file of its own, or None, and how many of the uses a subagent made.
+    file of its own, or None, and how many of the uses a subagent made. A
+    section file counts as a template, by its path in the workspace.
 
     A subagent's transcript, in `delegated`, is read after the session's,
     its calls charged to the turn of the session's line it points back to,
@@ -3559,6 +3594,10 @@ def map_use(files, arm, templates=None, delegated=()):
     known = set(mapped_templates(arm) if templates is None else templates)
     marker = VENDORED["into"] + "/"
     named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
+    reads = entry.get("vendor") or entry.get("sections")
+    if entry.get("sections"):
+        named = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                           + r"[\w./-]+\.md)")
 
     def mapped(templates):
         """Those of the templates that are on the arm's map."""
@@ -3599,14 +3638,17 @@ def map_use(files, arm, templates=None, delegated=()):
         # writing one came before the write.
         if name in SHELLS:
             writes_at = first_writing_command(command)
-        if name in SHELLS and entry.get("vendor"):
-            for index, template in shell_reads(command, sorted(known)):
+        if name in SHELLS and reads:
+            for index, template in shell_reads(
+                    command, sorted(known),
+                    SECTION_OPERAND if entry.get("sections")
+                    else TEMPLATE_OPERAND):
                 if template in known or not known:
                     found.append(template)
                     if first_write is None and (writes_at is None
                                                 or index < writes_at):
                         before.add(template)
-        elif name == "Read" and entry.get("vendor"):
+        elif name == "Read" and reads:
             path = str(given.get("file_path") or "").replace("\\", "/")
             found = mapped(named.findall(path))
         elif name == "Skill" and entry.get("skills"):
@@ -3622,6 +3664,15 @@ def map_use(files, arm, templates=None, delegated=()):
     return {"uses": uses, "first_write": first_write,
             "before_write": sorted(before) if first_write is not None
             else None, "by_subagent": by_subagent}
+
+
+def report_uses(root, trials):
+    """The map uses a report reads: every trial's, wherever the run holds an
+    arm whose file points at a map, named round or not; None where it holds
+    none."""
+    if not any(mapped_templates(arm_of(name)) for name in trials):
+        return None
+    return map_uses(root, trials)
 
 
 def map_uses(root, trials):
@@ -3730,10 +3781,10 @@ def map_use_detail(trials, uses):
     return lines
 
 
-def map_use_lines(trials, uses):
-    """The use-of-the-map table and the note beside H7."""
+def map_use_lines(trials, uses, heading="### Use of the map", h7=True):
+    """The use-of-the-map table and, with `h7`, the note beside H7."""
     rows = map_use_rows(trials, uses)
-    lines = ["### Use of the map", "",
+    lines = [heading, "",
              "From each trial's transcript: the templates it read from the "
              "vendored copy or loaded as skills, counted once each, the "
              "turn the first happened at, and how many came before the "
@@ -3754,7 +3805,7 @@ def map_use_lines(trials, uses):
             row["arm"], row["trials"], row["total"], shown(row["read"]),
             shown(row["before"]), shown(row["first"], 0), row["up_front"],
             row["wrote"]))
-    note = h7_note(rows)
+    note = h7_note(rows) if h7 else None
     if note:
         lines.extend(["", "Beside H7: %s" % note])
     lines.append("")
@@ -4542,6 +4593,40 @@ def round5e_checks():
            len(mapped_templates("lazyref")))
     checks.append(("an arm's map is its skills or its vendored chain, and the "
                    "bare arm has none", got == ([], 13, 13), got))
+
+    # The sections arm's map is its section files, by their path in the
+    # workspace, and a Read or a shell read of one is a use: by its path,
+    # through a wildcard, or relative to a directory moved into.
+    sections = mapped_templates("lazysections")
+    folder = tempfile.mkdtemp(prefix="efficacy-report-sections-")
+    planted = os.path.join(folder, "sections.jsonl")
+    static = "%s/base-quality/static-checks.md" % SECTIONS_INTO
+    contract = "%s/backend-api/api-contract.md" % SECTIONS_INTO
+    first = "%s/backend-api/api-first.md" % SECTIONS_INTO
+    naming = "%s/base-quality/naming.md" % SECTIONS_INTO
+    with io.open(planted, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(line("assistant", "c1", call(
+            "Read", file_path="C:\\pen\\%s" % static.replace("/", "\\"))))
+        handle.write(line("assistant", "c2", call(
+            "Bash", command="cat %s/backend-api/api-*.md" % SECTIONS_INTO)))
+        handle.write(line("assistant", "c3", call("Write", file_path="x.py")))
+        handle.write(line("assistant", "c4", call(
+            "Bash", command="cd %s && head base-quality/naming.md"
+            % SECTIONS_INTO)))
+        handle.write(line("assistant", "c5", call(
+            "Read", file_path="/pen/%s/templates/core/quality.md" % into)))
+    used = map_use([planted], "lazysections", sections)
+    shutil.rmtree(folder, ignore_errors=True)
+    wanted = {"uses": [(1, static), (2, contract), (2, first), (4, naming)],
+              "first_write": 3,
+              "before_write": sorted([static, contract, first]),
+              "by_subagent": 0}
+    checks.append(("the sections arm's map is its section files, and a Read "
+                   "or a shell read of one counts as a use",
+                   len(sections) > 1 and static in sections
+                   and all(path.startswith(SECTIONS_INTO + "/")
+                           for path in sections)
+                   and used == wanted, used))
 
     # Two arms better on two rows, the cheaper first; one out on task
     # success; three held, by cost; the fifth in rank stays out of round 6.
@@ -9005,6 +9090,92 @@ def cross_checks(seed):
     ]
 
 
+def c1_contrast_checks(seed):
+    """A run of round 6's new arms alone reads each against the bare arm:
+    it has declared contrasts, and its report says each approach in plain
+    words."""
+    trials = {trial_name(arm, block): {
+        "scores": {}, "judge": None, "security": None, "round": "C1",
+        "change": {"suite_revision": "any-revision",
+                   "change_suite": {"value": 0.5 + block / 100.0,
+                                    "missing": None}}}
+        for arm in ("none", "lazysections", "lazyrefold")
+        for block in range(1, 4)}
+    active = active_contrasts(trials)
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-c1-contrasts-")
+    try:
+        text = "\n".join(plain_report_lines(scratch, trials, table, results,
+                                            {}, "appendix.md", 3))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return [
+        ("a run of round 6's new arms reads each against none, in plain "
+         "words", ("lazysections", "none") in active
+         and ("lazyrefold", "none") in active
+         and "### `lazysections`" in text and "### `lazyrefold`" in text
+         and all(PLAIN_ARMS.get(arm) for arm in ("lazysections",
+                                                 "lazyrefold")), active),
+    ]
+
+
+def named_map_use_checks(seed):
+    """A named round's report reads its on-demand arms' use of their maps:
+    a planted C1 run whose `lazysections` trial read two section files
+    before its first write prints that arm's row, through the same reading
+    of the root `main()` makes."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-named-map-use-")
+    workspace = os.path.join(scratch, "pen", "lazysections-1")
+    folder = os.path.join(scratch, "home", ".claude", "projects",
+                          re.sub(r"[^A-Za-z0-9]", "-",
+                                 os.path.abspath(workspace)))
+    os.makedirs(folder)
+    first = "%s/base-quality/static-checks.md" % SECTIONS_INTO
+    second = "%s/base-quality/naming.md" % SECTIONS_INTO
+    calls = [("Read", {"file_path": "%s/%s" % (workspace, first)}),
+             ("Bash", {"command": "cat %s" % second}),
+             ("Write", {"file_path": "%s/app.py" % workspace})]
+    with io.open(os.path.join(folder, "session.jsonl"), "w",
+                 encoding="utf-8", newline="\n") as handle:
+        for turn, (name, given) in enumerate(calls, 1):
+            handle.write(json.dumps({"type": "assistant", "message": {
+                "id": "m%d" % turn, "content": [{
+                    "type": "tool_use", "id": "t%d" % turn, "name": name,
+                    "input": given}]}}) + "\n")
+    with io.open(os.path.join(scratch, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"round": "C1", "trials": [{
+            "round": "C1", "task": "build", "arm": "lazysections",
+            "block": 1, "trial": 1, "outcome": "completed",
+            "workspace": workspace,
+            "started_at": "2000-01-01T00:00:00"}]}, handle)
+    trials = planted_change_run("any-revision")
+    trials["lazysections-1"] = {"scores": {}, "judge": None,
+                                "security": None, "change": None}
+    for trial in trials.values():
+        trial["round"] = "C1"
+    table = collect(trials)
+    results = contrasts(table, seed, crossed_labels(trials))
+    target = write_report(scratch, trials, table, results, seed,
+                          out_dir=os.path.join(scratch, "out"),
+                          uses=report_uses(scratch, trials))
+    with io.open(target[:-len(".md")] + "-record.md",
+                 encoding="utf-8") as handle:
+        text = handle.read()
+    shutil.rmtree(scratch, ignore_errors=True)
+    row = next((line for line in text.splitlines()
+                if line.startswith("| lazysections | 1 |")), None)
+    total = len(mapped_templates("lazysections"))
+    return [
+        ("a named round's report prints its sections arm's use of the map",
+         "## Use of the map" in text and "Beside H7" not in text
+         and row == "| lazysections | 1 | %d | 2.0 | 2.0 | 1 | 0 of 1 |"
+         % total and "| lazysections-1 | 3 | 0 | 1: %s, 2: %s |"
+         % (first, second) in text, row),
+    ]
+
+
 def documents_checks(seed):
     """A run writes three documents: a plain report with the radars and a
     verdict per approach naming its deciding measures, an appendix of three
@@ -9202,6 +9373,8 @@ def self_test(seed):
     checks.extend(withdrawal_checks(seed))
     checks.extend(executive_checks(seed))
     checks.extend(documents_checks(seed))
+    checks.extend(named_map_use_checks(seed))
+    checks.extend(c1_contrast_checks(seed))
     checks.extend(cross_checks(seed))
     checks.extend(exclusion_checks())
     checks.extend(round5_checks())
@@ -9419,7 +9592,7 @@ def main(argv):
     iso = (iso_reading(trials, options.seed, withdrawn,
                        iso_axes_of(trials, options.round6_targets))
            if iso_rules(trials) or posthoc_iso else None)
-    uses = map_uses(options.root, trials) if is_round5e(trials) else None
+    uses = report_uses(options.root, trials)
     target = write_report(options.root, trials, table, results, options.seed,
                           out_dir, withdrawn, check, iso, uses)
 

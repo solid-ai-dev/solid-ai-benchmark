@@ -167,7 +167,7 @@ when:
 | -- | ---- | ---------- |
 | FR-12-01 | Self-test | `report.py` "a contrast crossing rounds carries no verdict and counts nowhere"<br>`report.py` "a comparison across rounds reads as not given, not too few runs" |
 | FR-12-02 | Self-test | `report.py` "a contrast across rounds is unpaired, with a verdict"<br>`report.py` "a round-5d run reads H4 against a reused `none`, unpaired"<br>`report.py` "an unpaired contrast leaves out two trials, not blocks"<br>`report.py` "a contrast crosses rounds where its arms ran in different roots, reused or not"<br>`reuse.py` "a trial copied on keeps the root it ran in as its origin"<br>`reuse.py` "a quality reading comes along with its trial" |
-| FR-12-03 | Self-test | `report.py` "it prints every declared contrast its arms ran"<br>`report.py` "a three-arm run prints only its own contrasts" |
+| FR-12-03 | Self-test | `report.py` "it prints every declared contrast its arms ran"<br>`report.py` "a three-arm run prints only its own contrasts"<br>`report.py` "a run of round 6's new arms reads each against none, in plain words" |
 | FR-12-04 | Self-test | `report.py` "round 5 reports the files it supersedes without a verdict" |
 | FR-12-05 | Self-test | `report.py` "the report links its appendix, and the appendix the record"<br>`report.py` "the appendix holds what produced the results, the radar's axes and the verdict vector, and nothing else" |
 | FR-12-06 | Self-test | `report.py` "the radar draws a panel per arm, with the bare ring, in both themes"<br>`report.py` "an axis is better minus worse over its rows with a verdict, None without one"<br>`report.py` "the summary is the radar, one image per theme" |
@@ -210,6 +210,9 @@ when:
 | FR-13-19 | Self-test | `report.py` "a named round is refused until its registration document is on main before its first trial"<br>`report.py` "a trial reused within its named round counts toward when the round began" |
 | FR-13-20 | Self-test | `archive.py` "a C1 change task's score changed in the archive fails the verify" |
 | FR-13-21 | Self-test | `reuse.py` "the readings are filed under the word and name their origin"<br>`reuse.py` "a quality reading comes along with its trial"<br>`reuse.py` "the judgings keep their labels and the map is theirs alone" |
+| FR-13-22 | Self-test | `generate_arm.py` "the section files hold every rule block the inline root does, and no other"<br>`generate_arm.py` "the sections map names every section file once, under .agents/sections/"<br>`generate_arm.py` "a rule dropped from a section file, or a file the map does not name, is reported"<br>`harness.py` "the lazysections arm's files land where its map names them, out of the index"<br>`report.py` "the sections arm's map is its section files, and a Read or a shell read of one counts as a use"<br>`report.py` "a named round's report prints its sections arm's use of the map" |
+| FR-13-23 | Self-test | `generate_arm.py` "lazyref and lazyrefold differ by the check-loop commit's lines alone, all in its section"<br>`generate_arm.py` "a line changed besides the commit's, one of its lines missing, or one outside its section is reported"<br>`generate_arm.py` "a lazyref committed at another ref than the check-loop commit is reported"<br>`harness.py` "round 6's lazyrefold vendors at its own recorded ref, lazysections vendors nothing" |
+| FR-13-24 | Self-test | `generate_arm.py` "no on-demand arm tells the agent to read everything at startup"<br>`generate_arm.py` "a root telling the agent to read everything at the start is caught" |
 
 ## 14 One run at a time
 
