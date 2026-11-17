@@ -22,6 +22,8 @@
   - **Harness:** `harness.py`, which runs the trials.
   - **Scorer:** `score.py`, which scores a frozen build.
   - **Security reader:** `security.py`, which runs the probes.
+  - **Quality reader:** `quality.py`, which runs the reliability, performance
+    and portability probes.
   - **Judge:** `judge.py`, which bundles a build and has a model score it.
   - **Report:** `report.py`, which reads a round and writes its report.
   - **Archive:** `archive.py`, which carries a round to the private archive.
@@ -209,8 +211,19 @@
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-14-01 | The benchmark shall refuse a second scoring, judging or security run that finds a live claim on its root. | Scorer, Judge, Security reader |
+| FR-14-01 | The benchmark shall refuse a second scoring, judging, security or quality run that finds a live claim on its root. | Scorer, Judge, Security reader, Quality reader |
 | FR-14-02 | The benchmark shall take over a claim naming a process that has ended, and say so. | Harness |
+
+### 15 Quality probes
+
+| ID | Requirement | Delivered by |
+| -- | ----------- | ------------ |
+| FR-15-01 | The benchmark shall fail each of the fuzz, concurrent-write, 500-line, N+1 and co-existence probes on an app planted with the fault it guards against, and no other probe there, and pass every probe on an app built to pass them; the 500-line probe passes only where the invoice previews 2xx, saves and renders 2xx, its JSON export answers 2xx and lists all 500 lines in order, each a well-formed record, with a finite, positive total, and its first 100 lines, saved alone, export a total a fifth of it within a cent; pages are read for answering, never for the amounts they show; the co-existence probe reads a database opened by a `file:` URI as the file it names, fails where either instance's product list does not answer 2xx, and fails a build that, at any time in the run, opens to write a file outside the workspace and the reader's own database root, a database opened read-only by a `mode=ro` URI being no write, each such write filed as it happens so a run killed later keeps it; each malformed request is sent to a fresh instance of its own, signed in afresh, and one whose form page does not answer 200 fails as unreached; and the concurrent writes run last, on a fresh instance of their own, a writer the app hangs failing them and stopping the run there, every reading before it kept. | Quality reader |
+| FR-15-02 | The benchmark shall read every quality probe signed in as the seeded administrator, through the sign-in form's hidden fields however they are quoted, each post carrying the hidden fields of the form whose action, or one of whose submit controls' `formaction`, it is sent to, or else the page's first of each name, every redirect resolved against its request as a browser resolves it, the sign-in holding only where the dashboard then answers 200, and never measure a request the sign-in turns away with its redirect, a 401, or a 403 to a request that carried its token. | Quality reader |
+| FR-15-03 | The benchmark shall count as lost, reading failed, a quality probe the trial keeps from running, by not installing, not booting, not signing in or not finishing in time, and as missing one it could not run itself. | Quality reader |
+| FR-15-04 | The benchmark shall record the latency as two repeats of the 95th percentile over 30 requests to the main routes, with no pass threshold until one is calibrated. | Quality reader |
+| FR-15-05 | The benchmark shall read portability on Python 3.14, the trial installed, booted and serving a signed-in page there, and leave it missing where no Python 3.14 is found. | Quality reader |
+| FR-15-06 | The benchmark shall read the quality probes in a fresh environment per trial on the spec's Python, and remove every environment once it is read; a trial whose source tree is not present has every probe missing. | Quality reader |
 
 ## Quality requirements
 
