@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import shutil
 import signal
@@ -1884,6 +1885,15 @@ def read_fixtures(entry, directory):
             raise TrialError("fixture %s's tarball %s has sha256 %s, and the "
                              "manifest lists %s"
                              % (trial, tarball, digest, fixture.get("sha256")))
+
+        # Read whole before any trial, so a fixture no change task could
+        # start from refuses the run rather than its trials one by one.
+        try:
+            with tarfile.open(tarball) as archive:
+                fixture_members(archive, tarball)
+        except (OSError, tarfile.TarError) as error:
+            raise TrialError("fixture %s's tarball %s cannot be read: %s"
+                             % (trial, tarball, error))
         fixtures.append(dict(fixture, tarball=tarball))
     return sorted(fixtures, key=lambda fixture: split_name(fixture["trial"])[1])
 
@@ -2019,28 +2029,64 @@ def kept_from_fixture(relative, environments):
                 or lowered[-1].endswith(FIXTURE_DROPPED_SUFFIXES))
 
 
+def link_target(member):
+    """Where a link member points, as a path relative to the tree's top, or
+    None where it points out of the tree or at an absolute path."""
+    if member.islnk():
+        target = posixpath.normpath(member.linkname)
+    elif member.linkname.startswith("/") or member.linkname[1:2] == ":":
+        return None
+    else:
+        target = posixpath.normpath(posixpath.join(
+            posixpath.dirname(member.name), member.linkname))
+    return None if target == ".." or target.startswith("../") else target
+
+
+def fixture_members(archive, tarball):
+    """The members of a fixture's tree its change tasks keep, renamed to
+    the tree's top; raises where the tree cannot be kept whole."""
+    members = archive.getmembers()
+    tops = {member.name.split("/")[0] for member in members}
+    if len(tops) != 1:
+        raise TrialError("%s does not hold one directory: %s"
+                         % (tarball, ", ".join(sorted(tops))))
+    prefix = tops.pop() + "/"
+    inside = [member for member in members
+              if member.name.startswith(prefix)
+              and (member.isfile() or member.isdir() or member.issym()
+                   or member.islnk())]
+    for member in inside:
+        member.name = member.name[len(prefix):]
+        if member.islnk() and member.linkname.startswith(prefix):
+            member.linkname = member.linkname[len(prefix):]
+
+    # A virtualenv is known by the file every one carries at its root.
+    environments = {member.name.rpartition("/")[0] for member in inside
+                    if member.isfile()
+                    and member.name.rpartition("/")[2] == "pyvenv.cfg"}
+    environments.discard("")
+    kept = [member for member in inside
+            if kept_from_fixture(member.name, environments)]
+
+    # A link the build froze stays where what it names stays too. Dropped,
+    # it would leave code or tests reached through it missing; kept while
+    # naming something outside what stays, it would dangle, or hand the
+    # trial what its workspace was cleaned of. Either makes the fixture
+    # unusable, which is said rather than mended.
+    names = {member.name for member in kept}
+    for member in kept:
+        if (member.issym() or member.islnk()) \
+                and link_target(member) not in names:
+            raise TrialError("fixture %s is unusable: %s links to %s, "
+                             "outside the code and tests its change tasks "
+                             "keep" % (tarball, member.name, member.linkname))
+    return kept
+
+
 def unpack_fixture(tarball, target):
     """Unpack the code and tests of a fixture's tree into `target`."""
     with tarfile.open(tarball) as archive:
-        members = archive.getmembers()
-        tops = {member.name.split("/")[0] for member in members}
-        if len(tops) != 1:
-            raise TrialError("%s does not hold one directory: %s"
-                             % (tarball, ", ".join(sorted(tops))))
-        prefix = tops.pop() + "/"
-        inside = [member for member in members
-                  if member.name.startswith(prefix)
-                  and (member.isfile() or member.isdir())]
-        for member in inside:
-            member.name = member.name[len(prefix):]
-
-        # A virtualenv is known by the file every one carries at its root.
-        environments = {member.name.rpartition("/")[0] for member in inside
-                        if member.isfile()
-                        and member.name.rpartition("/")[2] == "pyvenv.cfg"}
-        environments.discard("")
-        kept = [member for member in inside
-                if kept_from_fixture(member.name, environments)]
+        kept = fixture_members(archive, tarball)
         archive.extractall(target, members=kept, filter="data")
 
 
@@ -2069,6 +2115,9 @@ def prepare_fixture_workspace(arm, block, root, fixture, spec):
     os.makedirs(workspace)
     try:
         unpack_fixture(fixture["tarball"], workspace)
+    except TrialError:
+        remove_tree(pen_of(workspace))
+        raise
     except (OSError, tarfile.TarError) as error:
         remove_tree(pen_of(workspace))
         raise TrialError("could not unpack %s: %s"
@@ -4548,7 +4597,70 @@ def fixture_checks(scratch):
     checks.append(("a fixture whose tarball differs from its listed hash is "
                    "refused, at the start and at each trial",
                    mismatched and swapped))
+    checks += link_checks(scratch, root, entry, listing_as, refused)
+    listing_as(listed)
     return checks + fixture_run_checks(scratch, tarballs)
+
+
+def link_checks(scratch, root, entry, listing_as, refused):
+    """A fixture's links stay where what they name stays, and one naming
+    anything else makes the fixture unusable, at the start and at a trial."""
+    linked = os.path.join(scratch, "linked")
+    os.makedirs(linked)
+
+    def plant(name, links):
+        path = os.path.join(linked, name + ".tar")
+        with tarfile.open(path, "w") as archive:
+            for relative, data in (("tariff/app.py", b"built = True\n"),
+                                   ("tests/test_app.py", b"x = 1\n"),
+                                   (".venv/pyvenv.cfg", b"home = x\n")):
+                info = tarfile.TarInfo("%s/%s" % (name, relative))
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+            for relative, kind, target in links:
+                info = tarfile.TarInfo("%s/%s" % (name, relative))
+                info.type, info.linkname = kind, target
+                archive.addfile(info)
+        return {"trial": name, "sha256": spec_digest(path), "tarball": path,
+                "baseline": {"build_suite": 1.0}}
+
+    # A symbolic link and a hard link to code and tests that stay.
+    whole = plant("none-4", [("tariff/alias.py", tarfile.SYMTYPE, "app.py"),
+                             ("tests/again.py", tarfile.LNKTYPE,
+                              "none-4/tests/test_app.py")])
+    try:
+        workspace, _, _ = prepare_fixture_workspace("none", 4, root, whole,
+                                                    SPEC)
+        with io.open(os.path.join(workspace, "tariff", "alias.py"),
+                     encoding="utf-8") as handle:
+            alias = handle.read()
+        with io.open(os.path.join(workspace, "tests", "again.py"),
+                     encoding="utf-8") as handle:
+            again = handle.read()
+        kept = alias == "built = True\n" and again == "x = 1\n"
+    except (TrialError, OSError):
+        kept = False
+
+    # A link out of the tree, an absolute one, and one into what the
+    # cleaning drops: each fixture is unusable, before a trial and at one.
+    refusals = []
+    for block, target in ((5, "../../outside.py"), (6, "/etc/passwd"),
+                          (7, "../.venv/pyvenv.cfg")):
+        bad = plant("none-%d" % block,
+                    [("tariff/out.py", tarfile.SYMTYPE, target)])
+        listing_as([{key: bad[key]
+                     for key in ("trial", "sha256", "baseline")}])
+        try:
+            prepare_fixture_workspace("none", block, root, bad, SPEC)
+            at_trial = False
+        except TrialError as error:
+            at_trial = ("unusable" in str(error) and not os.path.exists(
+                os.path.join(root, "change-none-%d" % block)))
+        refusals.append(at_trial and refused(entry, linked))
+    return [("a fixture's links stay where what they name stays",
+             kept),
+            ("a fixture linking outside what its change tasks keep is "
+             "unusable, at the start and at a trial", refusals == [True] * 3)]
 
 
 def fenced_off(scratch, tarballs, trials, denied):
