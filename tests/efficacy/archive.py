@@ -582,9 +582,14 @@ def self_test():
                 "frozen": {"head": "h", "tarball": tarball}}], "change",
               identity={"round": "C1", "registration":
                         registration_digest(REGISTRATIONS["C1"])})
+    # A changed tree that installed and booted, so every axis of its task's
+    # radar reads its readings.
     dump_json(os.path.join(scoring_area(named), "scores-change",
                            "none-1.json"),
-              {"name": "none-1", "change_suite": {"value": 0.9}})
+              {"name": "none-1", "change_suite": {"value": 0.9},
+               "install": {"value": True, "missing": None},
+               "boot": {"value": {"factory": True, "index_status": 200},
+                        "missing": None}})
     dump_json(os.path.join(scoring_area(named), "quality-scores-change",
                            "none-1.json"),
               {"name": "none-1", "probes": {"data_upgrade": {
