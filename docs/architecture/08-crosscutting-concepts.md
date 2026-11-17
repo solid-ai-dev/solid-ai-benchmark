@@ -256,7 +256,7 @@ The other measures, run on every trial:
 | Measure | What it reads |
 | ------- | ------------- |
 | Install | `pip install .` in a clean virtualenv, `import tariff`, and the app serves `/` |
-| Accessibility | axe-core WCAG 2.1 AA violations |
+| Accessibility | axe-core rules of WCAG 2.1 A and AA violated, each by its id; axe's best-practice rules are kept apart and not counted (FR-06-07) |
 | HTML validity | Errors, less those on HTMX's `hx-*` attributes, which the spec requires and HTML lacks |
 | XSS and CSRF | One probe each |
 | Invoice builder | Response size and request count |
@@ -265,6 +265,12 @@ The other measures, run on every trial:
 | Size | App code's files and lines, apart from tests, docs and configuration |
 | Unasked artifacts | ADR, journal, CHANGELOG, PLAYBOOK, committed bytecode or databases |
 | Consistency | Each metric's spread across an arm's trials |
+
+Accessibility, HTML validity, XSS, CSRF and the invoice builder read the
+pages signed in as the seeded administrator. A page answered with the
+redirect to `/sign-in` is never measured: a form row the app keeps from
+running reads failed, a measured row missing, each with its reason
+(FR-06-06). Rounds 5 to 5e read them unsigned, on the redirect (#175).
 
 The adherence checklist:
 

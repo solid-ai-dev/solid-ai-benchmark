@@ -481,9 +481,18 @@ print(json.dumps(report))
 # routes, the CSRF refusal, the escaping of what a form stored.
 WEB_SCRIPT = r'''
 import json, os, re, sys, tempfile
+from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 PACKAGE = "tariff"
-report = {}
+USERNAME = "admin"
+PASSWORD = "web-probe-4d2a-Passphrase"
+REDIRECTS = (301, 302, 303, 307, 308)
+report = {"unread": {}, "lost": {}}
+
+# The seed reads the administrator's password from the environment, and may
+# seed lazily, so it is set before the package is imported.
+os.environ["TARIFF_ADMIN_PASSWORD"] = PASSWORD
 
 try:
     import importlib
@@ -497,6 +506,20 @@ except Exception as error:
     raise SystemExit(0)
 
 
+class Hidden(HTMLParser):
+    """Collects every hidden input, however its attributes are quoted."""
+
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.fields = {}
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if (tag == "input" and (attributes.get("type") or "").lower()
+                == "hidden" and attributes.get("name")):
+            self.fields[attributes["name"]] = attributes.get("value") or ""
+
+
 def hidden_fields(html):
     """Every hidden input in the page, which is where a CSRF token hides.
 
@@ -504,81 +527,151 @@ def hidden_fields(html):
     visible fields and leaves the rest -- so the probe carries whatever the
     form carries rather than guessing a name.
     """
-    fields = {}
-    for match in re.finditer(r'<input[^>]*type="hidden"[^>]*>', html,
-                             re.IGNORECASE):
-        tag = match.group(0)
-        name = re.search(r'name="([^"]+)"', tag)
-        value = re.search(r'value="([^"]*)"', tag)
-        if name:
-            fields[name.group(1)] = value.group(1) if value else ""
-    return fields
+    parser = Hidden()
+    parser.feed(html)
+    return parser.fields
+
+
+def gated(response):
+    """Whether a page was withheld for want of a sign-in: the redirect to
+    the sign-in form, or a refusal in its place."""
+    if response.status_code in (401, 403):
+        return True
+    if response.status_code not in REDIRECTS:
+        return False
+    return urlsplit(response.headers.get("Location", "")).path == "/sign-in"
+
+
+def unread(rows, reason):
+    for row in rows:
+        report["unread"][row] = reason
+
+
+def lost(rows, reason):
+    """Rows the application kept the probe from reading. A pass/fail row
+    reads failed, since a probe the application blocks is not one it
+    passes; a measured row stays unread, with the reason."""
+    for row in rows:
+        report["lost"][row] = reason
+        if row in FORM_ROWS:
+            report[row] = False
+        else:
+            report["unread"][row] = reason
 
 
 PAYLOAD = "<script>alert(1)</script>"
+FORM_ROWS = ("csrf_refused_without_token", "xss_inert")
+PRODUCT = {"unit_price": "1.00", "tax_category": "standard"}
 
+
+def listed(sku):
+    """Whether a product shows on the pages that list products."""
+    return any(sku in client.get(path).get_data(as_text=True)
+               for path in ("/products", "/invoices/new"))
+
+
+# Every page the probe reads sits behind the sign-in, so it signs in first,
+# the way the specification has the administrator do: the seeded account,
+# and the sign-in form's own hidden fields. The sign-in is the
+# specification's, so one that does not hold is the application's doing.
 try:
+    form = client.get("/sign-in").get_data(as_text=True)
+    body = {"username": USERNAME, "password": PASSWORD, "next": "/"}
+    body.update({name: value for name, value in hidden_fields(form).items()
+                 if name not in body})
+    report["sign_in_status"] = client.post("/sign-in", data=body).status_code
+    report["signed_in"] = client.get("/").status_code == 200
+except Exception as error:
+    report["signed_in"] = False
+    report["sign_in_error"] = repr(error)[:300]
+
+
+def form_probe():
+    """The CSRF and stored-payload readings, from the products form."""
     page = client.get("/products")
-    html = page.get_data(as_text=True)
-    token = hidden_fields(html)
     report["products_status"] = page.status_code
+    if gated(page):
+        lost(FORM_ROWS, "the products page asked for a sign-in")
+        return
+    token = hidden_fields(page.get_data(as_text=True))
 
-    # CSRF: the same body without the hidden fields must be refused, and the
-    # specification names the statuses.
-    bare = client.post("/products", data={"sku": "XSS-1", "name": PAYLOAD,
-                                          "unit_price": "1.00",
-                                          "tax_category": "standard"})
-    report["csrf_refused_without_token"] = bare.status_code in (400, 403)
-    report["csrf_status"] = bare.status_code
-
-    body = {"sku": "XSS-1", "name": PAYLOAD, "unit_price": "1.00",
-            "tax_category": "standard"}
+    # A post with the form's own token has to be stored first: only then
+    # does a refused post without one say anything about the token.
+    body = dict(PRODUCT, sku="XSS-1", name=PAYLOAD)
     body.update(token)
     created = client.post("/products", data=body, follow_redirects=True)
     report["create_status"] = created.status_code
+    if not listed("XSS-1"):
+        lost(FORM_ROWS, "a product posted with its token was not stored: %d"
+             % created.status_code)
+        return
 
     # The payload must come back inert on every page that can show a product
     # name. A page that renders it raw is the finding, not the one that
     # escapes it.
-    raw_pages = []
-    for path in ("/products", "/invoices/new"):
-        shown = client.get(path).get_data(as_text=True)
-        if PAYLOAD in shown:
-            raw_pages.append(path)
+    raw_pages = [path for path in ("/products", "/invoices/new")
+                 if PAYLOAD in client.get(path).get_data(as_text=True)]
     report["xss_raw_pages"] = raw_pages
     report["xss_inert"] = not raw_pages
+
+    # CSRF: the same post without the hidden fields must be refused, with a
+    # status the specification names, and must store nothing.
+    bare = client.post("/products", data=dict(PRODUCT, sku="CSRF-1",
+                                              name="no token"))
+    report["csrf_status"] = bare.status_code
+    report["csrf_refused_without_token"] = (bare.status_code in (400, 403)
+                                            and not listed("CSRF-1"))
+
+
+try:
+    form_probe()
 except Exception as error:
-    report["form_probe_error"] = repr(error)[:300]
+    lost(FORM_ROWS, "the application raised: %s" % repr(error)[:300])
+
+BUILDER_ROWS = ("builder_bytes", "builder_subrequests")
 
 try:
     builder = client.get("/invoices/new")
     html = builder.get_data(as_text=True)
-    report["builder_bytes"] = len(builder.get_data())
-
-    # Subresources the builder asks the browser to fetch. The specification
-    # allows one vendored script and no bundler, so this is a number with a
-    # stated expectation rather than a bare count.
-    requests = re.findall(r'(?:src|href)="(?!http|//|#|mailto)([^"]+)"', html)
-    assets = [r for r in requests if not r.endswith("/")
-              and "." in os.path.basename(r)]
-    report["builder_subrequests"] = len(assets)
-    report["builder_assets"] = assets[:20]
     report["builder_status"] = builder.status_code
-except Exception as error:
-    report["builder_probe_error"] = repr(error)[:300]
+    if gated(builder):
+        lost(BUILDER_ROWS, "the invoice builder asked for a sign-in")
+    else:
+        report["builder_bytes"] = len(builder.get_data())
 
-# Saved HTML for the validator, which runs outside this interpreter.
+        # Subresources the builder asks the browser to fetch. The
+        # specification allows one vendored script and no bundler, so this
+        # is a number with a stated expectation rather than a bare count.
+        requests = re.findall(r'(?:src|href)="(?!http|//|#|mailto)([^"]+)"',
+                              html)
+        assets = [r for r in requests if not r.endswith("/")
+                  and "." in os.path.basename(r)]
+        report["builder_subrequests"] = len(assets)
+        report["builder_assets"] = assets[:20]
+except Exception as error:
+    lost(BUILDER_ROWS, "the application raised: %s" % repr(error)[:300])
+
+# Saved HTML for the validator and axe, which run outside this interpreter.
+# The pages are saved only when every one of them is the page itself: one
+# that is the sign-in's redirect would be read in place of the app.
+PAGES = (("index", "/"), ("products", "/products"), ("rules", "/rules"),
+         ("jurisdictions", "/jurisdictions"), ("builder", "/invoices/new"))
 try:
-    target = sys.argv[1]
-    os.makedirs(target, exist_ok=True)
-    for label, path in (("index", "/"), ("products", "/products"),
-                        ("rules", "/rules"),
-                        ("jurisdictions", "/jurisdictions"),
-                        ("builder", "/invoices/new")):
-        response = client.get(path)
-        with open(os.path.join(target, label + ".html"), "wb") as handle:
-            handle.write(response.get_data())
-    report["saved_pages"] = True
+    answers = [(label, client.get(path)) for label, path in PAGES]
+    report["page_statuses"] = {label: response.status_code
+                               for label, response in answers}
+    asked = [label for label, response in answers if gated(response)]
+    if asked:
+        report["saved_pages"] = False
+        report["save_error"] = ("pages asked for a sign-in: %s"
+                                % ", ".join(asked))
+    else:
+        target = sys.argv[1]
+        os.makedirs(target, exist_ok=True)
+        for label, response in answers:
+            with open(os.path.join(target, label + ".html"), "wb") as handle:
+                handle.write(response.get_data())
+        report["saved_pages"] = True
 except Exception as error:
     report["saved_pages"] = False
     report["save_error"] = repr(error)[:300]
@@ -638,13 +731,15 @@ def html_errors(report):
             "messages": len(messages)}
 
 
-def html_validity(ctx, pages):
+def html_validity(ctx, pages, unsaved=None):
     """HTML validity over the pages the web probe saved.
 
     The validator needs a Java runtime. Where the machine has none the metric
     is missing and says so, which is the difference between valid HTML and
     unchecked HTML.
     """
+    if unsaved:
+        return ctx.absent(unsaved)
     binary = ctx.script("html5validator")
     if binary is None:
         return ctx.absent("html5validator is not installed")
@@ -686,41 +781,67 @@ def html_validity(ctx, pages):
                         raw=kept[:20], **extra)
 
 
-def accessibility(ctx, workspace, pages):
+# The rules of WCAG 2.1 at levels A and AA, by axe's tags. axe also runs its
+# best-practice rules by default, which are not WCAG and which every page
+# without a landmark fails; they are kept in the record and not counted.
+WCAG_TAGS = ("wcag2a", "wcag2aa", "wcag21a", "wcag21aa")
+
+
+# Runs inside the trial's environment, over the saved pages; it prints every
+# rule each page violates, with the rule's tags, so the counting stays here.
+AXE_SCRIPT = r'''
+import glob, json, os, sys
+try:
+    from playwright.sync_api import sync_playwright
+    from axe_playwright_python.sync_playwright import Axe
+except Exception as error:
+    print(json.dumps({'error': repr(error)[:200]}))
+    raise SystemExit(0)
+results = {}
+try:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        axe = Axe()
+        for path in sorted(glob.glob(os.path.join(sys.argv[1], '*.html'))):
+            page.goto('file://' + os.path.abspath(path))
+            report = axe.run(page)
+            results[os.path.basename(path)] = [
+                [rule['id'], rule['tags']]
+                for rule in report.response['violations']]
+        browser.close()
+except Exception as error:
+    print(json.dumps({'error': repr(error)[:200]}))
+    raise SystemExit(0)
+print(json.dumps({'violations': results}))
+'''
+
+
+def wcag_violations(found):
+    """Per page, the violated rules that are WCAG 2.1 A or AA, and the rest.
+
+    `found` maps a page to axe's violations, each its rule id and tags.
+    """
+    counted, ignored = {}, {}
+    for page, violations in sorted(found.items()):
+        counted[page] = sorted(rule for rule, tags in violations
+                               if set(tags) & set(WCAG_TAGS))
+        ignored[page] = sorted(rule for rule, tags in violations
+                               if not set(tags) & set(WCAG_TAGS))
+    return counted, ignored
+
+
+def accessibility(ctx, workspace, pages, unsaved=None):
     """axe-core violations at WCAG 2.1 AA, over the saved pages.
 
     Needs a browser binary. Absent one, the row is missing rather than clean:
     an accessibility score nobody measured is not a passing score.
     """
-    if not os.path.isdir(pages):
-        return ctx.absent("the web probe saved no pages to scan")
+    if unsaved or not os.path.isdir(pages):
+        return ctx.absent(unsaved or "the web probe saved no pages to scan")
     script = os.path.join(workspace, ".score-axe.py")
-    body = (
-        "import glob, json, os, sys\n"
-        "try:\n"
-        "    from playwright.sync_api import sync_playwright\n"
-        "    from axe_playwright_python.sync_playwright import Axe\n"
-        "except Exception as error:\n"
-        "    print(json.dumps({'error': repr(error)[:200]}))\n"
-        "    raise SystemExit(0)\n"
-        "results = {}\n"
-        "try:\n"
-        "    with sync_playwright() as playwright:\n"
-        "        browser = playwright.chromium.launch()\n"
-        "        page = browser.new_page()\n"
-        "        axe = Axe()\n"
-        "        for path in sorted(glob.glob(os.path.join(sys.argv[1],\n"
-        "                                                  '*.html'))):\n"
-        "            page.goto('file://' + os.path.abspath(path))\n"
-        "            report = axe.run(page)\n"
-        "            results[os.path.basename(path)] = report.violations_count\n"
-        "        browser.close()\n"
-        "except Exception as error:\n"
-        "    print(json.dumps({'error': repr(error)[:200]}))\n"
-        "    raise SystemExit(0)\n"
-        "print(json.dumps({'violations': results}))\n")
     with io.open(script, "w", encoding="utf-8") as handle:
-        handle.write(body)
+        handle.write(AXE_SCRIPT)
     outcome = ctx.run([ctx.python, script, pages], cwd=workspace)
     try:
         payload = json.loads(outcome["stdout"].strip().splitlines()[-1])
@@ -729,10 +850,14 @@ def accessibility(ctx, workspace, pages):
                           % (outcome["stderr"] or outcome["stdout"])[:200])
     if "error" in payload:
         return ctx.absent("axe could not run: %s" % payload["error"])
-    counts = payload.get("violations", {})
-    if not counts:
+    found = payload.get("violations", {})
+    if not found:
         return ctx.absent("axe scanned no pages")
-    return ctx.measured(sum(counts.values()), per_page=counts)
+    counted, ignored = wcag_violations(found)
+    return ctx.measured(sum(len(rules) for rules in counted.values()),
+                        per_page={page: len(rules)
+                                  for page, rules in counted.items()},
+                        rules=counted, best_practice=ignored)
 
 
 def web_quality(ctx, workspace):
@@ -754,9 +879,14 @@ def web_quality(ctx, workspace):
     if "error" in payload:
         return ctx.absent("the application would not boot for the web probe: "
                           "%s" % payload["error"], invocation=outcome["argv"])
+    unsaved = None
+    if not payload.get("saved_pages"):
+        unsaved = "the web probe saved no pages: %s" % payload.get(
+            "save_error", "no reason given")
     return ctx.measured(payload, invocation=outcome["argv"],
-                        html_validity=html_validity(ctx, pages),
-                        accessibility=accessibility(ctx, workspace, pages))
+                        html_validity=html_validity(ctx, pages, unsaved),
+                        accessibility=accessibility(ctx, workspace, pages,
+                                                    unsaved))
 
 
 # A build planted with one finding per design probe, so each probe's answer
@@ -902,6 +1032,179 @@ def total():
 }
 
 
+# A stand-in application for the web probe, importable without Flask. Every
+# page but the sign-in form sits behind the sign-in, as the specification
+# has it. `gated` signs in the seeded administrator, refuses a post without
+# its token and escapes what it shows; `locked` never signs anyone in, so
+# every page is the sign-in's redirect; `raw` signs in, takes a post without
+# a token and shows a stored name as it came; `unstored` signs in and
+# refuses every post, the one with its token too. The sign-in form quotes
+# its attributes singly. `refusing` never signs anyone in and answers 401 in
+# place of each page.
+FAKE_WEB_APP = '''import os
+
+MODE = "__MODE__"
+TOKEN = '<input type="hidden" name="csrf_token" value="t">'
+
+# The sign-in form quotes its attributes singly, which is valid HTML too.
+SIGN_IN_TOKEN = "<input type='hidden' name='csrf_token' value='t'>"
+PAGE = ('<!doctype html><html lang="en"><head><title>%s</title></head>'
+        '<body><main><h1>%s</h1>%s</main></body></html>')
+
+
+def escape(text):
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+class Response(object):
+    def __init__(self, status, body="", location=None):
+        self.status_code = status
+        self.headers = {"Location": location} if location else {}
+        self._body = body
+
+    def get_data(self, as_text=False):
+        return self._body if as_text else self._body.encode("utf-8")
+
+
+class Client(object):
+    def __init__(self, app):
+        self.app = app
+        self.signed = False
+
+    def get(self, path):
+        if path == "/sign-in":
+            return Response(200, PAGE % ("Sign in", "Sign in", "<form>"
+                                         + SIGN_IN_TOKEN + "</form>"))
+        if not self.signed and MODE == "refusing":
+            return Response(401, "sign in first")
+        if not self.signed:
+            return Response(302, location="/sign-in?next=" + path)
+        names = "".join("<li>%s %s</li>" % (sku, name if MODE == "raw"
+                                             else escape(name))
+                        for sku, name in self.app.products)
+        return Response(200, PAGE % (path, path, "<ul>%s</ul><form>%s</form>"
+                                     % (names, TOKEN)))
+
+    def post(self, path, data=None, follow_redirects=False):
+        data = data or {}
+        if path == "/sign-in":
+            if data.get("csrf_token") != "t":
+                return Response(400, "missing token")
+            if (MODE not in ("locked", "refusing")
+                    and data.get("password") == self.app.password):
+                self.signed = True
+                return Response(302, location=data.get("next") or "/")
+            return Response(200, "wrong username or password")
+        if not self.signed:
+            return Response(302, location="/sign-in")
+        if MODE != "raw" and data.get("csrf_token") != "t":
+            return Response(400, "missing token")
+        if MODE == "unstored":
+            return Response(400, "invalid")
+        self.app.products.append((data["sku"], data["name"]))
+        if follow_redirects:
+            return self.get("/products")
+        return Response(302, location="/products")
+
+
+class App(object):
+    def __init__(self, database):
+        self.password = os.environ.get("TARIFF_ADMIN_PASSWORD")
+        self.products = []
+        self.config = {}
+
+    def test_client(self):
+        return Client(self)
+
+
+def create_app(database):
+    return App(database)
+'''
+
+
+def web_readings(scratch):
+    """Run the web probe against the stand-in application in every mode."""
+    readings = {}
+    for mode in ("gated", "locked", "raw", "unstored", "refusing"):
+        workspace = os.path.join(scratch, "web-" + mode)
+        package = os.path.join(workspace, "tariff")
+        os.makedirs(package)
+        with io.open(os.path.join(package, "__init__.py"), "w",
+                     encoding="utf-8") as handle:
+            handle.write(FAKE_WEB_APP.replace("__MODE__", mode))
+        reading = web_quality(planted_context(), workspace)
+        pages = os.path.join(workspace, ".score-pages")
+        saved = {}
+        if os.path.isdir(pages):
+            for name in sorted(os.listdir(pages)):
+                with io.open(os.path.join(pages, name),
+                             encoding="utf-8") as handle:
+                    saved[name] = handle.read()
+        readings[mode] = (reading, saved)
+    return readings
+
+
+def web_checks(scratch):
+    """The web probe reads the pages behind the sign-in, or nothing."""
+    readings = web_readings(scratch)
+    gated, gated_pages = readings["gated"]
+    locked, locked_pages = readings["locked"]
+    raw, _ = readings["raw"]
+    values = {mode: reading.get("value") or {}
+              for mode, (reading, _) in readings.items()}
+    rows = ("csrf_refused_without_token", "xss_inert", "builder_bytes",
+            "builder_subrequests")
+    counted, ignored = wcag_violations({
+        "a.html": [["region", ["cat.keyboard", "best-practice"]],
+                   ["landmark-one-main", ["cat.semantics", "best-practice"]],
+                   ["image-alt", ["cat.text-alternatives", "wcag2a"]]],
+        "b.html": [["color-contrast", ["cat.color", "wcag2aa"]]],
+        "c.html": []})
+    return [
+        ("the web probe signs in and reads the pages behind it",
+         values["gated"].get("builder_status") == 200
+         and values["gated"].get("csrf_refused_without_token") is True
+         and values["gated"].get("xss_inert") is True
+         and sorted(gated_pages) == ["builder.html", "index.html",
+                                     "jurisdictions.html", "products.html",
+                                     "rules.html"]
+         and all("<main>" in page for page in gated_pages.values())),
+        ("a post without a token and a raw name are findings once signed in",
+         values["raw"].get("csrf_refused_without_token") is False
+         and values["raw"].get("xss_inert") is False
+         and raw["missing"] is None),
+        ("a refusal says nothing about the token until a post with it is "
+         "stored",
+         values["unstored"].get("csrf_refused_without_token") is False
+         and values["unstored"].get("xss_inert") is False
+         and "was not stored" in values["unstored"].get("lost", {}).get(
+             "csrf_refused_without_token", "")),
+        ("a sign-in that does not hold fails the form rows and measures "
+         "nothing",
+         values["locked"].get("signed_in") is False
+         and values["locked"].get("csrf_refused_without_token") is False
+         and values["locked"].get("xss_inert") is False
+         and sorted(values["locked"].get("lost", {})) == sorted(rows)
+         and all(row not in values["locked"] for row in rows[2:])
+         and sorted(values["locked"].get("unread", {})) == sorted(rows[2:])
+         and not locked_pages
+         and "asked for a sign-in" in (locked["accessibility"]["missing"]
+                                       or "")
+         and "asked for a sign-in" in (locked["html_validity"]["missing"]
+                                       or "")),
+        ("a page refused for want of a sign-in is withheld, not measured",
+         values["refusing"].get("signed_in") is False
+         and values["refusing"].get("xss_inert") is False
+         and "builder_bytes" not in values["refusing"]
+         and readings["refusing"][0]["accessibility"]["missing"]),
+        ("axe counts the WCAG 2.1 A and AA rules, not its best practice",
+         counted == {"a.html": ["image-alt"], "b.html": ["color-contrast"],
+                     "c.html": []}
+         and ignored["a.html"] == ["landmark-one-main", "region"]),
+    ]
+
+
 def planted_context(python=None, failing=None):
     """A scorer's context for the self-test: a real subprocess runner, or one
     that reports every command failed with `failing`."""
@@ -945,6 +1248,7 @@ def self_test():
         rootless = structure(planted_context(), workspace, [], seen)
         broken = structure(planted_context(failing="exited 1"), workspace,
                            roots, seen)
+        web = web_checks(workspace)
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
     facts = metric.get("value") or {}
@@ -1026,7 +1330,7 @@ def self_test():
         ("a probe that fails leaves its metric missing, with the command",
          broken["value"] is None and "exited 1" in broken["missing"]
          and broken.get("invocation")),
-    ]
+    ] + web
     for label, ok in checks:
         print("  %-62s %s" % (label, "ok" if ok else "FAILED"))
     passed = sum(1 for _, ok in checks if ok)

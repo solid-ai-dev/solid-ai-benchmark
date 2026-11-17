@@ -104,6 +104,8 @@
 | FR-06-03 | The benchmark shall count as lost, against the rate, a probe the trial keeps from running. | Security reader |
 | FR-06-04 | The benchmark shall leave the rate missing for a probe it could not run itself. | Security reader |
 | FR-06-05 | The benchmark shall show an unmeasured value as not measured. | Report |
+| FR-06-06 | The benchmark shall read the app's pages signed in as the seeded administrator, and never measure a page answered with the sign-in's redirect: a form row the app keeps from running reads failed, a measured row missing. | Scorer |
+| FR-06-07 | The benchmark shall count as accessibility violations only the rules of WCAG 2.1 levels A and AA, and keep each violated rule's id. | Scorer |
 
 ### 07 Tools and interpreter
 
