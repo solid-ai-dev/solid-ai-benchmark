@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import posixpath
 import re
 import shutil
 import signal
@@ -293,10 +294,11 @@ def rule_path(path):
     return "/" + full
 
 
-def reach_denials(root, workspace):
+def reach_denials(root, workspace, protected=()):
     """Read and Edit deny rules for what a trial may not reach that a path
-    names: this repository, the scoring area, and every entry of the run root
-    but the trial's own workspace and temporary directory.
+    names: this repository, the scoring area, every entry of the run root
+    but the trial's own workspace and temporary directory, and each
+    `protected` directory, such as the one its change task's fixture is in.
 
     The shell is not covered, since a deny rule matches a command's prefix
     and not the paths in it; the transcript scan reads what the shell sent.
@@ -316,6 +318,7 @@ def reach_denials(root, workspace):
         targets.append(source)
     targets += [os.path.join(root, name) for name in sorted(names)
                 if name != own]
+    targets += fenced_paths(protected)
     patterns = ["%s/**" % rule_path(target) for target in targets]
     patterns += ["%s/%s" % (rule_path(root), entry)
                  for entry in ("*.tar", "run-*.json")]
@@ -354,14 +357,16 @@ def kill_denials():
             for pattern in patterns for tool in SHELL_TOOLS]
 
 
-def trial_settings(home, root, workspace):
+def trial_settings(home, root, workspace, protected=()):
     """Write a trial's own settings file into the scratch home, which its
-    deny rules cover, and return its path."""
+    deny rules cover, and return its path; `protected` names directories
+    outside the run root it may not read either."""
     os.makedirs(home, exist_ok=True)
     path = os.path.join(home, "settings-%s.json"
                         % os.path.basename(os.path.abspath(workspace)))
     settings = dict(ISOLATED_SETTINGS,
-                    permissions={"deny": reach_denials(root, workspace)
+                    permissions={"deny": reach_denials(root, workspace,
+                                                       protected)
                                  + kill_denials()})
     with io.open(path, "w", encoding="utf-8") as handle:
         json.dump(settings, handle, indent=2)
@@ -1252,10 +1257,12 @@ def read_transcripts(home, workspace, since=None):
     return files, tool_calls(files)
 
 
-def reach(files, calls, workspace=None, temp=None, vendored=None):
+def reach(files, calls, workspace=None, temp=None, vendored=None,
+          protected=(), names=()):
     """The tool calls naming this repository or the hidden suite and, given
     the trial's workspace, the scoring area or any part of the run root other
-    than the trial's own workspace and temporary directory.
+    than the trial's own workspace and temporary directory, or any path
+    into a `protected` directory, or any of `names` as a path's component.
 
     Only what the agent sent is read, never what came back: a generated file
     names this repository, and reading it is not reaching for it. A trial
@@ -1275,12 +1282,16 @@ def reach(files, calls, workspace=None, temp=None, vendored=None):
         root = os.path.dirname(pen_of(workspace))
         terms.append(os.path.basename(scoring_area(root)).lower())
         outside = outside_pattern(workspace, temp)
+
+    # A change task's fixture holds the build whole, its history and its
+    # databases among it, which its workspace was cleaned of.
+    fenced = fence_pattern(protected, names)
     hits = []
     for tool, text in calls:
         lowered = text.lower()
         hits.extend({"tool": tool, "term": term, "call": text[:300]}
                     for term in terms if term in lowered)
-        if outside is None:
+        if outside is None and fenced is None:
             continue
 
         # A call's input arrives as JSON, which doubles a Windows path's
@@ -1288,7 +1299,8 @@ def reach(files, calls, workspace=None, temp=None, vendored=None):
         normal = lowered.replace("\\\\", "/").replace("\\", "/")
         hits.extend({"tool": tool, "term": match.group(0),
                      "call": text[:300]}
-                    for match in outside.finditer(normal))
+                    for pattern in (outside, fenced) if pattern is not None
+                    for match in pattern.finditer(normal))
     return {"transcripts": files, "hits": hits}
 
 
@@ -1317,6 +1329,42 @@ def path_pattern(paths):
     """
     return re.compile("(?:%s)%s" % (
         "|".join(re.escape(form) for form in path_forms(paths)), PATH_END))
+
+
+def fenced_paths(paths):
+    """Each of `paths` as given and as resolved, and on Windows in lower
+    case too, for deny rules a case-sensitive match would otherwise miss."""
+    forms = set()
+    for path in paths:
+        for form in (os.path.abspath(path), os.path.realpath(path)):
+            forms.add(form)
+            if os.name == "nt":
+                forms.add(form.lower())
+    return sorted(forms)
+
+
+def fence_pattern(paths, names):
+    """A pattern matching a path into any of `paths`, or naming any of
+    `names` as a whole path component however it is reached, as normalised
+    by `reach`; None where there is nothing to fence."""
+
+    # A relative path climbs out of the workspace however many levels the
+    # shell happens to be deep, so an archive's own name is matched wherever
+    # it stands as a component, and the directory's after a climb: a folder
+    # of that name inside the workspace, as `tests/fixtures`, is the trial's.
+    alternatives = []
+    if paths:
+        alternatives.append("(?:%s)%s" % ("|".join(
+            re.escape(form) for form in path_forms(fenced_paths(paths))),
+            PATH_END))
+        alternatives.append("\\.\\./(?:%s)%s" % ("|".join(
+            re.escape(os.path.basename(os.path.abspath(path)).lower())
+            for path in sorted(set(paths))), PATH_END))
+    if names:
+        alternatives.append("(?<![^/\\s\"';,=])(?:%s)%s" % ("|".join(
+            re.escape(name.lower()) for name in sorted(set(names))),
+            PATH_END))
+    return re.compile("|".join(alternatives)) if alternatives else None
 
 
 def outside_pattern(workspace, temp):
@@ -1542,7 +1590,8 @@ def gather_leftovers(shared, entries, target):
     return moved
 
 
-def contain(workspace, temp, home, shared, since, vendored=None):
+def contain(workspace, temp, home, shared, since, vendored=None,
+            protected=(), names=()):
     """Close a finished trial off from the next one; say what it left.
 
     Processes are stopped before anything moves, because a running process
@@ -1555,7 +1604,8 @@ def contain(workspace, temp, home, shared, since, vendored=None):
     # beside the workspace runs from the pen.
     owned = [pen_of(workspace), temp, home] + [os.path.join(shared, entry)
                                                for entry in leftovers]
-    result = {"reach": reach(files, calls, workspace, temp, vendored),
+    result = {"reach": reach(files, calls, workspace, temp, vendored,
+                             protected, names),
               "shared_temp_dir": shared}
 
     # Stopping processes by name reaches every process of that name on the
@@ -1858,6 +1908,15 @@ def read_fixtures(entry, directory):
             raise TrialError("fixture %s's tarball %s has sha256 %s, and the "
                              "manifest lists %s"
                              % (trial, tarball, digest, fixture.get("sha256")))
+
+        # Read whole before any trial, so a fixture no change task could
+        # start from refuses the run rather than its trials one by one.
+        try:
+            with tarfile.open(tarball) as archive:
+                fixture_members(archive, tarball)
+        except (OSError, tarfile.TarError) as error:
+            raise TrialError("fixture %s's tarball %s cannot be read: %s"
+                             % (trial, tarball, error))
         fixtures.append(dict(fixture, tarball=tarball))
     return sorted(fixtures, key=lambda fixture: split_name(fixture["trial"])[1])
 
@@ -1877,6 +1936,18 @@ def run_fixtures(options):
         raise TrialError("round %s's change task starts from its fixtures; "
                          "name the directory holding their tarballs with "
                          "--fixtures" % options.round)
+
+    # The fixtures' directory is fenced off from every change trial, so a
+    # run root inside it would read every trial as reaching past its own.
+    # Compared resolved and, on Windows, in either case, as the file system
+    # reads them.
+    fenced = os.path.normcase(os.path.realpath(options.fixtures))
+    root = os.path.normcase(os.path.realpath(
+        getattr(options, "root", None) or os.sep))
+    if root == fenced or root.startswith(fenced.rstrip(os.sep) + os.sep):
+        raise TrialError("the run root %s is inside the fixtures' directory "
+                         "%s, which no trial may read"
+                         % (options.root, options.fixtures))
     fixtures = read_fixtures(entry, options.fixtures)
     blocks = {block: fixture_for(fixtures, block)["trial"]
               for block in range(1, options.k + 1)}
@@ -1981,28 +2052,64 @@ def kept_from_fixture(relative, environments):
                 or lowered[-1].endswith(FIXTURE_DROPPED_SUFFIXES))
 
 
+def link_target(member):
+    """Where a link member points, as a path relative to the tree's top, or
+    None where it points out of the tree or at an absolute path."""
+    if member.islnk():
+        target = posixpath.normpath(member.linkname)
+    elif member.linkname.startswith("/") or member.linkname[1:2] == ":":
+        return None
+    else:
+        target = posixpath.normpath(posixpath.join(
+            posixpath.dirname(member.name), member.linkname))
+    return None if target == ".." or target.startswith("../") else target
+
+
+def fixture_members(archive, tarball):
+    """The members of a fixture's tree its change tasks keep, renamed to
+    the tree's top; raises where the tree cannot be kept whole."""
+    members = archive.getmembers()
+    tops = {member.name.split("/")[0] for member in members}
+    if len(tops) != 1:
+        raise TrialError("%s does not hold one directory: %s"
+                         % (tarball, ", ".join(sorted(tops))))
+    prefix = tops.pop() + "/"
+    inside = [member for member in members
+              if member.name.startswith(prefix)
+              and (member.isfile() or member.isdir() or member.issym()
+                   or member.islnk())]
+    for member in inside:
+        member.name = member.name[len(prefix):]
+        if member.islnk() and member.linkname.startswith(prefix):
+            member.linkname = member.linkname[len(prefix):]
+
+    # A virtualenv is known by the file every one carries at its root.
+    environments = {member.name.rpartition("/")[0] for member in inside
+                    if member.isfile()
+                    and member.name.rpartition("/")[2] == "pyvenv.cfg"}
+    environments.discard("")
+    kept = [member for member in inside
+            if kept_from_fixture(member.name, environments)]
+
+    # A link the build froze stays where what it names stays too. Dropped,
+    # it would leave code or tests reached through it missing; kept while
+    # naming something outside what stays, it would dangle, or hand the
+    # trial what its workspace was cleaned of. Either makes the fixture
+    # unusable, which is said rather than mended.
+    names = {member.name for member in kept}
+    for member in kept:
+        if (member.issym() or member.islnk()) \
+                and link_target(member) not in names:
+            raise TrialError("fixture %s is unusable: %s links to %s, "
+                             "outside the code and tests its change tasks "
+                             "keep" % (tarball, member.name, member.linkname))
+    return kept
+
+
 def unpack_fixture(tarball, target):
     """Unpack the code and tests of a fixture's tree into `target`."""
     with tarfile.open(tarball) as archive:
-        members = archive.getmembers()
-        tops = {member.name.split("/")[0] for member in members}
-        if len(tops) != 1:
-            raise TrialError("%s does not hold one directory: %s"
-                             % (tarball, ", ".join(sorted(tops))))
-        prefix = tops.pop() + "/"
-        inside = [member for member in members
-                  if member.name.startswith(prefix)
-                  and (member.isfile() or member.isdir())]
-        for member in inside:
-            member.name = member.name[len(prefix):]
-
-        # A virtualenv is known by the file every one carries at its root.
-        environments = {member.name.rpartition("/")[0] for member in inside
-                        if member.isfile()
-                        and member.name.rpartition("/")[2] == "pyvenv.cfg"}
-        environments.discard("")
-        kept = [member for member in inside
-                if kept_from_fixture(member.name, environments)]
+        kept = fixture_members(archive, tarball)
         archive.extractall(target, members=kept, filter="data")
 
 
@@ -2031,6 +2138,9 @@ def prepare_fixture_workspace(arm, block, root, fixture, spec):
     os.makedirs(workspace)
     try:
         unpack_fixture(fixture["tarball"], workspace)
+    except TrialError:
+        remove_tree(pen_of(workspace))
+        raise
     except (OSError, tarfile.TarError) as error:
         remove_tree(pen_of(workspace))
         raise TrialError("could not unpack %s: %s"
@@ -2110,6 +2220,15 @@ def run_fixture_change_trial(arm, block, root, home, options, fixture):
               "base": base, "vendored": vendored,
               "fixture": {key: fixture[key]
                           for key in ("trial", "sha256", "tarball")},
+
+              # The fixtures' directory, which the trial's deny rules and
+              # every scan of its transcript fence off, and its archives'
+              # names, which a relative path into it would carry.
+              "protected": fenced_paths([os.path.dirname(
+                  fixture["tarball"])]),
+              "protected_names": list(getattr(options, "fixture_names", ())
+                                      or [os.path.basename(
+                                          fixture["tarball"])]),
               "spec": {"file": os.path.basename(spec), "sha256": digest}}
     return run_agent(workspace, "change-%s" % trial_name(arm, block), prompt,
                      record, root, home, options)
@@ -2255,7 +2374,8 @@ def run_agent(workspace, name, prompt, record, root, home, options):
     """
     assert_no_ambient_context(workspace, home)
     argv = agent_command(home, options.model, options.effort, options.budget,
-                         trial_settings(home, root, workspace))
+                         trial_settings(home, root, workspace,
+                                        record.get("protected", ())))
     record.update({
         "workspace": workspace,
         "prompt": prompt,
@@ -2308,7 +2428,9 @@ def run_agent(workspace, name, prompt, record, root, home, options):
 
     record["elapsed_s"] = round(time.monotonic() - started, 1)
     record.update(contain(workspace, temp, home, shared, since,
-                          record.get("vendored")))
+                          record.get("vendored"),
+                          record.get("protected", ()),
+                          record.get("protected_names", ())))
     record.update(reached(record))
     record["frozen"] = freeze(workspace, root, name)
     if record["outcome"] in VOIDING:
@@ -4526,7 +4648,120 @@ def fixture_checks(scratch):
     checks.append(("a fixture whose tarball differs from its listed hash is "
                    "refused, at the start and at each trial",
                    mismatched and swapped))
+    checks += link_checks(scratch, root, entry, listing_as, refused)
+    listing_as(listed)
     return checks + fixture_run_checks(scratch, tarballs)
+
+
+def link_checks(scratch, root, entry, listing_as, refused):
+    """A fixture's links stay where what they name stays, and one naming
+    anything else makes the fixture unusable, at the start and at a trial."""
+    linked = os.path.join(scratch, "linked")
+    os.makedirs(linked)
+
+    def plant(name, links):
+        path = os.path.join(linked, name + ".tar")
+        with tarfile.open(path, "w") as archive:
+            for relative, data in (("tariff/app.py", b"built = True\n"),
+                                   ("tests/test_app.py", b"x = 1\n"),
+                                   (".venv/pyvenv.cfg", b"home = x\n")):
+                info = tarfile.TarInfo("%s/%s" % (name, relative))
+                info.size = len(data)
+                archive.addfile(info, io.BytesIO(data))
+            for relative, kind, target in links:
+                info = tarfile.TarInfo("%s/%s" % (name, relative))
+                info.type, info.linkname = kind, target
+                archive.addfile(info)
+        return {"trial": name, "sha256": spec_digest(path), "tarball": path,
+                "baseline": {"build_suite": 1.0}}
+
+    # A symbolic link and a hard link to code and tests that stay.
+    whole = plant("none-4", [("tariff/alias.py", tarfile.SYMTYPE, "app.py"),
+                             ("tests/again.py", tarfile.LNKTYPE,
+                              "none-4/tests/test_app.py")])
+    try:
+        workspace, _, _ = prepare_fixture_workspace("none", 4, root, whole,
+                                                    SPEC)
+        with io.open(os.path.join(workspace, "tariff", "alias.py"),
+                     encoding="utf-8") as handle:
+            alias = handle.read()
+        with io.open(os.path.join(workspace, "tests", "again.py"),
+                     encoding="utf-8") as handle:
+            again = handle.read()
+        kept = alias == "built = True\n" and again == "x = 1\n"
+    except (TrialError, OSError):
+        kept = False
+
+    # A link out of the tree, an absolute one, and one into what the
+    # cleaning drops: each fixture is unusable, before a trial and at one.
+    refusals = []
+    for block, target in ((5, "../../outside.py"), (6, "/etc/passwd"),
+                          (7, "../.venv/pyvenv.cfg")):
+        bad = plant("none-%d" % block,
+                    [("tariff/out.py", tarfile.SYMTYPE, target)])
+        listing_as([{key: bad[key]
+                     for key in ("trial", "sha256", "baseline")}])
+        try:
+            prepare_fixture_workspace("none", block, root, bad, SPEC)
+            at_trial = False
+        except TrialError as error:
+            at_trial = ("unusable" in str(error) and not os.path.exists(
+                os.path.join(root, "change-none-%d" % block)))
+        refusals.append(at_trial and refused(entry, linked))
+    return [("a fixture's links stay where what they name stays",
+             kept),
+            ("a fixture linking outside what its change tasks keep is "
+             "unusable, at the start and at a trial", refusals == [True] * 3)]
+
+
+def fenced_off(scratch, tarballs, trials, denied):
+    """Whether a named round's change trials fence off their fixtures'
+    directory: in the record, the deny rules and the transcript scan, and
+    with no run root inside it."""
+    import argparse as _argparse
+
+    fenced = os.path.abspath(tarballs)
+    workspace = trial_workspace(os.path.join(scratch, "fenced-root"),
+                                "change-none-1")
+    tarball = os.path.join(fenced, "none-2.tar")
+    names = trials[0].get("protected_names") if trials else []
+
+    # Named absolutely, in Git Bash's form, and climbed to relatively from
+    # wherever the shell stands; a name that only contains an archive's, or
+    # a workspace's own fixtures folder, is not the fixtures' directory.
+    calls = [("Bash", "tar xf %s" % tarball),
+             ("Bash", "ls %s" % "/".join(path_forms([fenced])[:1])),
+             ("Bash", "tar xf ../../../somewhere/none-2.tar"),
+             ("Bash", 'cat "./none-7.tar"'),
+             ("Bash", "ls ../../%s/" % os.path.basename(fenced))]
+    clean = [("Bash", "cat none-2.tar.bak xnone-2.tar"),
+             ("Bash", "cat tests/fixtures/seed.json")]
+    protected = trials[0].get("protected", ()) if trials else ()
+    flagged = [bool(reach(["planted.jsonl"], [call], workspace, None, None,
+                          protected, names)["hits"])
+               for call in calls + clean]
+    bare = reach(["planted.jsonl"], calls, workspace, None)["hits"]
+    nested = []
+    roots = [os.path.join(tarballs, "root")]
+    if os.name == "nt":
+        roots.append(os.path.join(tarballs.upper(), "root"))
+    for root in roots:
+        try:
+            run_fixtures(_argparse.Namespace(round="T1", fixtures=tarballs,
+                                             k=1, root=root))
+            nested.append(False)
+        except TrialError:
+            nested.append(True)
+    lower = ([] if os.name != "nt"
+             else ["Read(%s/**)" % rule_path(fenced.lower())])
+    return (all(fenced in trial.get("protected", ())
+                and {"none-2.tar", "none-7.tar", "none-11.tar"}
+                == set(trial.get("protected_names", ()))
+                for trial in trials)
+            and all(rule in denied
+                    for rule in ["Read(%s/**)" % rule_path(fenced)] + lower)
+            and flagged == [True] * len(calls) + [False] * len(clean)
+            and bare == [] and all(nested))
 
 
 def fixture_run_checks(scratch, tarballs):
@@ -4558,6 +4793,9 @@ def fixture_run_checks(scratch, tarballs):
                 run = json.load(handle)
         trials = run.get("trials", [])
         prepared = os.path.isdir(os.path.join(dry, "change-inline-1"))
+        settings = os.path.join(dry, "home", "settings-change-inline-1.json")
+        with io.open(settings, encoding="utf-8") as handle:
+            denied = json.load(handle)["permissions"]["deny"]
 
         # The same round's earlier change run, planted beside this one with
         # its manifest edited, and with its block 1 started from another
@@ -4603,6 +4841,8 @@ def fixture_run_checks(scratch, tarballs):
                  and trial.get("block") == 1 for trial in trials)),
         ("a named round's run refuses a root whose records name none",
          mixed == 2 and "names no round" in printed.getvalue()),
+        ("a change trial may neither read nor name its fixtures' directory",
+         fenced_off(scratch, tarballs, trials, denied)),
         ("a change run whose manifest or block mapping differs from the "
          "root's earlier change runs is refused",
          [code for code, _ in drifted] == [2, 2]
@@ -4791,6 +5031,9 @@ def main(argv):
                 builds = scorable_trials(options.root, task="build")
             else:
                 fixtures, identity["fixtures"] = run_fixtures(options)
+                options.fixture_names = sorted(
+                    os.path.basename(fixture["tarball"])
+                    for fixture in fixtures)
                 problem = fixtures_problem(options.root, identity["fixtures"])
                 if problem:
                     raise TrialError(problem)

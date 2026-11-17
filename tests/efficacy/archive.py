@@ -36,7 +36,7 @@ STAMP = "archived.json"
 
 # The scoring area's per-trial readings the report aggregates, each a JSON
 # file named for its trial.
-READINGS = ("scores", "scores-change", "security-scores")
+READINGS = ("scores", "scores-change", "security-scores", "quality-scores")
 
 # What a frozen workspace holds that no reading needs and any scoring
 # rebuilds: tool caches, compiled bytecode, and every virtual environment,
@@ -335,7 +335,7 @@ def stamp(root, into):
 
 # The tools that read and write a scoring area while they run, each under a
 # claim of its own.
-AREA_TOOLS = ("score.py", "security.py", "judge.py")
+AREA_TOOLS = ("score.py", "security.py", "quality.py", "judge.py")
 
 
 def live_run_problem(root):
@@ -362,6 +362,7 @@ def drop_trees(root):
         for kind in ("tree", "venv"):
             folders += glob.glob(os.path.join(area, part, "*", kind))
     folders += glob.glob(os.path.join(area, "security", "*", "venv"))
+    folders += glob.glob(os.path.join(area, "quality", "*", "venv*"))
     for folder in folders:
         remove_tree(folder)
     return len(folders)
@@ -492,6 +493,7 @@ def self_test():
          and not any("credentials" in key for key in files)),
         ("readings, judgings, map and lock come; bundles do not",
          {"scoring/scores/none-1.json", "scoring/security-scores/hybrid-1.json",
+          "scoring/quality-scores/hybrid-1.json",
           "scoring/scores-change/none-1.json", "scoring/judge/T1.json",
           "scoring/judge/map.json", "scoring/tool-lock.txt"} <= set(files)
          and not any("bundle" in key for key in files)),
@@ -577,12 +579,13 @@ def self_test():
     checks.append(("a stamped round has none", stamp_problem(root) is None))
 
     # What scoring leaves: a trial's tree and environment, a change task's,
-    # and a security reading's environment.
+    # and a security and a quality reading's environment.
     area = scoring_area(root)
     leftovers = [os.path.join(area, "scoring", "none-1", "tree"),
                  os.path.join(area, "scoring", "none-1", "venv"),
                  os.path.join(area, "scoring-change", "none-1", "tree"),
-                 os.path.join(area, "security", "hybrid-1", "venv")]
+                 os.path.join(area, "security", "hybrid-1", "venv"),
+                 os.path.join(area, "quality", "hybrid-1", "venv")]
     for folder in leftovers:
         os.makedirs(folder, exist_ok=True)
         with io.open(os.path.join(folder, "left.txt"), "w") as handle:
@@ -597,6 +600,11 @@ def self_test():
     dump_json(score, dict(load_json(score), planted=True))
     checks.append(("a reading changed after the stamp is a problem",
                    "scores/none-1.json" in (stamp_problem(root) or "")))
+    quality = os.path.join(scoring_area(root), "quality-scores", "none-1.json")
+    if os.path.isfile(quality):
+        dump_json(quality, dict(load_json(quality), planted=True))
+    checks.append(("a quality reading changed after the stamp is a problem",
+                   "quality-scores/none-1.json" in (stamp_problem(root) or "")))
     out = os.path.join(scratch, "draft")
     checks.append(("the report refuses docs/reports/ without a current stamp",
                    report.main(["--root", root]) == 2))
@@ -604,7 +612,9 @@ def self_test():
                    report.main(["--root", root, "--out-dir", out]) == 0
                    and bool(os.listdir(out))))
 
-    for tool in AREA_TOOLS:
+    # Named, not read from the list the archive keeps, so a tool missing
+    # from that list shows as an archive made beside its live run.
+    for tool in ("score.py", "security.py", "quality.py", "judge.py"):
         checks.append(claim_refusal_check(
             tool, main, root, "--into",
             os.path.join(scratch, "runs", "live-" + tool)))

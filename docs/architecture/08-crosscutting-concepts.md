@@ -149,7 +149,7 @@ The layers:
 | Web tools disallowed | Fetching a page | `curl` or `git clone` in the shell |
 | Git credential helpers cleared | An authenticated clone of the hidden suite | |
 | Process-stop commands denied | Stopping the harness by name | Stopping by PID or port |
-| Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record |
+| Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record; a path the shell builds indirectly, through a variable, a wildcard or a climb past a name the scan knows |
 
 **Rules**
 
@@ -159,6 +159,7 @@ The layers:
 | 2 | The tools are fenced | File tools denied outside the workspace, web tools disallowed, no Git credentials, no stop by name | FR-05-03 to FR-05-06 |
 | 3 | The transcript is the backstop | A hit voids the trial and re-runs it once; the report scans again under the current rule | FR-05-07, FR-05-08 |
 | 4 | Nothing outlives the trial | Every process started from its directories is stopped before it is frozen | FR-05-09 |
+| 5 | A change task's fixtures are fenced | Their directory is in the deny rules, and the scan flags a path naming it or one of its archives; a tripwire for named access, since no static scan of a shell command is complete | FR-13-16 |
 
 The decision is ADR-020.
 
@@ -256,7 +257,7 @@ The other measures, run on every trial:
 | Measure | What it reads |
 | ------- | ------------- |
 | Install | `pip install .` in a clean virtualenv, `import tariff`, and the app serves `/` |
-| Accessibility | axe-core WCAG 2.1 AA violations |
+| Accessibility | axe-core rules of WCAG 2.1 A and AA violated, each by its id; axe's best-practice rules are kept apart and not counted (FR-06-07) |
 | HTML validity | Errors, less those on HTMX's `hx-*` attributes, which the spec requires and HTML lacks |
 | XSS and CSRF | One probe each |
 | Invoice builder | Response size and request count |
@@ -265,6 +266,12 @@ The other measures, run on every trial:
 | Size | App code's files and lines, apart from tests, docs and configuration |
 | Unasked artifacts | ADR, journal, CHANGELOG, PLAYBOOK, committed bytecode or databases |
 | Consistency | Each metric's spread across an arm's trials |
+
+Accessibility, HTML validity, XSS, CSRF and the invoice builder read the
+pages signed in as the seeded administrator. A page answered with the
+redirect to `/sign-in` is never measured: a form row the app keeps from
+running reads failed, a measured row missing, each with its reason
+(FR-06-06). Rounds 5 to 5e read them unsigned, on the redirect (#175).
 
 The adherence checklist:
 
@@ -615,6 +622,26 @@ interval of the difference against `none` lies past the axis's margin
 (8.1.2): a filled ▲ up, a hollow ▽ down, a dot within. The cost sits above
 each radar, shown and not scored, and the appendix holds one table of
 sub-scores per axis. The decision is ADR-023.
+
+Round 6's targets read three sources the pilot's did not (FR-12-21 to
+FR-12-23):
+
+- **Hidden-suite modules.** Functional correctness has one target per build
+  module, met where the module passes whole: no check failed, errored or
+  skipped. A module missing from a build's report is not measured where
+  the suite's revision did not hold it, and not met where it did: it failed
+  to collect. A suite that ran out of time fails every module: the build
+  held it there. The sub-characteristic is still one share among three on
+  its axis, however many modules it holds.
+- **Quality probes.** Each pass-or-fail probe is one target: fault
+  tolerance, availability, capacity, resource use, co-existence and
+  portability. A lost probe fails; a missing one is not measured.
+- **Latency.** Its target reads a cutoff calibrated from the reference
+  build and a planted slowdown, frozen before round 6 registers. Until then
+  it is not measured.
+
+A pilot round read by the ISO radar keeps the targets it had before round 6,
+and reads round 6's only when `--round6-targets` asks for them.
 
 **Each approach in plain words** (FR-12-07):
 

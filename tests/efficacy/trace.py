@@ -26,12 +26,13 @@ import lib  # noqa: E402
 
 REQUIREMENTS = os.path.join(ROOT, "docs", "requirements.md")
 COVERAGE = os.path.join(ROOT, "docs", "coverage.md")
+WORKFLOW = os.path.join(ROOT, ".github", "workflows", "self-tests.yml")
 
 # Every module with a self-test, by its path under tests/efficacy/. A label
 # is looked up only in the output of the module its row names.
 MODULES = ("harness.py", "generate_arm.py", "score.py", "judge.py",
            "report.py", "archive.py", "reuse.py", "progress.py", "probes.py",
-           "security.py", "control/control.py")
+           "security.py", "quality.py", "control/control.py")
 
 ROW = re.compile(r"^\| (FR-(\d{2})-(\d{2})) \| (.+?) \| (.+?) \|$")
 TOPIC = re.compile(r"^#{2,3} (\d{2}) ")
@@ -179,6 +180,15 @@ def trace(requirements, coverage, outputs):
     return problems, counts
 
 
+def workflow_modules(text):
+    """The modules a workflow's self-test loop runs, as paths under
+    tests/efficacy/."""
+    loop = re.search(r"for module in (.*?); do", text, re.DOTALL)
+    if not loop:
+        return set()
+    return {word + ".py" for word in loop.group(1).replace("\\", " ").split()}
+
+
 def run_self_tests():
     """Each module's self-test output, by module, running each in turn."""
     outputs = {}
@@ -242,7 +252,14 @@ def self_test():
         return len(problems_of(*covering, *good[len(covering):])) == 1
 
     found, counts = trace(document(*stated), document(*good), outputs)
+
+    # CI saves each module's output for the trace to read; a module its loop
+    # leaves out has no output there, and every label it prints goes unseen.
+    with io.open(WORKFLOW, encoding="utf-8") as handle:
+        unrun = sorted(set(MODULES) - workflow_modules(handle.read()))
     checks = [
+        ("the CI workflow runs every module the trace reads", unrun == [],
+         unrun),
         ("every rule accounted for passes", found == [], found),
         ("each kind of row is counted",
          counts == {"Self-test": 2, "Untestable": 1, "Missing": 1}, counts),
