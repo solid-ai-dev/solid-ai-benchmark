@@ -2759,8 +2759,13 @@ def fake_readings(scratch, modes, mode_arg="all", timeout=300):
         with io.open(os.path.join(package, "__init__.py"), "w",
                      encoding="utf-8") as handle:
             handle.write(FAKE_APP.replace("__MODE__", mode))
-        env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"),
-                   QUALITY_PROBE_WRITE_SECONDS="5")
+        env = dict(os.environ, PYTHONPATH=os.path.join(where, "site"))
+
+        # Only the hung writer's run waits a short 5 s for its writers: a
+        # build's writes on a loaded machine can outlast that, so every
+        # other mode keeps the reader's own wait.
+        if mode == "hanging":
+            env["QUALITY_PROBE_WRITE_SECONDS"] = "5"
         readings[mode] = probe_runtime(sys.executable, where, mode_arg,
                                        env=env, timeout=timeout)
     return readings
@@ -2919,9 +2924,12 @@ def runtime_self_checks(scratch):
     ])
 
     # The first malformed request writes outside and then hangs, so the run
-    # is killed in its fuzzing, long after co-existence passed.
+    # is killed in its fuzzing, long after co-existence passed. The kill
+    # comes at 120 s, well past what the probes before fuzzing take on a
+    # slow or loaded machine: killed sooner, the run would stop before
+    # co-existence and the check would read the machine, not the rule.
     payload, reason, stalled = fake_readings(scratch, ["late-stray"],
-                                             timeout=40)["late-stray"]
+                                             timeout=120)["late-stray"]
     late = probe_results(payload, reason, stalled=stalled)
     checks.append((
         "a write outside before a hang still fails coexistence, the path kept",

@@ -725,7 +725,7 @@ def change_only(trial):
     """A trial, in place, as its change task alone: its build readings
     emptied, so every build row reads it as not measured."""
     trial.update({"scores": {}, "judge": None, "judgings": [],
-                  "security": None, "change_only": True})
+                  "security": None, "quality": None, "change_only": True})
     return trial
 
 
@@ -1735,7 +1735,8 @@ def reaches(root):
         files, calls = read_transcripts(home, workspace, started(record))
         if files:
             scan = reach(files, calls, workspace, record.get("temp"),
-                         record.get("vendored"))
+                         record.get("vendored"), record.get("protected", ()),
+                         record.get("protected_names", ()))
         else:
             scan = record.get("reach") or reach(files, calls)
         scans.append({"name": name_of(record), "hits": scan["hits"]})
@@ -5691,7 +5692,7 @@ def round_identity_checks():
     trial = {"round": "C1", "task": "build", "arm": "none", "block": 1,
              "trial": 1, "outcome": "completed"}
 
-    def refused(name, runs, why="round"):
+    def refused(name, runs, why="round", documents=()):
         root = os.path.join(scratch, name)
         scores = os.path.join(scoring_area(root), "scores")
         os.makedirs(scores)
@@ -5705,8 +5706,10 @@ def round_identity_checks():
                 json.dump(header, handle)
         saved, sys.stdout = sys.stdout, io.StringIO()
         try:
-            code = main(["--root", root, "--out-dir",
-                         os.path.join(scratch, "out")])
+            with planted_repository(os.path.join(scratch, name + "-repo"),
+                                    documents):
+                code = main(["--root", root, "--out-dir",
+                             os.path.join(scratch, "out")])
             printed = sys.stdout.getvalue()
         finally:
             sys.stdout = saved
@@ -5758,7 +5761,11 @@ def round_identity_checks():
         ("a named round is refused until its registration document is on "
          "main before its first trial",
          refused("unregistered", [dict(good, trials=[pinned])],
-                 "%s does not exist" % REGISTRATIONS["C1"]["document"])),
+                 "%s does not exist" % REGISTRATIONS["C1"]["document"])
+         and not refused("registered", [dict(good, trials=[dict(
+             pinned, started_at="2026-11-15T12:00:00+00:00")])],
+             REGISTRATIONS["C1"]["document"],
+             [REGISTRATIONS["C1"]["document"]])),
     ]
     shutil.rmtree(scratch, ignore_errors=True)
     return checks
@@ -6192,22 +6199,39 @@ def change_finding_checks(seed):
              and len(rows) == 1 and "$0.80" in rows[0])]
 
 
+@contextlib.contextmanager
+def planted_repository(path, documents=()):
+    """While inside, the report reads registrations from a git repository
+    planted at `path` holding only `documents`, never this checkout's."""
+    saved = globals()["REPOSITORY"]
+    globals()["REPOSITORY"] = planted_registry(
+        path, documents=tuple(documents) or (PLANTED_REGISTRATION,))
+    try:
+        yield
+    finally:
+        globals()["REPOSITORY"] = saved
+        shutil.rmtree(path, ignore_errors=True)
+
+
 # The registration a planted repository holds, landed before any planted
 # trial starts.
 PLANTED_REGISTRATION = "docs/rounds/round.md"
 
 
-def planted_registry(repository, branch=REGISTRATION_BRANCH):
-    """A git repository holding a registration committed on `branch` at
-    2026-10-01, for a self-test that must read no branch of this one."""
-    path = os.path.join(repository, *PLANTED_REGISTRATION.split("/"))
-    os.makedirs(os.path.dirname(path))
-    with io.open(path, "w", encoding="utf-8") as handle:
-        handle.write("# Round\n")
+def planted_registry(repository, branch=REGISTRATION_BRANCH,
+                     documents=(PLANTED_REGISTRATION,)):
+    """A git repository holding `documents`, registrations committed on
+    `branch` at 2026-10-01, for a self-test that must read no branch, and
+    no document, of this one."""
+    for document in documents:
+        path = os.path.join(repository, *document.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            handle.write("# Round\n")
     when = "2026-10-01T10:00:00+00:00"
     env = dict(os.environ, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
     git(repository, "init", "-q", "-b", branch)
-    git(repository, "add", PLANTED_REGISTRATION)
+    git(repository, "add", "-A")
     git(repository, "-c", "user.name=self-test",
         "-c", "user.email=self-test@example.invalid", "commit", "-q", "-m",
         "register", env=env)
@@ -6342,8 +6366,9 @@ def change_only_checks():
                   handle)
     saved, sys.stdout = sys.stdout, io.StringIO()
     try:
-        code = main(["--root", root, "--out-dir",
-                     os.path.join(scratch, "out")])
+        with planted_repository(os.path.join(scratch, "repository")):
+            code = main(["--root", root, "--out-dir",
+                         os.path.join(scratch, "out")])
         printed = sys.stdout.getvalue()
     finally:
         sys.stdout = saved
@@ -8917,10 +8942,33 @@ def rescan_checks():
                                   workspace)[1]) == 1
     terms = [hit["term"] for scan in reaches(scratch)
              for hit in scan["hits"] or []]
+
+    # A change trial of a named round whose call unpacked a fixture from
+    # the fixtures' directory, which its record names as fenced off.
+    fixtures = os.path.join(tempfile.gettempdir(),
+                            "efficacy-report-rescan-fixtures")
+    entry["message"]["content"][0]["input"]["command"] = (
+        "tar xf %s && tar xf ../../../elsewhere/none-11.tar"
+        % os.path.join(fixtures, "none-2.tar"))
+    with io.open(os.path.join(projects, "planted.jsonl"), "w",
+                 encoding="utf-8") as handle:
+        handle.write(json.dumps(entry) + "\n")
+    planted[0]["protected"] = [fixtures]
+    planted[0]["protected_names"] = ["none-2.tar", "none-11.tar"]
+    with io.open(os.path.join(scratch, "run-planted.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": planted}, handle)
+    fenced = [hit["term"] for scan in reaches(scratch)
+              for hit in scan["hits"] or []]
     shutil.rmtree(scratch, ignore_errors=True)
     return [("the planted transcript carries one call", landed),
             ("its record's clean scan is read again and flagged",
-             terms == ["../inline-1"])]
+             terms == ["../inline-1"]),
+            ("a call into the fixtures' directory its record fences off is "
+             "flagged on the re-scan",
+             len(fenced) == 3 and fenced[0].endswith(
+                 "efficacy-report-rescan-fixtures")
+             and "none-11.tar" in fenced)]
 
 
 def planted_change_run(revision):
@@ -10575,7 +10623,7 @@ def main(argv):
     if named is not None:
         try:
             problem = registration_problem(
-                options.root, REGISTRATIONS[named]["document"])
+                options.root, REGISTRATIONS[named]["document"], REPOSITORY)
         except TrialError as error:
             problem = str(error)
         if problem:

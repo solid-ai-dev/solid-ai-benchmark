@@ -149,7 +149,7 @@ The layers:
 | Web tools disallowed | Fetching a page | `curl` or `git clone` in the shell |
 | Git credential helpers cleared | An authenticated clone of the hidden suite | |
 | Process-stop commands denied | Stopping the harness by name | Stopping by PID or port |
-| Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record |
+| Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record; a path the shell builds indirectly, through a variable, a wildcard or a climb past a name the scan knows |
 
 **Rules**
 
@@ -159,6 +159,7 @@ The layers:
 | 2 | The tools are fenced | File tools denied outside the workspace, web tools disallowed, no Git credentials, no stop by name | FR-05-03 to FR-05-06 |
 | 3 | The transcript is the backstop | A hit voids the trial and re-runs it once; the report scans again under the current rule | FR-05-07, FR-05-08 |
 | 4 | Nothing outlives the trial | Every process started from its directories is stopped before it is frozen | FR-05-09 |
+| 5 | A change task's fixtures are fenced | Their directory is in the deny rules, and the scan flags a path naming it or one of its archives; a tripwire for named access, since no static scan of a shell command is complete | FR-13-16 |
 
 The decision is ADR-020.
 
