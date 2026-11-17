@@ -5842,6 +5842,22 @@ def change_reading_checks():
                    and unread == (None, None)))
     checks.append(("a named round's change targets read whatever its build "
                    "did", gated == (1.0, True)))
+
+    # Read as the change task's own tree, a changed tree that did not
+    # install is a broken tree: Reliability reads it, no other axis does.
+    failed = change_view({"round": "C1", "change": {
+        "name": "none-1", "install": {"value": False, "missing": None},
+        "interfaces": {"value": 0.0, "missing": None},
+        "change_suite": {"value": 0.0, "missing": None}},
+        "change_quality": {"probes": {"data_upgrade": {
+            "passed": False, "lost": "would not install"}}}})
+    scores = iso_trial_scores(failed)
+    checks.append(("a changed tree that does not install is left out of "
+                   "every axis but Reliability on its own radar",
+                   scores["Reliability"]["Faultlessness"] == 0.0
+                   and all(value is None for axis, subs in scores.items()
+                           if axis != BROKEN_AXIS
+                           for value in subs.values())))
     return checks
 
 
@@ -7417,8 +7433,11 @@ def iso_trial_scores(trial, withdrawn=(), axes=ISO_AXES):
     broken = works(trial) != 1.0
 
     # A named round's change task never ran on this trial's build, so a
-    # build broken, or not scored at all, says nothing of the change.
-    apart = trial.get("round") is not None or trial.get("change_only")
+    # build broken, or not scored at all, says nothing of the change. Read
+    # as the change task's own tree, the broken tree is the change's, and is
+    # left out of every axis but Reliability as a broken build is.
+    apart = ((trial.get("round") is not None or trial.get("change_only"))
+             and trial.get("task") != "change")
     scores = {}
     for axis, subs in axes:
         per_sub = {}
