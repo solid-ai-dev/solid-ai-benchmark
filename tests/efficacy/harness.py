@@ -282,10 +282,11 @@ def rule_path(path):
     return "/" + full
 
 
-def reach_denials(root, workspace):
+def reach_denials(root, workspace, protected=()):
     """Read and Edit deny rules for what a trial may not reach that a path
-    names: this repository, the scoring area, and every entry of the run root
-    but the trial's own workspace and temporary directory.
+    names: this repository, the scoring area, every entry of the run root
+    but the trial's own workspace and temporary directory, and each
+    `protected` directory, such as the one its change task's fixture is in.
 
     The shell is not covered, since a deny rule matches a command's prefix
     and not the paths in it; the transcript scan reads what the shell sent.
@@ -305,6 +306,7 @@ def reach_denials(root, workspace):
         targets.append(source)
     targets += [os.path.join(root, name) for name in sorted(names)
                 if name != own]
+    targets += [os.path.abspath(path) for path in protected]
     patterns = ["%s/**" % rule_path(target) for target in targets]
     patterns += ["%s/%s" % (rule_path(root), entry)
                  for entry in ("*.tar", "run-*.json")]
@@ -343,14 +345,16 @@ def kill_denials():
             for pattern in patterns for tool in SHELL_TOOLS]
 
 
-def trial_settings(home, root, workspace):
+def trial_settings(home, root, workspace, protected=()):
     """Write a trial's own settings file into the scratch home, which its
-    deny rules cover, and return its path."""
+    deny rules cover, and return its path; `protected` names directories
+    outside the run root it may not read either."""
     os.makedirs(home, exist_ok=True)
     path = os.path.join(home, "settings-%s.json"
                         % os.path.basename(os.path.abspath(workspace)))
     settings = dict(ISOLATED_SETTINGS,
-                    permissions={"deny": reach_denials(root, workspace)
+                    permissions={"deny": reach_denials(root, workspace,
+                                                       protected)
                                  + kill_denials()})
     with io.open(path, "w", encoding="utf-8") as handle:
         json.dump(settings, handle, indent=2)
@@ -1229,10 +1233,12 @@ def read_transcripts(home, workspace, since=None):
     return files, tool_calls(files)
 
 
-def reach(files, calls, workspace=None, temp=None, vendored=None):
+def reach(files, calls, workspace=None, temp=None, vendored=None,
+          protected=()):
     """The tool calls naming this repository or the hidden suite and, given
     the trial's workspace, the scoring area or any part of the run root other
-    than the trial's own workspace and temporary directory.
+    than the trial's own workspace and temporary directory, or any path
+    into a `protected` directory.
 
     Only what the agent sent is read, never what came back: a generated file
     names this repository, and reading it is not reaching for it. A trial
@@ -1252,12 +1258,16 @@ def reach(files, calls, workspace=None, temp=None, vendored=None):
         root = os.path.dirname(pen_of(workspace))
         terms.append(os.path.basename(scoring_area(root)).lower())
         outside = outside_pattern(workspace, temp)
+
+    # A change task's fixture holds the build whole, its history and its
+    # databases among it, which its workspace was cleaned of.
+    fenced = path_pattern(protected) if protected else None
     hits = []
     for tool, text in calls:
         lowered = text.lower()
         hits.extend({"tool": tool, "term": term, "call": text[:300]}
                     for term in terms if term in lowered)
-        if outside is None:
+        if outside is None and fenced is None:
             continue
 
         # A call's input arrives as JSON, which doubles a Windows path's
@@ -1265,7 +1275,8 @@ def reach(files, calls, workspace=None, temp=None, vendored=None):
         normal = lowered.replace("\\\\", "/").replace("\\", "/")
         hits.extend({"tool": tool, "term": match.group(0),
                      "call": text[:300]}
-                    for match in outside.finditer(normal))
+                    for pattern in (outside, fenced) if pattern is not None
+                    for match in pattern.finditer(normal))
     return {"transcripts": files, "hits": hits}
 
 
@@ -1519,7 +1530,8 @@ def gather_leftovers(shared, entries, target):
     return moved
 
 
-def contain(workspace, temp, home, shared, since, vendored=None):
+def contain(workspace, temp, home, shared, since, vendored=None,
+            protected=()):
     """Close a finished trial off from the next one; say what it left.
 
     Processes are stopped before anything moves, because a running process
@@ -1532,7 +1544,8 @@ def contain(workspace, temp, home, shared, since, vendored=None):
     # beside the workspace runs from the pen.
     owned = [pen_of(workspace), temp, home] + [os.path.join(shared, entry)
                                                for entry in leftovers]
-    result = {"reach": reach(files, calls, workspace, temp, vendored),
+    result = {"reach": reach(files, calls, workspace, temp, vendored,
+                             protected),
               "shared_temp_dir": shared}
 
     # Stopping processes by name reaches every process of that name on the
@@ -1854,6 +1867,14 @@ def run_fixtures(options):
         raise TrialError("round %s's change task starts from its fixtures; "
                          "name the directory holding their tarballs with "
                          "--fixtures" % options.round)
+
+    # The fixtures' directory is fenced off from every change trial, so a
+    # run root inside it would read every trial as reaching past its own.
+    fenced = os.path.abspath(options.fixtures)
+    root = os.path.abspath(getattr(options, "root", None) or os.sep)
+    if root == fenced or root.startswith(fenced.rstrip(os.sep) + os.sep):
+        raise TrialError("the run root %s is inside the fixtures' directory "
+                         "%s, which no trial may read" % (root, fenced))
     fixtures = read_fixtures(entry, options.fixtures)
     blocks = {block: fixture_for(fixtures, block)["trial"]
               for block in range(1, options.k + 1)}
@@ -2087,6 +2108,11 @@ def run_fixture_change_trial(arm, block, root, home, options, fixture):
               "base": base, "vendored": vendored,
               "fixture": {key: fixture[key]
                           for key in ("trial", "sha256", "tarball")},
+
+              # The fixtures' directory, which the trial's deny rules and
+              # every scan of its transcript fence off.
+              "protected": [os.path.dirname(os.path.abspath(
+                  fixture["tarball"]))],
               "spec": {"file": os.path.basename(spec), "sha256": digest}}
     return run_agent(workspace, "change-%s" % trial_name(arm, block), prompt,
                      record, root, home, options)
@@ -2232,7 +2258,8 @@ def run_agent(workspace, name, prompt, record, root, home, options):
     """
     assert_no_ambient_context(workspace, home)
     argv = agent_command(home, options.model, options.effort, options.budget,
-                         trial_settings(home, root, workspace))
+                         trial_settings(home, root, workspace,
+                                        record.get("protected", ())))
     record.update({
         "workspace": workspace,
         "prompt": prompt,
@@ -2285,7 +2312,8 @@ def run_agent(workspace, name, prompt, record, root, home, options):
 
     record["elapsed_s"] = round(time.monotonic() - started, 1)
     record.update(contain(workspace, temp, home, shared, since,
-                          record.get("vendored")))
+                          record.get("vendored"),
+                          record.get("protected", ())))
     record.update(reached(record))
     record["frozen"] = freeze(workspace, root, name)
     if record["outcome"] in VOIDING:
@@ -4478,6 +4506,33 @@ def fixture_checks(scratch):
     return checks + fixture_run_checks(scratch, tarballs)
 
 
+def fenced_off(scratch, tarballs, trials, denied):
+    """Whether a named round's change trials fence off their fixtures'
+    directory: in the record, the deny rules and the transcript scan, and
+    with no run root inside it."""
+    import argparse as _argparse
+
+    fenced = os.path.abspath(tarballs)
+    workspace = trial_workspace(os.path.join(scratch, "fenced-root"),
+                                "change-none-1")
+    tarball = os.path.join(fenced, "none-2.tar")
+    calls = [("Bash", "tar xf %s" % tarball),
+             ("Bash", "ls %s" % "/".join(path_forms([fenced])[:1]))]
+    hits = reach(["planted.jsonl"], calls, workspace, None, None,
+                 [fenced])["hits"]
+    bare = reach(["planted.jsonl"], calls, workspace, None)["hits"]
+    try:
+        run_fixtures(_argparse.Namespace(
+            round="T1", fixtures=tarballs, k=1,
+            root=os.path.join(tarballs, "root")))
+        nested = False
+    except TrialError:
+        nested = True
+    return (all(trial.get("protected") == [fenced] for trial in trials)
+            and "Read(%s/**)" % rule_path(fenced) in denied
+            and len(hits) == 2 and bare == [] and nested)
+
+
 def fixture_run_checks(scratch, tarballs):
     """A named round's change run needs no build trial, and its root takes
     no run naming another round or none; the CLI is a stand-in."""
@@ -4507,6 +4562,9 @@ def fixture_run_checks(scratch, tarballs):
                 run = json.load(handle)
         trials = run.get("trials", [])
         prepared = os.path.isdir(os.path.join(dry, "change-inline-1"))
+        settings = os.path.join(dry, "home", "settings-change-inline-1.json")
+        with io.open(settings, encoding="utf-8") as handle:
+            denied = json.load(handle)["permissions"]["deny"]
 
         # The same round's earlier change run, planted beside this one with
         # its manifest edited, and with its block 1 started from another
@@ -4552,6 +4610,8 @@ def fixture_run_checks(scratch, tarballs):
                  and trial.get("block") == 1 for trial in trials)),
         ("a named round's run refuses a root whose records name none",
          mixed == 2 and "names no round" in printed.getvalue()),
+        ("a change trial may neither read nor name its fixtures' directory",
+         fenced_off(scratch, tarballs, trials, denied)),
         ("a change run whose manifest or block mapping differs from the "
          "root's earlier change runs is refused",
          [code for code, _ in drifted] == [2, 2]
