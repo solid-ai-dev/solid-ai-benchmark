@@ -1688,7 +1688,8 @@ def reaches(root):
         files, calls = read_transcripts(home, workspace, started(record))
         if files:
             scan = reach(files, calls, workspace, record.get("temp"),
-                         record.get("vendored"), record.get("protected", ()))
+                         record.get("vendored"), record.get("protected", ()),
+                         record.get("protected_names", ()))
         else:
             scan = record.get("reach") or reach(files, calls)
         scans.append({"name": name_of(record), "hits": scan["hits"]})
@@ -7760,11 +7761,13 @@ def rescan_checks():
     fixtures = os.path.join(tempfile.gettempdir(),
                             "efficacy-report-rescan-fixtures")
     entry["message"]["content"][0]["input"]["command"] = (
-        "tar xf %s" % os.path.join(fixtures, "none-2.tar"))
+        "tar xf %s && tar xf ../../../elsewhere/none-11.tar"
+        % os.path.join(fixtures, "none-2.tar"))
     with io.open(os.path.join(projects, "planted.jsonl"), "w",
                  encoding="utf-8") as handle:
         handle.write(json.dumps(entry) + "\n")
     planted[0]["protected"] = [fixtures]
+    planted[0]["protected_names"] = ["none-2.tar", "none-11.tar"]
     with io.open(os.path.join(scratch, "run-planted.json"), "w",
                  encoding="utf-8") as handle:
         json.dump({"trials": planted}, handle)
@@ -7776,8 +7779,9 @@ def rescan_checks():
              terms == ["../inline-1"]),
             ("a call into the fixtures' directory its record fences off is "
              "flagged on the re-scan",
-             len(fenced) == 1 and fenced[0].endswith(
-                 "efficacy-report-rescan-fixtures"))]
+             len(fenced) == 3 and fenced[0].endswith(
+                 "efficacy-report-rescan-fixtures")
+             and "none-11.tar" in fenced)]
 
 
 def planted_change_run(revision):
