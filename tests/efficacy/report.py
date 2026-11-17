@@ -15,6 +15,7 @@ compute.
 """
 
 import argparse
+import contextlib
 import datetime
 import fnmatch
 import glob
@@ -605,7 +606,7 @@ def load(root):
             scores = json.load(handle)
         trials[canonical(scores["name"])] = {
             "scores": scores, "judge": None, "judgings": [], "change": None,
-            "security": None}
+            "security": None, "quality": None}
 
     # A completed judging stands over any other record of the same trial,
     # such as a dry run's or a failed attempt's left beside it. A trial judged
@@ -634,13 +635,16 @@ def load(root):
         if name in trials:
             trials[name]["change"] = change
 
-    for file in sorted(glob.glob(os.path.join(area, "security-scores",
-                                              "*.json"))):
-        with io.open(file, encoding="utf-8") as handle:
-            security = json.load(handle)
-        name = canonical(security.get("name") or "")
-        if name in trials:
-            trials[name]["security"] = security
+    # The security and quality readings each sit beside their trial's score,
+    # one file a trial, named for it.
+    for kind, key in (("security-scores", "security"),
+                      ("quality-scores", "quality")):
+        for file in sorted(glob.glob(os.path.join(area, kind, "*.json"))):
+            with io.open(file, encoding="utf-8") as handle:
+                reading = json.load(handle)
+            name = canonical(reading.get("name") or "")
+            if name in trials:
+                trials[name][key] = reading
     return trials
 
 
@@ -1741,7 +1745,7 @@ def write_report(root, trials, table, results, seed, out_dir,
                  "solid-ai-benchmark repository.")
     lines.append("")
     if iso and is_round5(trials):
-        lines.extend([POSTHOC_ISO_NOTE, ""])
+        lines.extend(posthoc_iso_lines(iso))
     if k < FEWEST_DECIDING:
         lines.append("**Every interval below is descriptive.** At K = %d no "
                      "arrangement of paired differences reaches conventional "
@@ -2132,6 +2136,20 @@ POSTHOC_ISO_NOTE = (
     "describes the round and decides nothing; the round's own report keeps "
     "its verdicts.")
 
+# Said beside it where the draft reads round 6's targets, not the pilot's.
+POSTHOC_ROUND6_NOTE = (
+    "It reads round 6's targets, one per hidden-suite module and one per "
+    "quality probe, which no pilot round was built against.")
+
+
+def posthoc_iso_lines(iso):
+    """The note opening a pilot round read by the ISO radar, naming round
+    6's targets where it reads them."""
+    if iso[3] == ISO_AXES:
+        return [POSTHOC_ISO_NOTE + " " + POSTHOC_ROUND6_NOTE, ""]
+    return [POSTHOC_ISO_NOTE, ""]
+
+
 # What the verdict looks at in a run read with the ISO radar, whose axes
 # decide.
 PLAIN_ISO_VERDICT_RULE = (
@@ -2403,7 +2421,7 @@ def plain_report_lines(root, trials, table, results, radar, appendix, k,
              % (times(runs, [arm for arm in runs if arm != BARE]),
                 times(runs, [BARE]), BARE, BARE), ""]
     if iso and is_round5(trials):
-        lines.extend([POSTHOC_ISO_NOTE, ""])
+        lines.extend(posthoc_iso_lines(iso))
     if radar:
         for theme, image in sorted(radar.items()):
             lines.append("![Radar per approach](%s#gh-%s-mode-only)"
@@ -2518,7 +2536,7 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
         lines.extend(iso_axis_lines(trials, iso[0],
                                     [BARE] + by_cost(table, [
                                         pair[0] for pair in against]),
-                                    iso[1], iso[2], k))
+                                    iso[1], iso[2], k, iso[3]))
     else:
         lines.extend(["", "## The radar's axes, row by row", "",
                       "Each table is one axis of the radar: every "
@@ -3711,7 +3729,8 @@ def iso_screen(trials, table, iso):
         # would hold it for good, so it does not.
         rows.append({"arm": arm,
                      "unread": [axis for axis, move in moves
-                                if move is None and iso_targeted(axis)],
+                                if move is None
+                                and iso_targeted(axis, iso[3])],
                      "worse": [axis for axis, move in moves if move == -1.0],
                      "better": sum(1 for _, move in moves if move == 1.0),
                      "cost": arm_mean(table, "cost_usd", arm),
@@ -3719,9 +3738,12 @@ def iso_screen(trials, table, iso):
     return screen_ranked(trials, rows, missing)
 
 
-def iso_targeted(axis):
-    """Whether any sub-characteristic of an ISO axis lists a target."""
-    return any(targets for _, targets in dict(ISO_AXES)[axis])
+def iso_targeted(axis, axes=None):
+    """Whether any sub-characteristic of an ISO axis lists a target with a
+    registered threshold, in `axes` or else round 6's table."""
+    return any(threshold is not None
+               for _, targets in dict(axes or ISO_AXES)[axis]
+               for _, _, _, threshold in targets)
 
 
 def screen_ranked(trials, rows, missing):
@@ -4509,7 +4531,7 @@ def round5e_checks():
                                ("Maintainability", "lazyref", "better"),
                                ("Maintainability", "reference", "worse")):
         axes["iso:" + axis]["%s-none" % arm]["verdict"] = verdict
-    iso = ({}, axes, ())
+    iso = ({}, axes, (), pilot_axes())
     iso_rows, missing = round6_screen(held, table, results, iso)
     iso_ranks = {row["arm"]: (row["rank"], row["round6"], row["worse"])
                  for row in iso_rows}
@@ -4546,7 +4568,7 @@ def round5e_checks():
                      in by_label.items()} for key, by_label in axes.items()}
     for contrast in pending["iso:Security"].values():
         contrast["verdict"] = "not computed"
-    pending_iso = ({}, pending, ())
+    pending_iso = ({}, pending, (), pilot_axes())
     pending_rows, _ = round6_screen(held, table, results, pending_iso)
     pending_text = "\n".join(screen_lines(held, table, results, pending_iso))
     checks.append(("an axis that lists targets but has no reading yet holds "
@@ -5743,37 +5765,93 @@ def radar_panels(table, results, active):
     return panels
 
 
+# The hidden suite's build modules, one target each from round 6. A module
+# passing whole is one part of the specification delivered; a pass rate over
+# every check lets a build fail one part outright and still clear its bar.
+HIDDEN_MODULES = (
+    "test_api_contract.py", "test_rules_validation.py",
+    "test_pricing_line.py", "test_pricing_invoice.py",
+    "test_pricing_allocation.py", "test_pricing_tax.py",
+    "test_pricing_refusals.py", "test_worked_example.py",
+    "test_http_routes.py", "test_http_validation.py", "test_http_preview.py",
+    "test_http_signin.py", "test_http_customers.py", "test_export_json.py",
+    "test_export_csv.py", "test_seed.py", "test_persistence.py",
+    "test_nojs.py", "test_browser.py",
+)
+
+# The modules each earlier revision of the hidden suite did not hold, read
+# from its history. A module absent from a report graded by one of these was
+# never there to run; absent under any other revision, it was there and did
+# not run, as a module that fails to collect or a suite that ran out of time
+# leaves it, and that is the build's.
+SUITE_LACKS = dict(
+    [(revision, ("test_persistence.py",)) for revision in (
+        "8caaaa339c04f0af3df878c92ed8974a237e67e0",
+        "1f07e422b3b5348418a596d36c7a2d582688d49b",
+        "c987eff4c100c24f070eb1ff2f2e488539b391f5",
+        "579209412dc414b17283a9df7adf8857eb570a10",
+        "65bfb9a8590bfcd0096fdb6c0c6ae7be4d8ed5c6")]
+    + [(revision, ("test_http_signin.py", "test_http_customers.py",
+                   "test_persistence.py")) for revision in (
+        "48f47851ed43ac0734dcb72183930ae4d86055cc",
+        "00cf47533508fb26ae9bb59dd4f816a025b7ad05",
+        "f983e230de8781e0d1a3df661306cc621f4b0c81",
+        "cb66df1e4988d0b07c2528ba0a1d7f2d3d02d6eb",
+        "bdee80653e6e14256f9d20e7e763acbdf6646af1")])
+
+# The latency's cutoff in milliseconds, the worse repeat's 95th percentile.
+# It is calibrated from the reference build's repeats and a planted slowdown,
+# then frozen here before round 6 registers; until then the latency target
+# is not measured, never met and never failed.
+LATENCY_CUTOFF_MS = None
+
 # The quality radar on ISO/IEC 25010:2023, from round 6. Eight axes in the
 # standard's own order, each the share of its targets met, read against the
 # bare arm. Safety, the ninth characteristic, does not apply to this backend.
 # Each sub-characteristic lists its targets as (what it asks, where the value
-# comes from, the pass condition): a metric row by its key, or a probe by
-# `probe:<name>`. A target is met, not met, or not measured, and a
-# sub-characteristic with no target reads not measured, never 0 %.
+# comes from, the pass condition): a metric row by its key, a security probe
+# by `probe:<name>`, a quality probe by `quality:<name>`, or a hidden-suite
+# module by `suite:<file>`. A target is met, not met, or not measured, and a
+# sub-characteristic with no target reads not measured, never 0 %. This is
+# round 6's table; a pilot round read by the radar keeps its own, below.
 AT_LEAST, AT_MOST = ">=", "<="
 ISO_AXES = (
     ("Functionality", (
         ("Functional completeness", (
             ("every specified name is exported", "surface_missing",
              AT_MOST, 0),)),
-        ("Functional correctness", (
-            ("the hidden suite passes at 98 % or more", "task_success",
-             AT_LEAST, 0.98),)),
+
+        # The export formats are graded by the suite's export modules, so
+        # they take no target of their own here.
+        ("Functional correctness", tuple(
+            ("%s passes whole" % module, "suite:" + module, AT_LEAST, 1.0)
+            for module in HIDDEN_MODULES)),
         ("Functional appropriateness", (
             ("nothing nobody asked for is delivered", "unasked_artifacts",
              AT_MOST, 0),)),
     )),
     ("Performance", (
-        ("Time behaviour", ()),
+        ("Time behaviour", (
+            ("the 95th-percentile latency is within the registered cutoff",
+             "quality:latency_p95_ms", AT_MOST, LATENCY_CUTOFF_MS),)),
         ("Resource utilisation", (
             ("the invoice builder answers in 100 KB or less",
              "builder_bytes", AT_MOST, 100000),
             ("the invoice builder makes at most 3 subrequests",
-             "builder_subrequests", AT_MOST, 3),)),
-        ("Capacity", ()),
+             "builder_subrequests", AT_MOST, 3),
+            ("a page's SQL statements do not grow with an invoice's lines",
+             "quality:n_plus_one", AT_LEAST, 1.0),)),
+        ("Capacity", (
+            ("an invoice of 500 lines is kept, shown and exported whole",
+             "quality:capacity_500_lines", AT_LEAST, 1.0),)),
     )),
     ("Compatibility", (
-        ("Co-existence", ()),
+        ("Co-existence", (
+            ("two instances side by side keep their data and files apart",
+             "quality:coexistence", AT_LEAST, 1.0),)),
+
+        # The changed tree's targets join here once the change task's tree
+        # is scored: the data an earlier build saved still reads.
         ("Interoperability", ()),
     )),
     ("Usability", (
@@ -5792,10 +5870,14 @@ ISO_AXES = (
             ("installs and boots", "reliability", AT_LEAST, 1.0),
             ("at most 10 type errors per KLOC under --strict",
              "mypy_per_kloc", AT_MOST, 10),)),
-        ("Availability", ()),
+        ("Availability", (
+            ("concurrent writes all land, none refused for a lock",
+             "quality:concurrent_writes", AT_LEAST, 1.0),)),
         ("Fault tolerance", (
             ("a malformed request leaks no stack trace",
-             "probe:error_leakage", AT_LEAST, 1.0),)),
+             "probe:error_leakage", AT_LEAST, 1.0),
+            ("a malformed request never answers a server error",
+             "quality:fuzz_robustness", AT_LEAST, 1.0),)),
         ("Recoverability", ()),
     )),
     ("Security", (
@@ -5885,7 +5967,13 @@ ISO_AXES = (
         ("Observability", ()),
     )),
     ("Flexibility", (
-        ("Adaptability", ()),
+
+        # The changed tree's targets join here too once it is scored: a
+        # schema change shipped as a migration, the database named by
+        # configuration.
+        ("Adaptability", (
+            ("the build installs and serves a signed-in page on a second "
+             "Python", "quality:python_portability", AT_LEAST, 1.0),)),
         ("Scalability", ()),
         ("Installability", (
             ("pip install . succeeds in a clean environment", "install",
@@ -5933,21 +6021,99 @@ ISO_EXTRA = {
 }
 
 
-def iso_targets():
+# The pass condition a pilot round's correctness read before round 6 gave
+# each hidden-suite module a target of its own.
+PILOT_CORRECTNESS = (
+    ("the hidden suite passes at 98 % or more", "task_success",
+     AT_LEAST, 0.98),)
+
+# The sources round 6 added; a pilot round's draft reads none of them.
+ROUND6_SOURCES = ("quality:", "suite:")
+
+
+def pilot_axes():
+    """The ISO table a pilot round's post-hoc draft reads: round 6's, less
+    every target round 6 added, with the pilot's correctness target."""
+    return tuple(
+        (axis, tuple(
+            (sub, PILOT_CORRECTNESS if sub == "Functional correctness"
+             else tuple(target for target in targets
+                        if not target[1].startswith(ROUND6_SOURCES)))
+            for sub, targets in subs))
+        for axis, subs in ISO_AXES)
+
+
+def iso_axes_of(trials, round6_targets=False):
+    """The ISO table a run is read by: round 6's for a round after the
+    pilot or where `round6_targets` asks for it, the pilot's otherwise."""
+    return ISO_AXES if iso_rules(trials) or round6_targets else pilot_axes()
+
+
+def iso_targets(axes=ISO_AXES):
     """Every target of the ISO radar, as (axis, sub-characteristic, what it
     asks, source, condition, threshold)."""
     return [(axis, sub, asks, source, condition, threshold)
-            for axis, subs in ISO_AXES for sub, targets in subs
+            for axis, subs in axes for sub, targets in subs
             for asks, source, condition, threshold in targets]
+
+
+def quality_value(trial, name):
+    """A quality probe's value: 1.0 passed and 0.0 failed, or the latency
+    in milliseconds; None where it was not measured."""
+    probe = path(trial, "quality", "probes", name)
+    if not isinstance(probe, dict) or probe.get("missing"):
+        return None
+
+    # A probe the build kept from running failed, whatever else it holds,
+    # and a latency it kept from being read meets no cutoff.
+    if probe.get("lost"):
+        return math.inf if "value" in probe else 0.0
+    if "value" in probe:
+        return probe["value"]
+    passed = probe.get("passed")
+    return None if passed is None else (1.0 if passed else 0.0)
+
+
+def module_value(trial, module):
+    """1.0 where a hidden-suite module passed whole, 0.0 where any of its
+    checks failed, errored or was skipped, where the suite ran out of time,
+    or where the suite's revision held it and it did not run; None where the
+    suite was not run, or its revision did not hold the module."""
+    record = path(trial, "scores", "hidden_suite")
+    if not isinstance(record, dict):
+        return None
+    revision = path(record, "report", "suite_revision")
+    if module in SUITE_LACKS.get(revision, ()):
+        return None
+
+    # A suite that ran out of time was held there by the build under it, so
+    # every module fails, even where the scorer kept no rate from the run.
+    if path(record, "report", "timed_out") is True:
+        return 0.0
+    if record.get("missing"):
+        return None
+    counts = path(record, "report", "modules", module)
+    if not isinstance(counts, dict):
+        return 0.0
+
+    # A skipped check is one nobody ran, so it cannot show the module whole.
+    unproven = sum(counts.get(key) or 0
+                   for key in ("failed", "error", "skipped"))
+    return 1.0 if not unproven and counts.get("passed") else 0.0
 
 
 def iso_value(trial, source):
     """A target's value for one trial: a metric row's reading, a probe's
-    pass, or a reading of the radar's own; None where not measured."""
+    pass, a module's whole pass, or a reading of the radar's own; None
+    where not measured."""
     if source.startswith("probe:"):
         probes = (trial.get("security") or {}).get("probes") or {}
         passed = (probes.get(source[len("probe:"):]) or {}).get("passed")
         return None if passed is None else (1.0 if passed else 0.0)
+    if source.startswith("quality:"):
+        return quality_value(trial, source[len("quality:"):])
+    if source.startswith("suite:"):
+        return module_value(trial, source[len("suite:"):])
     if source in ISO_EXTRA:
         accessor = ISO_EXTRA[source]
     else:
@@ -5963,24 +6129,25 @@ def iso_value(trial, source):
 
 def target_met(trial, source, condition, threshold):
     """Whether one trial meets a target: True, False, or None where its
-    value was not measured."""
+    value was not measured or its threshold is not registered yet."""
     value = iso_value(trial, source)
-    if value is None:
+    if value is None or threshold is None:
         return None
     return value >= threshold if condition == AT_LEAST else value <= threshold
 
 
-def iso_trial_scores(trial, withdrawn=()):
+def iso_trial_scores(trial, withdrawn=(), axes=ISO_AXES):
     """One trial on every axis, as {axis: {sub-characteristic: score}}.
 
     A sub-score is the share of its targets met, over the targets measured,
     and None where none was. A broken build is scored on Reliability alone,
     where the install target fails, and reads None on every other axis. A
-    target reading a metric in `withdrawn` is not measured.
+    target reading a metric in `withdrawn` is not measured. `axes` is the
+    table of targets read.
     """
     broken = works(trial) != 1.0
     scores = {}
-    for axis, subs in ISO_AXES:
+    for axis, subs in axes:
         per_sub = {}
         for sub, targets in subs:
             if broken and axis != BROKEN_AXIS:
@@ -6007,16 +6174,16 @@ def iso_axis_score(per_sub):
     return 100.0 * statistics.fmean(measured) if measured else None
 
 
-def iso_table(trials, withdrawn=()):
+def iso_table(trials, withdrawn=(), axes=ISO_AXES):
     """The ISO axes as rows of a table, one row per axis under the key
     `iso:<axis>`, each trial's score in points, better up, so the contrast
     machinery reads them like any other row; `withdrawn` names the metrics
-    no target may read."""
+    no target may read, and `axes` is the table of targets read."""
     table = {}
     for axis, _ in ISO_AXES:
         table["iso:" + axis] = {"label": axis, "direction": UP, "values": {}}
     for name, trial in sorted(trials.items()):
-        scores = iso_trial_scores(trial, withdrawn)
+        scores = iso_trial_scores(trial, withdrawn, axes)
         for axis, _ in ISO_AXES:
             row = table["iso:" + axis]["values"]
             row.setdefault(arm_of(name), {})[index_of(name)] = iso_axis_score(
@@ -6258,15 +6425,15 @@ ISO_READING = (
 
 
 def iso_axis_lines(trials, iso, arms, results=None, withdrawn=(),
-                   blocks=None):
+                   blocks=None, axes=ISO_AXES):
     """One table per axis: its sub-characteristics, each arm's mean share
     of their targets met, and the targets each asks; a target reading a
-    metric in `withdrawn` is not measured, and a contrast over fewer pairs
-    than `blocks` names its count."""
+    metric in `withdrawn` is not measured, a contrast over fewer pairs than
+    `blocks` names its count, and `axes` is the table of targets read."""
     lines = []
-    per_trial = {name: iso_trial_scores(trial, withdrawn)
+    per_trial = {name: iso_trial_scores(trial, withdrawn, axes)
                  for name, trial in trials.items()}
-    for axis, subs in ISO_AXES:
+    for axis, subs in axes:
         lines.extend(["### %s" % axis, ""])
         lines.append("| Sub-characteristic | %s | Targets |"
                      % " | ".join("`%s`" % arm for arm in arms))
@@ -6334,12 +6501,15 @@ def aggregate(seed, trials, table, results, withdrawn, check, iso,
     return payload
 
 
-def iso_reading(trials, seed, withdrawn=()):
-    """The ISO radar's table, its contrasts against the bare arm and the
-    metrics withdrawn from it, as one triple, for a run read with it."""
+def iso_reading(trials, seed, withdrawn=(), axes=None):
+    """The ISO radar's table, its contrasts against the bare arm, the
+    metrics withdrawn from it and the table of targets it read, for a run
+    read with it; `axes` defaults to the run's own."""
     withdrawn = tuple(withdrawn)
-    iso = iso_table(trials, withdrawn)
-    return iso, iso_contrasts(iso, seed, crossed_labels(trials)), withdrawn
+    axes = iso_axes_of(trials) if axes is None else axes
+    iso = iso_table(trials, withdrawn, axes)
+    return (iso, iso_contrasts(iso, seed, crossed_labels(trials)), withdrawn,
+            axes)
 
 
 # How the plain report reads the ISO radar, under it.
@@ -6736,6 +6906,9 @@ def parse_args(argv):
                         help="read a pilot round by the ISO radar: its "
                              "radar, verdicts and screen, as a draft only; "
                              "its registered verdicts stand")
+    parser.add_argument("--round6-targets", action="store_true",
+                        help="with --iso, read the pilot round by round 6's "
+                             "targets rather than its own; a draft still")
     parser.add_argument("--self-test", action="store_true",
                         help="check the verdict rule against worked cases; "
                              "read no run")
@@ -7797,18 +7970,265 @@ def iso_checks(seed):
                    and "- Cost: about $8.80 a run, against $4.00 with no "
                    "rules file." in words, words[:8]))
 
-    # Every target reads a metric row, a probe security.py runs, or a
-    # reading of the radar's own; a target pointed elsewhere would read not
-    # measured for every trial without failing.
+    # Every target reads a metric row, a probe security.py or quality.py
+    # runs, a hidden-suite module, or a reading of the radar's own; a target
+    # pointed elsewhere would read not measured for every trial without
+    # failing.
+    import quality
     import security
-    probes = set(security.SECURITY_PROBES + security.DATA_PROTECTION_PROBES)
+    readers = {"probe:": set(security.SECURITY_PROBES
+                             + security.DATA_PROTECTION_PROBES),
+               "quality:": set(quality.PROBES),
+               "suite:": set(HIDDEN_MODULES)}
     keys = {key for key, _, _, _ in METRICS} | set(ISO_EXTRA)
-    stray = sorted(source for _, _, _, source, _, _ in iso_targets()
-                   if not (source[len("probe:"):] in probes
-                           if source.startswith("probe:")
-                           else source in keys))
+
+    def reads(source):
+        prefix = next((prefix for prefix in readers
+                       if source.startswith(prefix)), None)
+        if prefix is None:
+            return source in keys
+        return source[len(prefix):] in readers[prefix]
+
+    stray = sorted(source for _, _, _, source, _, _
+                   in iso_targets() + iso_targets(pilot_axes())
+                   if not reads(source))
     checks.append(("every target reads a metric row, a probe or a reading "
                    "of the radar's own", not stray, stray))
+
+    # A quality probe the build kept from running is lost and fails, as a
+    # security probe does, whatever else it holds; one the reader could not
+    # run is missing and not measured.
+    trial = planted(probes={"error_leakage": True})
+    trial["quality"] = {"probes": {
+        "fuzz_robustness": {"lost": "the application raised"},
+        "concurrent_writes": {"passed": False, "missing": "the reader failed"},
+        "coexistence": {"passed": True}}}
+    scores = iso_trial_scores(trial)
+    got = (scores["Reliability"]["Fault tolerance"],
+           scores["Reliability"]["Availability"],
+           scores["Compatibility"]["Co-existence"],
+           scores["Performance"]["Capacity"])
+    checks.append(("a lost quality probe reads failed, a missing one not "
+                   "measured", got == (0.5, None, 1.0, None), got))
+
+    # Each reading the quality reader files, built by its own functions,
+    # reads as its target does: every probe lost fails, every probe missing,
+    # a trial whose tree is gone among them, is not measured, and the 500
+    # lines, priced as five times their first 100, pass or fail as one.
+    def read_as(probes):
+        trial = planted()
+        trial["quality"] = {"probes": probes}
+        run = {"hybrid-1": trial, "none-1": trial}
+        return {target[3]: target_met(trial, target[3], target[4], target[5])
+                for target in iso_targets(iso_axes_of(run))
+                if target[3].startswith("quality:")}
+
+    gone = read_as({name: quality.missing_reading(
+        name, "source tree not present: x") for name in quality.PROBES})
+    lost = read_as({name: quality.lost_reading(name, "would not boot")
+                    for name in quality.PROBES})
+    scaled = [read_as({"capacity_500_lines": {"passed": ok, "total": "1.00"}})[
+        "quality:capacity_500_lines"] for ok in (True, False)]
+    pass_fail = sorted("quality:" + name for name in quality.PROBES
+                       if name not in quality.MEASURED)
+    got = (sorted(gone) == sorted("quality:" + name
+                                  for name in quality.PROBES),
+           set(gone.values()), {name: lost[name] for name in pass_fail},
+           lost["quality:latency_p95_ms"], scaled)
+    checks.append(("every reading the quality reader files reads as its "
+                   "target: lost fails, missing or a gone tree is not "
+                   "measured",
+                   got == (True, {None}, dict.fromkeys(pass_fail, False),
+                           None, [True, False]), got))
+
+    # The latency target reads the registered cutoff. With none registered
+    # it is not measured, never met and never failed, and holds no screen;
+    # with one, a latency within it is met, one past it or lost is not.
+    def cut(ms):
+        return tuple((axis, tuple((sub, tuple(
+            (asks, source, condition,
+             ms if source == "quality:latency_p95_ms" else threshold)
+            for asks, source, condition, threshold in targets))
+            for sub, targets in subs)) for axis, subs in ISO_AXES)
+
+    def timing(axes):
+        return tuple((axis, subs if axis != "Performance" else tuple(
+            (sub, targets if sub == "Time behaviour" else ())
+            for sub, targets in subs)) for axis, subs in axes)
+
+    timed = planted()
+    timed["quality"] = {"probes": {"latency_p95_ms": {
+        "value": 40.0, "repeats": [38.0, 40.0]}}}
+    slow = planted()
+    slow["quality"] = {"probes": {"latency_p95_ms": {
+        "value": None, "lost": "the application would not boot"}}}
+    got = (LATENCY_CUTOFF_MS,
+           iso_trial_scores(timed)["Performance"]["Time behaviour"],
+           iso_targeted("Performance", timing(ISO_AXES)),
+           iso_targeted("Performance", timing(cut(50.0))),
+           [iso_trial_scores(trial, (), cut(ms))["Performance"][
+               "Time behaviour"] for trial, ms in ((timed, 50.0),
+                                                   (timed, 30.0),
+                                                   (slow, 50.0))])
+    checks.append(("the latency target is not measured until its cutoff is "
+                   "registered, then met within it",
+                   got == (None, None, False, True, [1.0, 0.0, 0.0]), got))
+
+    # A module passes whole only where every check in it ran and passed: a
+    # skipped check cannot show it whole.
+    def suite(modules, missing=None):
+        trial = planted()
+        trial["scores"]["hidden_suite"] = {
+            "value": 0.9, "missing": missing,
+            "report": {"modules": modules}}
+        return trial
+
+    whole = {"passed": 5, "failed": 0, "error": 0, "skipped": 0}
+    got = [module_value(suite({"test_seed.py": dict(whole, **change)}),
+                        "test_seed.py")
+           for change in ({}, {"failed": 1}, {"error": 1}, {"skipped": 1})]
+    got.append(module_value(suite({"test_seed.py": whole}, "no install"),
+                            "test_seed.py"))
+    checks.append(("a module passes whole only where no check failed, "
+                   "errored or was skipped",
+                   got == [1.0, 0.0, 0.0, 0.0, None], got))
+
+    # A suite the build held past its time fails every module, both where
+    # pytest wrote no report, which the scorer files as missing, and where
+    # it wrote one partway; the records are the scorer's own, from the
+    # grader's timed-out report. A suite never run is still not measured.
+    import score
+
+    def timed_out(raw):
+        def grader(argv, cwd=None, env=None, timeout=None, stdin=None):
+            report = {"ok": False, "timed_out": True, "exit_status": None,
+                      "suite_revision": env["HIDDEN_SUITE_REVISION"],
+                      "suite": "build", "python": "3.12.10",
+                      "elapsed_seconds": 1800.0}
+            if raw:
+                report["modules"] = {module: dict(whole) for module in raw}
+                counts = dict(passed=5 * len(raw), failed=0, skipped=0,
+                              error=0, total=5 * len(raw))
+            else:
+                report["reason"] = "pytest wrote no report"
+                report["output_tail"] = ""
+                counts = dict(passed=0, failed=0, skipped=0, error=0,
+                              total=0)
+            graded = counts["passed"] + counts["failed"] + counts["error"]
+            report.update(counts=counts, graded=graded,
+                          pass_rate=counts["passed"] / graded if graded
+                          else 0.0)
+            with io.open(argv[argv.index("--report") + 1], "w",
+                         encoding="utf-8") as handle:
+                json.dump(report, handle)
+            return {"argv": list(argv), "cwd": cwd, "status": None,
+                    "stdout": "", "stderr": "", "failed": None}
+
+        trial = planted()
+        held = tempfile.mkdtemp(prefix="efficacy-report-suite-")
+        real = score.run
+        score.run = grader
+        try:
+            trial["scores"]["hidden_suite"] = score.run_hidden_suite(
+                os.path.join(held, "venv"), {
+                    "revision": "a8e79354eda873c72c6da7319cd0f93865a16812",
+                    "path": held}, held, "build")
+        finally:
+            score.run = real
+            shutil.rmtree(held, ignore_errors=True)
+        return trial
+
+    unreported, partway = timed_out(()), timed_out(HIDDEN_MODULES[:10])
+    unrun = suite({}, "the trial did not install")
+    got = (bool(path(unreported, "scores", "hidden_suite", "missing")),
+           {module_value(unreported, module) for module in HIDDEN_MODULES},
+           {module_value(partway, module) for module in HIDDEN_MODULES},
+           module_value(unrun, "test_seed.py"))
+    checks.append(("a suite the build held past its time fails every module, "
+                   "and one never run is not measured",
+                   got == (True, {0.0}, {0.0}, None), got))
+
+    # A module absent from a report graded by a revision that did not hold
+    # it is not measured, so correctness is the share of the modules that
+    # ran, 17 of 18 here, not 17 of 19. Absent under a revision that held
+    # it, it failed to collect or ran out of time, and is not met.
+    ran = {module: dict(whole) for module in HIDDEN_MODULES
+           if module != "test_persistence.py"}
+    ran["test_browser.py"] = dict(whole, failed=1)
+    trial = suite(ran)
+    trial["scores"]["hidden_suite"]["report"]["suite_revision"] = (
+        "1f07e422b3b5348418a596d36c7a2d582688d49b")
+    held = suite(ran)
+    held["scores"]["hidden_suite"]["report"]["suite_revision"] = (
+        "a8e79354eda873c72c6da7319cd0f93865a16812")
+    got = (module_value(trial, "test_persistence.py"),
+           round(iso_trial_scores(trial)["Functionality"][
+               "Functional correctness"], 4),
+           module_value(held, "test_persistence.py"),
+           round(iso_trial_scores(held)["Functionality"][
+               "Functional correctness"], 4))
+    checks.append(("a module absent from a report is not measured only where "
+                   "the suite's revision did not hold it",
+                   got == (None, round(17 / 18, 4), 0.0, round(17 / 19, 4)),
+                   got))
+
+    # A pilot round read by the ISO radar keeps the targets its drafts read
+    # before round 6 added its own: the suite's pass rate, 99 % here, and
+    # no quality probe, unless round 6's are asked for by name.
+    pilot = dict(suite(ran), quality={"probes": {
+        "fuzz_robustness": {"passed": False}}})
+    pilot["scores"]["hidden_suite"]["value"] = 0.99
+    pilot["scores"]["hidden_suite"]["report"]["suite_revision"] = (
+        "1f07e422b3b5348418a596d36c7a2d582688d49b")
+    pilot["security"]["probes"]["error_leakage"] = {"passed": True}
+    run = {"lazyref-1": pilot, "none-1": pilot}
+    later = {"hybrid-1": pilot, "none-1": pilot}
+
+    def read(axes):
+        scores = iso_trial_scores(pilot, (), axes)
+        return (round(scores["Functionality"]["Functional correctness"], 4),
+                scores["Reliability"]["Fault tolerance"])
+
+    drafted = iso_reading(run, seed)
+    got = (len(iso_targets(drafted[3])), read(drafted[3]),
+           read(iso_axes_of(run, True)), iso_axes_of(later) == ISO_AXES,
+           POSTHOC_ROUND6_NOTE in posthoc_iso_lines(drafted)[0],
+           POSTHOC_ROUND6_NOTE in posthoc_iso_lines(
+               iso_reading(run, seed, (), ISO_AXES))[0])
+    checks.append(("a pilot round read by the ISO radar keeps the targets it "
+                   "had before round 6, unless round 6's are asked for",
+                   got == (48, (1.0, 1.0), (round(17 / 18, 4), 0.5), True,
+                           False, True), got))
+
+    # The quality reading is loaded beside the security reading, each from
+    # its own folder, and round 6's targets on a run no pilot draft reads
+    # are refused rather than ignored.
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-quality-")
+    try:
+        root = os.path.join(scratch, "round")
+        area = scoring_area(root)
+        for kind, payload in (
+                ("scores", {"name": "none-1"}),
+                ("security-scores", {"name": "none-1", "probes": {}}),
+                ("quality-scores", {"name": "none-1", "probes": {
+                    "coexistence": {"passed": True}}})):
+            os.makedirs(os.path.join(area, kind))
+            with io.open(os.path.join(area, kind, "none-1.json"), "w",
+                         encoding="utf-8") as handle:
+                json.dump(payload, handle)
+        loaded = load(root)["none-1"]
+        with contextlib.redirect_stdout(io.StringIO()):
+            refused = main(["--root", root, "--round6-targets", "--out-dir",
+                            os.path.join(scratch, "out")])
+        got = (path(loaded, "quality", "probes", "coexistence", "passed"),
+               path(loaded, "security", "probes"), refused,
+               os.path.exists(os.path.join(scratch, "out")))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    checks.append(("the report loads a trial's quality reading beside its "
+                   "security reading", got[:2] == (True, {}), got))
+    checks.append(("round 6's targets are refused where no pilot draft "
+                   "reads them", got[2:] == (2, False), got))
     checks.append(("every axis carries a margin",
                    set(ISO_MARGINS) == {axis for axis, _ in ISO_AXES},
                    sorted(ISO_MARGINS)))
@@ -7819,7 +8239,8 @@ def iso_checks(seed):
     table = iso_table(run)
     lines = iso_axis_lines(run, table, ["none", "hybrid"])
     thin = [line for line in lines if line.startswith("| Installability |")]
-    empty = [line for line in lines if line.startswith("| Co-existence |")]
+    empty = [line for line in lines
+             if line.startswith("| Interoperability |")]
     checks.append(("the tables mark a thin sub-characteristic and read an "
                    "empty one as not measured",
                    len(thin) == 1 and "(fewer than 3 targets)" in thin[0]
@@ -8376,6 +8797,12 @@ def main(argv):
         out_dir = reports_dir()
 
     posthoc_iso = options.iso and not iso_rules(trials)
+
+    # Round 6's targets on a pilot round change only its ISO draft, so the
+    # option is refused where no draft would read it.
+    if options.round6_targets and not posthoc_iso:
+        print("refused: --round6-targets reads a pilot round, with --iso")
+        return 2
     problem = (posthoc_iso_problem(posthoc_iso, out_dir)
                or iso_cross_problem(iso_rules(trials) or posthoc_iso,
                                     options.cross_check))
@@ -8467,7 +8894,8 @@ def main(argv):
             return 2
         check = cross_check(trials, other, options.seed)
         disagree(results, check)
-    iso = (iso_reading(trials, options.seed, withdrawn)
+    iso = (iso_reading(trials, options.seed, withdrawn,
+                       iso_axes_of(trials, options.round6_targets))
            if iso_rules(trials) or posthoc_iso else None)
     uses = map_uses(options.root, trials) if is_round5e(trials) else None
     target = write_report(options.root, trials, table, results, options.seed,

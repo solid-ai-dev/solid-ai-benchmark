@@ -181,6 +181,9 @@ when:
 | FR-12-16 | Self-test | `report.py` "an ISO-read arm's verdict is worse on an axis worse, better on one better with none worse, and no clear gain otherwise"<br>`report.py` "the plain words name the axes behind an ISO-read verdict"<br>`report.py` "the summary's axis table of an ISO-read run is the ISO radar's, marked as the chart is" |
 | FR-12-17 | Self-test | `report.py` "the ISO screen drops an arm worse on an axis, ranks the rest by axes better and then by cost, and keeps four"<br>`report.py` "an axis no target measures neither holds nor moves the ISO screen"<br>`report.py` "an axis that lists targets but has no reading yet holds the ISO screen"<br>`report.py` "the ISO screen names the arms round 6 runs and the axis that put one out" |
 | FR-12-18 | Self-test | `report.py` "a pilot round read by the ISO radar is only a draft, never in or under docs/reports/, and keeps its aggregate beside the registered one"<br>`report.py` "a pilot round read by the ISO radar says it is post hoc and that its axes decide"<br>`report.py` "a run read by the ISO radar refuses a cross-check, whose withheld rows its markers would still count" |
+| FR-12-21 | Self-test | `report.py` "the report loads a trial's quality reading beside its security reading"<br>`report.py` "a lost quality probe reads failed, a missing one not measured"<br>`report.py` "every reading the quality reader files reads as its target: lost fails, missing or a gone tree is not measured"<br>`report.py` "the latency target is not measured until its cutoff is registered, then met within it" |
+| FR-12-22 | Self-test | `report.py` "a module passes whole only where no check failed, errored or was skipped"<br>`report.py` "a module absent from a report is not measured only where the suite's revision did not hold it"<br>`report.py` "a suite the build held past its time fails every module, and one never run is not measured" |
+| FR-12-23 | Self-test | `report.py` "a pilot round read by the ISO radar keeps the targets it had before round 6, unless round 6's are asked for"<br>`report.py` "round 6's targets are refused where no pilot draft reads them" |
 
 ## 13 Records and archive
 
@@ -196,6 +199,7 @@ when:
 | FR-13-08 | Self-test | `generate_arm.py` "a built file naming a tool is refused" |
 | FR-13-09 | Self-test | `report.py` "with no --out-dir it lands in this repository's docs/reports/, needing the stamp but no templates source" |
 | FR-13-10 | Self-test | `generate_arm.py` "every committed arm is what the script builds at its recorded ref, byte for byte, the same twice" |
+| FR-13-21 | Self-test | `reuse.py` "the readings are filed under the word and name their origin"<br>`reuse.py` "a quality reading comes along with its trial"<br>`reuse.py` "the judgings keep their labels and the map is theirs alone" |
 
 ## 14 One run at a time
 

@@ -27,6 +27,7 @@
   - **Judge:** `judge.py`, which bundles a build and has a model score it.
   - **Report:** `report.py`, which reads a round and writes its report.
   - **Archive:** `archive.py`, which carries a round to the private archive.
+  - **Reuse:** `reuse.py`, which brings an earlier round's trials into a run.
   - **Arm generator:** `generate_arm.py`, which writes a generated arm's file.
   - **Control builder:** `control/control.py`, which builds the judge's
     control trees.
@@ -191,6 +192,9 @@
 | FR-12-16 | From round 6 the benchmark shall give each approach its verdict from the ISO radar's axes: Yes where an axis is better and none worse, Worse where any is worse, No where none moved; and the summary's axis table shall be the ISO radar's. | Report |
 | FR-12-17 | The benchmark shall screen round 6's candidates on the ISO radar's axes: out on an axis worse, the rest ranked by axes better and then by mean cost, the top four kept; an axis no target measures shall neither hold nor move it, and an axis that lists targets but has no reading yet shall hold it. | Report |
 | FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/reports/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
+| FR-12-21 | From round 6 the benchmark shall load each trial's quality reading beside its security reading and read each quality probe as an ISO target: a lost probe fails, a missing one is not measured, and the latency target is not measured until its cutoff is registered. | Report |
+| FR-12-22 | From round 6 the benchmark shall read functional correctness as one target per hidden-suite build module, met only where every check in it ran and passed; a module the trial's report lacks is not measured where the suite's revision did not hold it, and not met where it did; a suite that ran out of time fails every module. | Report |
+| FR-12-23 | The benchmark shall read a pilot round by the ISO radar with the targets it had before round 6, and by round 6's only where asked, refusing that request where no pilot draft would read it. | Report |
 
 ### 13 Records and archive
 
@@ -206,6 +210,7 @@
 | FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
 | FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
 | FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
+| FR-13-21 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
 
 ### 14 One run at a time
 
@@ -292,7 +297,7 @@
 
 | Artefact | Contents | Used by |
 | -------- | -------- | ------- |
-| Hidden suite | 534 build checks across 18 modules and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
+| Hidden suite | At revision `a8e7935`, 544 build checks across 19 modules, 5 of them browser flows that skip where no browser is installed, and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
 | Reference implementation | A build written from the spec alone, and the change task made on it from the change prompt alone. Private, beside the hidden suite. | QG-01-02 |
 | Mutation control | Fifteen spec violations, each planted alone in the reference implementation. | QG-01-02 |
 | Control fixture | The judge's control trees, built by `control/control.py` from two pinned applications; see [validation](validation.md). | QG-01-03, QG-01-04 |
@@ -311,15 +316,23 @@
   is the mean of the judge's three readings on its 1 to 5 scale.
 - **Fixed:** before round 6's first trial, for this app; a change is a new
   registration.
-- **Read from:** the scorer's row, the probe, or the judge's row the target
-  reads; a build the reading did not reach is not measured, never a fail.
+- **Read from:** the scorer's row, the probe, the hidden-suite module, or the
+  judge's row the target reads; a build the reading did not reach is not
+  measured, never a fail. A probe the build itself kept from running is lost,
+  and fails.
+- **Pilot drafts:** a pilot round read by the ISO radar keeps the targets it
+  had before round 6: the hidden suite at 98 % or more for correctness, and
+  no quality probe. Round 6's are read there only when asked for.
+- **Later:** interoperability and the migration targets come with the
+  changed tree's scoring. The export formats take no target of their own:
+  the hidden suite's export modules grade them.
 
 ### 01 Functional suitability
 
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-01-01 | Functional completeness | Every name the specification requires is exported. | Specified names missing |
-| QT-01-02 | Functional correctness | The hidden suite passes at 98 % or more. | Hidden-suite pass rate |
+| QT-01-02 | Functional correctness | Each of the hidden suite's 19 build modules passes whole, one target per module: every check ran and passed, none failed, errored or skipped. A module missing from a build's report is not measured where the suite's revision did not hold it, and not met where it did; a suite that ran out of time fails every module. | Hidden suite, per module |
 | QT-01-03 | Functional appropriateness | Nothing nobody asked for is delivered. | Artifacts nobody asked for |
 
 ### 02 Performance efficiency
@@ -328,6 +341,15 @@
 | -- | ------------------ | ------ | --------- |
 | QT-02-01 | Resource utilisation | The invoice builder answers in 100 KB or less. | Invoice builder response size |
 | QT-02-02 | Resource utilisation | The invoice builder makes at most 3 subrequests. | Invoice builder subrequests |
+| QT-02-03 | Time behaviour | The 95th-percentile latency, the worse of two repeats, is within the cutoff registered before round 6; not measured until one is. | Quality probe `latency_p95_ms` |
+| QT-02-04 | Resource utilisation | A page's SQL statements do not grow with an invoice's lines. | Quality probe `n_plus_one` |
+| QT-02-05 | Capacity | An invoice of 500 lines is kept, shown and exported whole. | Quality probe `capacity_500_lines` |
+
+### 03 Compatibility
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-03-01 | Co-existence | Two instances side by side keep their data and files apart. | Quality probe `coexistence` |
 
 ### 04 Interaction capability
 
@@ -343,6 +365,8 @@
 | QT-05-01 | Faultlessness | The build installs and boots. | Installs and boots |
 | QT-05-02 | Faultlessness | At most 10 type errors per KLOC under `mypy --strict`. | Type errors per KLOC |
 | QT-05-03 | Fault tolerance | A malformed request leaks no stack trace. | Probe `error_leakage` |
+| QT-05-04 | Availability | Concurrent writes all land, none refused for a lock. | Quality probe `concurrent_writes` |
+| QT-05-05 | Fault tolerance | A malformed request never answers a server error. | Quality probe `fuzz_robustness` |
 
 ### 06 Security
 
@@ -396,3 +420,4 @@
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-08-01 | Installability | `pip install .` succeeds in a clean environment. | Installs in a clean environment |
+| QT-08-02 | Adaptability | The build installs and serves a signed-in page on a second Python. | Quality probe `python_portability` |

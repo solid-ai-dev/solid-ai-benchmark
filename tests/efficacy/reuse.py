@@ -3,11 +3,11 @@ they were.
 
 Round 5d reuses round 5c's trials rather than running them again. This
 module copies what the report reads for a trial — its run record, frozen
-tarball, transcripts, score, judging and security reading — from the earlier
-root and scoring area into the new ones, and marks each copy with where it
-came from. The earlier root is never touched, and nothing copied is scored or
-judged again: the scorer, the judge and the security reader skip a trial
-whose result is already there.
+tarball, transcripts, score, judging, and security and quality readings —
+from the earlier root and scoring area into the new ones, and marks each copy
+with where it came from. The earlier root is never touched, and nothing
+copied is scored or judged again: the scorer, the judge and the security and
+quality readers skip a trial whose result is already there.
 """
 
 import argparse
