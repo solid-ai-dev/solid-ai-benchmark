@@ -3,11 +3,11 @@ they were.
 
 Round 5d reuses round 5c's trials rather than running them again. This
 module copies what the report reads for a trial — its run record, frozen
-tarball, transcripts, score, judging and security reading — from the earlier
-root and scoring area into the new ones, and marks each copy with where it
-came from. The earlier root is never touched, and nothing copied is scored or
-judged again: the scorer, the judge and the security reader skip a trial
-whose result is already there.
+tarball, transcripts, score, judging, and security and quality readings —
+from the earlier root and scoring area into the new ones, and marks each copy
+with where it came from. The earlier root is never touched, and nothing
+copied is scored or judged again: the scorer, the judge and the security and
+quality readers skip a trial whose result is already there.
 """
 
 import argparse
@@ -31,7 +31,7 @@ from harness import (ARMS, PROMPT, REGISTRATIONS, TrialError,  # noqa: E402
 
 # The scoring area's per-trial readings, each a JSON file named for the
 # trial, that a reused trial brings with it.
-READINGS = ("scores", "security-scores")
+READINGS = ("scores", "security-scores", "quality-scores")
 
 
 def existing_file(directory, name):
@@ -331,6 +331,10 @@ def self_test():
          and not os.path.exists(os.path.join(area, "judge", "T3.json"))
          and loaded(area, "judge", "map.json")["blind"]
          == {"inline-1": "T2", "hand-1": "T1"}),
+        ("a quality reading comes along with its trial",
+         os.path.isfile(os.path.join(area, "quality-scores", "inline-1.json"))
+         and loaded(area, "quality-scores", "inline-1.json")["reused_from"][
+             "name"] == "inline-1"),
         ("the earlier round's tool lock comes along",
          io.open(os.path.join(area, "tool-lock.txt"),
                  encoding="utf-8").read() == "ruler==1.0\n"),

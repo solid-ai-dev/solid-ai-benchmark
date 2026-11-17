@@ -22,6 +22,7 @@ dependency with its keyword.
 | `score.py` | Installs each frozen trial cleanly, runs the hidden suite, the static tools and the adherence checklist, counts scope and cost | The run root, the hidden suite, `scoring-requirements.txt`, `toolconfig/` | `scores/`, `scores-change/` |
 | `probes.py` | The structural and web-quality probes, run inside the trial's own interpreter | A trial's tree | Its findings, to `score.py` |
 | `security.py` | Seeds each app, signs in its administrator, runs the 11 security and 3 data-protection probes | The scored trees | `security-scores/` |
+| `quality.py` | Signs in each app's administrator and runs the quality probes in process: malformed requests, concurrent writes, latency, a 500-line invoice, SQL per invoice line, two instances side by side; then installs the build on Python 3.14 and serves a signed-in page | The scored trees | `quality-scores/` |
 | `judge.py` | Builds a blind bundle per trial, runs the judge CLI against the rubric, checks every quoted line | The scored trees | `judge/` |
 | `control/control.py` | Builds the rubric control: trees damaged or improved on one row each, from two pinned bases | `base.zip`, `base-2.zip`, `overlay/` | A control root for `judge.py` |
 | `report.py` | Pairs trials, computes intervals and verdicts, applies withdrawals, prints the report | The run root, the scoring area, `withdrawn.json` | `docs/reports/YYYY-MM-DD-efficacy.md` in this repository |
@@ -73,6 +74,7 @@ are still read.
 | `tool-lock.txt` | The tool versions every trial is measured with |
 | `scores/`, `scores-change/` | One score per build trial and per change task |
 | `security/`, `security-scores/` | Each trial's probe files, and its readings; the probe environment goes once it is read |
+| `quality/`, `quality-scores/` | Each trial's quality probe files, and its readings; both environments go once they are read |
 | `judge/` | Each blind bundle, its judgings and the unblinding map |
 | `archived.json` | The stamp a verified archive writes, with the hash of every file the report reads |
 | `<tool>.running` | A claim that one run of that tool is working here |
