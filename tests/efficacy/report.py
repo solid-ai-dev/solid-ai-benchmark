@@ -39,12 +39,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import archive  # noqa: E402
 import lib  # noqa: E402
 from generate_arm import RECORDED, record_path  # noqa: E402
-from harness import (ARMS, ARMS_DIR, PROMPT, ROUND5_ARMS,  # noqa: E402
-                     ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS, ROUND5E_ARMS,
-                     SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING, TrialError,
-                     canonical, git, reach, read_transcripts, scoring_area,
-                     split_name, transcript_files,
-                     trial_name)
+from harness import (ARMS, ARMS_DIR, PROMPT, REGISTRATIONS,  # noqa: E402
+                     ROUND5_ARMS, ROUND5_K, ROUND5_SPEC, ROUND5D_ARMS,
+                     ROUND5E_ARMS, SCORABLE, TEMPLATES_ENV, VENDORED, VOIDING,
+                     TrialError, canonical, git, reach, read_transcripts,
+                     read_change_prompt, recorded_round,
+                     registration_digest, scoring_area, split_name,
+                     text_digest, transcript_files, trial_name)
 from harness import name_of as trial_of  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -593,11 +594,13 @@ def non_inferior(key, interval, direction, baseline_mean=None, margins=None):
     return {"margin": label, "within": degradation <= margin}
 
 
-def load(root):
+def load(root, named=None):
     """Every scored trial, with its judging attached where one exists.
 
     Keyed by canonical name, so a trial's score, judging and reading meet
-    however each spelled it.
+    however each spelled it. For a round `named` by its run records, a change
+    task whose build trial has no score stands as a trial of its own, its
+    build readings empty and marked `change_only`.
     """
     area = scoring_area(root)
     trials = {}
@@ -625,8 +628,9 @@ def load(root):
         elif trials[name]["judge"] is None:
             trials[name]["judge"] = judging
 
-    # A change task sits beside its own build trial, so one whose build trial
-    # was never scored has nothing to pair with and is left out.
+    # A pilot round's change task ran on its own build trial, so one whose
+    # build trial was never scored has nothing to pair with and is left out.
+    # A named round's starts from a fixture, so it stands without its build.
     for file in sorted(glob.glob(os.path.join(area, "scores-change",
                                               "*.json"))):
         with io.open(file, encoding="utf-8") as handle:
@@ -634,18 +638,52 @@ def load(root):
         name = canonical(change.get("name") or "")
         if name in trials:
             trials[name]["change"] = change
+        elif named is not None:
+            trials[name] = change_only({"change": change})
 
     # The security and quality readings each sit beside their trial's score,
-    # one file a trial, named for it.
+    # one file a trial, named for it; a change task standing alone takes none.
     for kind, key in (("security-scores", "security"),
                       ("quality-scores", "quality")):
         for file in sorted(glob.glob(os.path.join(area, kind, "*.json"))):
             with io.open(file, encoding="utf-8") as handle:
                 reading = json.load(handle)
             name = canonical(reading.get("name") or "")
-            if name in trials:
+            if name in trials and not trials[name].get("change_only"):
                 trials[name][key] = reading
     return trials
+
+
+def round_trials(root):
+    """A root's trials as its report and its archive's verify read them, and
+    why they cannot be read: (trials, problem)."""
+
+    # A round its run records name is read as that round, never under the
+    # pilot's rules its arms' names would suggest, and records missing its
+    # identity are refused rather than read as the pilot's.
+    named, problem = recorded_round(root)
+    if problem:
+        return {}, problem
+    trials = load(root, named)
+    if named is not None:
+        for trial in trials.values():
+            trial["round"] = named
+    return trials, None
+
+
+def leave_out_reached(root, trials):
+    """Leave out of `trials`, in place, every trial whose scan finds a reach,
+    by the rule of the round they are; return the names left out."""
+    return exclude_reached(trials, reaches(root),
+                           per_task=named_round(trials) is not None)
+
+
+def change_only(trial):
+    """A trial, in place, as its change task alone: its build readings
+    emptied, so every build row reads it as not measured."""
+    trial.update({"scores": {}, "judge": None, "judgings": [],
+                  "security": None, "quality": None, "change_only": True})
+    return trial
 
 
 def arm_of(name):
@@ -664,23 +702,35 @@ def ordered(names):
         else len(position), index_of(name)))
 
 
+def named_round(trials):
+    """The round the run records name for these trials, or None for a run
+    from before rounds were named."""
+    return next((trial.get("round") for trial in trials.values()
+                 if trial.get("round")), None)
+
+
+# A round from 6 on may reuse a pilot arm's name, so the pilot's rounds are
+# inferred from the arms only for a run whose records name no round.
 def is_round5(trials):
     """Whether the run holds a round-5 arm, so that round's registration,
     its K and its margins, governs it."""
-    return (any(arm_of(name) in ROUND5_ARMS for name in trials)
-            or is_round5d(trials) or is_round5e(trials))
+    return (named_round(trials) is None
+            and (any(arm_of(name) in ROUND5_ARMS for name in trials)
+                 or is_round5d(trials) or is_round5e(trials)))
 
 
 def is_round5d(trials):
     """Whether the run holds a round-5d arm, so that round's registration
     and its verdict rules govern it."""
-    return any(arm_of(name) in ROUND5D_ARMS for name in trials)
+    return (named_round(trials) is None
+            and any(arm_of(name) in ROUND5D_ARMS for name in trials))
 
 
 def is_round5e(trials):
     """Whether the run holds a round-5e arm, so that round's registration
     governs it, under round 5d's verdict rules."""
-    return any(arm_of(name) in ROUND5E_ARMS for name in trials)
+    return (named_round(trials) is None
+            and any(arm_of(name) in ROUND5E_ARMS for name in trials))
 
 
 def later_rules_of(trials):
@@ -696,17 +746,30 @@ ROUND5_RUN = ("none", "inline", "hybrid", "reference", "skills")
 
 def round_arms(trials):
     """The arms the run's round registers as fresh trials."""
+    if named_round(trials) is not None:
+        return tuple(REGISTRATIONS[named_round(trials)]["arms"])
     if is_round5e(trials):
         return ROUND5E_ARMS
     return ROUND5D_ARMS if is_round5d(trials) else ROUND5_RUN
 
 
 def owed_blocks(trials):
-    """The blocks of round 5's K that still miss a registered arm's trial,
-    in order."""
+    """The blocks of the round's K that still miss a registered arm's trial,
+    of any task the round registers, in order."""
     run = round_arms(trials)
-    return [block for block in range(1, ROUND5_K + 1)
-            if any(trial_name(arm, block) not in trials for arm in run)]
+    if named_round(trials) is None:
+        return [block for block in range(1, ROUND5_K + 1)
+                if any(trial_name(arm, block) not in trials for arm in run)]
+
+    # A round of two tasks is complete only with both at K for every arm.
+    tasks = REGISTRATIONS[named_round(trials)]["tasks"]
+    k = max(task["k"] for task in tasks.values())
+    return [block for block in range(1, k + 1)
+            if any(trial_name(arm, block) not in trials
+                   or trials[trial_name(arm, block)].get("change_only")
+                   or ("change" in tasks
+                       and not trials[trial_name(arm, block)].get("change"))
+                   for arm in run)]
 
 
 def blocks_named(blocks):
@@ -759,6 +822,14 @@ def arm_origins(trials):
     origins = {}
     for name in ordered(trials):
         source = (trials[name].get("scores") or {}).get("reused_from") or {}
+
+        # A trial reused from another root of the same named round, under the
+        # same registration, ran in this round: its origin is provenance.
+        named = named_round(trials)
+        if (named is not None and source.get("round") == named
+                and source.get("registration")
+                == registration_digest(REGISTRATIONS[named])):
+            source = {}
         origins.setdefault(arm_of(name), source.get("root")
                            or source.get("name") or None)
     return origins
@@ -1470,6 +1541,34 @@ def prompt_problem(root):
     return None
 
 
+def registered_inputs_problem(root, named):
+    """Why one of a named round's trials did not build or change from the
+    spec and the prompt its round's entry pins for its task, or None."""
+    entry = REGISTRATIONS[named]
+    for record in run_records(root):
+
+        # A refused or unfinished trial put nothing in front of the scorer,
+        # so it has nothing to show; one with something to score has to.
+        if record.get("outcome") not in SCORABLE:
+            continue
+        task = record.get("task", "build")
+        registered = entry["tasks"].get(task)
+        if registered is None:
+            return ("trial %s ran the %s task, which round %s does not "
+                    "register" % (trial_of(record), task, named))
+        spec, prompt = record.get("spec") or {}, record.get("prompt")
+        if spec.get("sha256") != entry["spec"]["sha256"]:
+            return ("trial %s's %s task built from %s at sha256 %s, and round "
+                    "%s registers sha256 %s"
+                    % (trial_of(record), task, spec.get("file"),
+                       spec.get("sha256"), named, entry["spec"]["sha256"]))
+        if (prompt is None
+                or text_digest(prompt) != registered["prompt_sha256"]):
+            return ("trial %s was given another %s prompt than the one round "
+                    "%s registers" % (trial_of(record), task, named))
+    return None
+
+
 def python_problem(trials):
     """Why the trials' scores were not all installed on one Python, or None.
 
@@ -1479,7 +1578,8 @@ def python_problem(trials):
     for name, trial in trials.items():
         for part in ("scores", "change"):
             scores = trial.get(part)
-            if scores is None:
+            if scores is None or (part == "scores"
+                                  and trial.get("change_only")):
                 continue
             version = scores.get("python")
             minor = ".".join(version.split(".")[:2]) if version else "unrecorded"
@@ -1503,12 +1603,18 @@ def registration_problem(root, registration, repository=REPOSITORY):
     """Why the round's registration does not predate its first trial, or
     None when it landed on the main branch before that trial and is
     unchanged since."""
+    if not os.path.isfile(os.path.join(repository, registration)):
+        return ("%s does not exist, so no trial can be shown to have run "
+                "after its round registered" % registration)
     moments = []
     for record in run_records(root):
 
         # A trial reused from an earlier round ran under that round's
-        # registration, so only this round's own trials have to follow its.
-        if record.get("reused_from"):
+        # registration, so only this round's own trials have to follow its;
+        # one reused within its own named round ran under this one.
+        origin = record.get("reused_from")
+        if origin and not (record.get("round")
+                           and origin.get("round") == record["round"]):
             continue
         try:
             moment = datetime.datetime.fromisoformat(record["started_at"])
@@ -1527,25 +1633,42 @@ def registration_problem(root, registration, repository=REPOSITORY):
     first = min(moments)
     if git(repository, "status", "--porcelain", "--", registration):
         return "%s has changes that are not committed" % registration
-    if git(repository, "diff", "--name-only", REGISTRATION_BRANCH, "--",
-           registration):
+    base = registration_base(repository)
+    if base is None:
+        return ("neither %s nor origin/%s is in %s, so %s cannot be shown to "
+                "have landed; fetch %s"
+                % (REGISTRATION_BRANCH, REGISTRATION_BRANCH, repository,
+                   registration, REGISTRATION_BRANCH))
+    if git(repository, "diff", "--name-only", base, "--", registration):
         return ("%s differs from %s's copy, so it has not landed; merge it "
-                "or pull %s" % (registration, REGISTRATION_BRANCH,
-                                REGISTRATION_BRANCH))
+                "or pull %s" % (registration, base, REGISTRATION_BRANCH))
 
     # The first-parent line is the main branch's own history, so a merge that
     # brought the registration in is read at the merge, not at the branch
     # commit beneath it. GitHub's squash and rebase merges stamp the commit
     # with the merge time; a fast-forward pushed from a clone keeps the
     # branch commit's date, which this cannot see past.
-    landed = git(repository, "log", REGISTRATION_BRANCH, "--first-parent",
-                 "-1", "--format=%cI", "--", registration)
+    landed = git(repository, "log", base, "--first-parent", "-1",
+                 "--format=%cI", "--", registration)
     if not landed:
-        return "%s is not on %s" % (registration, REGISTRATION_BRANCH)
+        return "%s is not on %s" % (registration, base)
     if datetime.datetime.fromisoformat(landed) > first:
         return ("%s landed on %s at %s, after the first trial started at %s"
-                % (registration, REGISTRATION_BRANCH, landed,
-                   first.isoformat()))
+                % (registration, base, landed, first.isoformat()))
+    return None
+
+
+def registration_base(repository):
+    """The ref the main branch is read at: its local branch, else the
+    remote's copy of it, or None where the clone holds neither."""
+
+    # A clone of one branch, as a CI checkout is, holds no local main.
+    for ref in (REGISTRATION_BRANCH, "origin/" + REGISTRATION_BRANCH):
+        try:
+            git(repository, "rev-parse", "--verify", "-q", ref + "^{commit}")
+        except TrialError:
+            continue
+        return ref
     return None
 
 
@@ -1565,19 +1688,22 @@ def reaches(root):
         files, calls = read_transcripts(home, workspace, started(record))
         if files:
             scan = reach(files, calls, workspace, record.get("temp"),
-                         record.get("vendored"))
+                         record.get("vendored"), record.get("protected", ()),
+                         record.get("protected_names", ()))
         else:
             scan = record.get("reach") or reach(files, calls)
         scans.append({"name": name_of(record), "hits": scan["hits"]})
     return scans
 
 
-def exclude_reached(trials, scans):
+def exclude_reached(trials, scans, per_task=False):
     """Leave out of `trials` every trial whose scan finds a reach, in place;
     return the names left out.
 
-    A reached build trial goes whole. A reached change task takes only its
-    change reading with it, because its build trial was measured clean.
+    A reached build trial goes whole, or `per_task`, for a round whose change
+    task starts from a fixture, only its build readings. A reached change
+    task takes only its change reading with it, because its build trial was
+    measured clean.
     """
     left_out = []
     for scan in scans:
@@ -1587,8 +1713,13 @@ def exclude_reached(trials, scans):
         build = name.replace(CHANGE_TASK, "")
         if build not in trials:
             continue
-        if name == build:
+        if name == build and per_task and trials[name]["change"] is not None:
+            change_only(trials[name])
+        elif name == build:
             del trials[name]
+        elif trials[build]["change"] is not None and per_task \
+                and trials[build].get("change_only"):
+            del trials[build]
         elif trials[build]["change"] is not None:
             trials[build]["change"] = None
         else:
@@ -5270,6 +5401,341 @@ def record_checks():
     return checks
 
 
+def round_identity_checks():
+    """A run whose records name a round is read as that round, both tasks
+    counted; records missing its identity are refused, not read as the
+    pilot's; records naming none are read by their arms, as before."""
+    arms = REGISTRATIONS["C1"]["arms"]
+    blocks = range(1, REGISTRATIONS["C1"]["tasks"]["build"]["k"] + 1)
+
+    def run(change):
+        return {trial_name(arm, block): {
+            "scores": {}, "round": "C1",
+            "change": {"name": trial_name(arm, block)} if change else None}
+            for arm in arms for block in blocks}
+    named, legacy = run(False), run(False)
+    for trial in legacy.values():
+        trial.pop("round")
+    whole = run(True)
+    gap = run(True)
+    gap[trial_name("lazyref", 4)]["change"] = None
+    checks = [
+        ("a run its records name C1 does not read as a pilot round",
+         not is_round5(named) and not is_round5d(named)
+         and not is_round5e(named) and iso_rules(named)
+         and is_round5(legacy) and is_round5e(legacy)),
+        ("a C1 round owes a block until both tasks are in for every arm",
+         owed_blocks(named) == list(blocks) and owed_blocks(whole) == []
+         and owed_blocks(gap) == [4]),
+    ]
+
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-identity-")
+    digest = registration_digest(REGISTRATIONS["C1"])
+    trial = {"round": "C1", "task": "build", "arm": "none", "block": 1,
+             "trial": 1, "outcome": "completed"}
+
+    def refused(name, runs, why="round", documents=()):
+        root = os.path.join(scratch, name)
+        scores = os.path.join(scoring_area(root), "scores")
+        os.makedirs(scores)
+        os.makedirs(root)
+        with io.open(os.path.join(scores, "none-1.json"), "w",
+                     encoding="utf-8") as handle:
+            json.dump({"name": "none-1"}, handle)
+        for index, header in enumerate(runs):
+            with io.open(os.path.join(root, "run-%d.json" % index), "w",
+                         encoding="utf-8") as handle:
+                json.dump(header, handle)
+        saved, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            with planted_repository(os.path.join(scratch, name + "-repo"),
+                                    documents):
+                code = main(["--root", root, "--out-dir",
+                             os.path.join(scratch, "out")])
+            printed = sys.stdout.getvalue()
+        finally:
+            sys.stdout = saved
+        return code == 2 and "refused" in printed and why in printed
+
+    good = {"round": "C1", "registration": digest, "trials": [trial]}
+
+    # One build and one change task, each on what C1 pins for its task;
+    # then each input swapped, or a task given the other's prompt.
+    spec = {"file": "SPEC.md", "sha256": REGISTRATIONS["C1"]["spec"]["sha256"]}
+    pinned = dict(trial, spec=spec, prompt=PROMPT)
+    change = dict(pinned, task="change", prompt=read_change_prompt())
+
+    def inputs_refused():
+        def problem(*records):
+            root = os.path.join(scratch, "inputs-%d" % len(os.listdir(
+                scratch)))
+            os.makedirs(root)
+            with io.open(os.path.join(root, "run-1.json"), "w",
+                         encoding="utf-8") as handle:
+                json.dump(dict(good, trials=list(records)), handle)
+            return registered_inputs_problem(root, "C1")
+        swapped = [
+            problem(dict(pinned, spec=dict(pinned["spec"], sha256="0" * 64)),
+                    change),
+            problem(pinned, dict(change, prompt=PROMPT)),
+            problem(dict(pinned, prompt=read_change_prompt()), change),
+            problem(dict(pinned, spec=None), change),
+            problem(pinned, dict(change, prompt=None))]
+        return (problem(pinned, change) is None
+                and problem(dict(pinned, outcome="refused", spec=None))
+                is None
+                and all(swapped)
+                and refused("inputs", [dict(good, trials=[dict(
+                    pinned, prompt="Build it.")])], "another build prompt"))
+    checks += [
+        ("a root mixing a named round's records with others is refused",
+         refused("mixed", [good, {"trials": [{"arm": "none", "trial": 1}]}])
+         and refused("other", [good, dict(good, registration="0" * 64)])),
+        ("a named round's record missing its identity is refused, not read "
+         "as the pilot's",
+         refused("bare", [dict(good, trials=[dict(trial, block=None)])])),
+        ("a run whose trials name a round under a header naming none is "
+         "refused, not read as the pilot's",
+         refused("unheaded", [{"trials": [trial]}], "yet its trial")),
+        ("a named round's trial on a spec or prompt its entry does not pin "
+         "is refused, each task held to its own",
+         inputs_refused()),
+        ("a named round is refused until its registration document is on "
+         "main before its first trial",
+         refused("unregistered", [dict(good, trials=[pinned])],
+                 "%s does not exist" % REGISTRATIONS["C1"]["document"])
+         and not refused("registered", [dict(good, trials=[dict(
+             pinned, started_at="2026-11-15T12:00:00+00:00")])],
+             REGISTRATIONS["C1"]["document"],
+             [REGISTRATIONS["C1"]["document"]])),
+    ]
+    shutil.rmtree(scratch, ignore_errors=True)
+    return checks
+
+
+@contextlib.contextmanager
+def planted_repository(path, documents=()):
+    """While inside, the report reads registrations from a git repository
+    planted at `path` holding only `documents`, never this checkout's."""
+    saved = globals()["REPOSITORY"]
+    globals()["REPOSITORY"] = planted_registry(
+        path, documents=tuple(documents) or (PLANTED_REGISTRATION,))
+    try:
+        yield
+    finally:
+        globals()["REPOSITORY"] = saved
+        shutil.rmtree(path, ignore_errors=True)
+
+
+# The registration a planted repository holds, landed before any planted
+# trial starts.
+PLANTED_REGISTRATION = "docs/rounds/round.md"
+
+
+def planted_registry(repository, branch=REGISTRATION_BRANCH,
+                     documents=(PLANTED_REGISTRATION,)):
+    """A git repository holding `documents`, registrations committed on
+    `branch` at 2026-10-01, for a self-test that must read no branch, and
+    no document, of this one."""
+    for document in documents:
+        path = os.path.join(repository, *document.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with io.open(path, "w", encoding="utf-8") as handle:
+            handle.write("# Round\n")
+    when = "2026-10-01T10:00:00+00:00"
+    env = dict(os.environ, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+    git(repository, "init", "-q", "-b", branch)
+    git(repository, "add", "-A")
+    git(repository, "-c", "user.name=self-test",
+        "-c", "user.email=self-test@example.invalid", "commit", "-q", "-m",
+        "register", env=env)
+    return repository
+
+
+def change_only_checks():
+    """A named round's change task is read whether or not its build trial
+    was scored or reached, on rows of its own; a pilot round's keeps
+    needing its build."""
+    scratch = tempfile.mkdtemp(prefix="efficacy-report-change-only-")
+    root = os.path.join(scratch, "run")
+    area = scoring_area(root)
+    for part in ("scores-change", "security-scores"):
+        os.makedirs(os.path.join(area, part))
+    os.makedirs(root)
+    records = []
+    for arm in ("none", "inline"):
+        for block in (1, 2):
+            name = trial_name(arm, block)
+            with io.open(os.path.join(area, "scores-change", name + ".json"),
+                         "w", encoding="utf-8") as handle:
+                json.dump({"name": name, "task": "change",
+                           "change_suite": {"value": 0.5 + block / 10.0,
+                                            "missing": None}}, handle)
+            records.append({"round": "C1", "task": "change", "arm": arm,
+                            "block": block, "trial": block,
+                            "outcome": "completed",
+                            "prompt": read_change_prompt(),
+                            "spec": dict(REGISTRATIONS["C1"]["spec"])})
+    with io.open(os.path.join(area, "security-scores", "none-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"name": "none-1"}, handle)
+    with io.open(os.path.join(root, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"round": "C1", "task": "change", "trials": records,
+                   "registration": registration_digest(REGISTRATIONS["C1"])},
+                  handle)
+    saved, sys.stdout = sys.stdout, io.StringIO()
+    try:
+        with planted_repository(os.path.join(scratch, "repository")):
+            code = main(["--root", root, "--out-dir",
+                         os.path.join(scratch, "out")])
+        printed = sys.stdout.getvalue()
+    finally:
+        sys.stdout = saved
+    alone = load(root, "C1")
+    for trial in alone.values():
+        trial["round"] = "C1"
+    table = collect(alone)
+    checks = [
+        ("a named round's change task with no build score is read on its own",
+         code == 2 and "no scores" not in printed
+         and REGISTRATIONS["C1"]["document"] in printed and load(root) == {}
+         and sorted(alone) == ["inline-1", "inline-2", "none-1", "none-2"]
+         and all(trial.get("change_only") and trial["security"] is None
+                 for trial in alone.values())
+         and table["change_success"]["values"]["none"][2] == 0.7
+         and table["task_success"]["values"]["none"][2] is None),
+    ]
+
+    # Every arm's change task in, and no build: the round still owes every
+    # block, its build observations missing.
+    changes = {trial_name(arm, block): change_only(
+        {"round": "C1", "change": {"name": trial_name(arm, block)}})
+        for arm in REGISTRATIONS["C1"]["arms"] for block in range(1, 16)}
+    checks.append(("a C1 block whose builds stand only as change tasks is "
+                   "still owed", owed_blocks(changes) == list(range(1, 16))))
+    shutil.rmtree(scratch, ignore_errors=True)
+
+    def both(name, python="3.12.1"):
+        return {"scores": {"name": name, "python": python}, "judge": None,
+                "judgings": [], "security": {"name": name},
+                "change": {"name": name, "python": python,
+                           "change_suite": {"value": 1.0, "missing": None}}}
+    reach_build = [{"name": "none-1", "hits": [{"term": "x"}]}]
+    reach_change = [{"name": "none-1" + CHANGE_TASK, "hits": [{"term": "x"}]}]
+    named = {"none-1": both("none-1"), "none-2": both("none-2")}
+    legacy = {"none-1": both("none-1"), "none-2": both("none-2")}
+    left = exclude_reached(named, reach_build, per_task=True)
+    kept = dict(named.get("none-1") or {})
+    exclude_reached(legacy, reach_build)
+    exclude_reached(named, reach_change, per_task=True)
+    checks.append(("a reached build of a named round keeps its change "
+                   "reading, and a reached change task goes alone",
+                   left == ["none-1"] and kept.get("change_only")
+                   and kept["change"] is not None
+                   and kept["scores"] == {} and kept["security"] is None
+                   and "none-1" not in legacy and "none-1" not in named
+                   and named["none-2"]["change"] is not None))
+    standing = change_only(both("none-3"))
+    checks.append(("a change task standing alone counts on its ISO axes, not "
+                   "as a broken build",
+                   iso_trial_scores(standing)["Maintainability"]
+                   ["Modifiability"] == 1.0
+                   and iso_trial_scores(dict(both("none-4"), scores={}))
+                   ["Maintainability"]["Modifiability"] is None))
+
+    # One change result beside its build unscored, scored and working, and
+    # scored and broken: a named round reads it the same each time, and a
+    # pilot round's broken build still takes its change targets with it.
+    change = {"name": "none-5", "change_suite": {"value": 1.0,
+                                                 "missing": None}}
+    working = {"name": "none-5",
+               "install": {"value": True, "missing": None},
+               "boot": {"value": {"factory": True, "index_status": 200},
+                        "missing": None}}
+
+    # The broken build's own Modifiability target missed, which is read with
+    # the build and so never reaches the change's sub-score.
+    broken = dict(working, install={"value": False, "missing": None},
+                  structure={"value": {"kind_ladders": [1, 2, 3]},
+                             "missing": None})
+
+    def modifiability(scores, named="C1"):
+        trial = {"scores": scores, "change": change, "round": named}
+        if scores is None:
+            trial = change_only(dict(trial))
+        return iso_trial_scores(trial)["Maintainability"]["Modifiability"]
+    readings = [modifiability(scores) for scores in (None, working, broken)]
+    checks.append(("a named round's change result reads the same whether its "
+                   "build is unscored, working or broken",
+                   readings == [1.0, 1.0, 1.0]
+                   and modifiability(broken, None) is None
+                   and modifiability(working, None) == 1.0))
+
+    # Inline copied in from another root of C1, none run here: one round,
+    # so the pair is read paired; copied from a round of none, it crosses.
+    digest = registration_digest(REGISTRATIONS["C1"])
+
+    def mixed(origin):
+        trials = {}
+        for block in (1, 2, 3):
+            trials[trial_name("none", block)] = {"scores": {},
+                                                 "round": "C1"}
+            reused = dict(origin, root="elsewhere",
+                          name=trial_name("inline", block))
+            trials[trial_name("inline", block)] = {
+                "scores": {"reused_from": reused}, "round": "C1"}
+        return crossed_labels(trials)
+    checks.append(("trials reused within one named round pair with those run "
+                   "there",
+                   "inline-none" not in mixed({"round": "C1",
+                                               "registration": digest})
+                   and "inline-none" in mixed({})
+                   and "inline-none" in mixed({"round": "C1",
+                                               "registration": "0" * 64})))
+
+    # A trial copied within C1, which started after its registration
+    # landed, is when the round began; the pilot's skip of reused trials
+    # would leave the round with no first trial. The registration lands in
+    # a repository planted here, so no branch of this one is read.
+    began = tempfile.mkdtemp(prefix="efficacy-report-began-")
+    with io.open(os.path.join(began, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": [{"arm": "none", "trial": 1, "round": "C1",
+                               "reused_from": {"round": "C1"},
+                               "started_at": "2026-11-15T12:00:00+00:00"}]},
+                  handle)
+    registry = planted_registry(os.path.join(began, "repository"))
+    counted = registration_problem(began, PLANTED_REGISTRATION, registry)
+    checks.append(("a trial reused within its named round counts toward when "
+                   "the round began", counted is None))
+
+    # The main branch read as origin's where the clone has no local one, as
+    # in a CI checkout, and a clone with neither refused with its reason.
+    remote = planted_registry(os.path.join(began, "remote"), "work")
+    git(remote, "update-ref", "refs/remotes/origin/" + REGISTRATION_BRANCH,
+        "HEAD")
+    bare = planted_registry(os.path.join(began, "bare"), "work")
+    try:
+        missing = registration_problem(began, PLANTED_REGISTRATION, bare)
+    except Exception as error:
+        missing = "crashed: %s" % error
+    checks.append(("the main branch is read locally, else as origin's, and a "
+                   "clone with neither is refused, not crashed",
+                   registration_base(registry) == REGISTRATION_BRANCH
+                   and registration_base(remote)
+                   == "origin/" + REGISTRATION_BRANCH
+                   and registration_problem(began, PLANTED_REGISTRATION,
+                                            remote) is None
+                   and registration_base(bare) is None
+                   and "neither" in (missing or "")))
+    shutil.rmtree(began, ignore_errors=True)
+    checks.append(("a change task standing alone reads no build Python",
+                   python_problem({"none-1": both("none-1"),
+                                   "none-3": standing}) is None))
+    return checks
+
+
 def context_lines(arm):
     """The line count of the context file an arm's trials received, None
     where the arm receives none."""
@@ -6141,24 +6607,32 @@ def iso_trial_scores(trial, withdrawn=(), axes=ISO_AXES):
 
     A sub-score is the share of its targets met, over the targets measured,
     and None where none was. A broken build is scored on Reliability alone,
-    where the install target fails, and reads None on every other axis. A
-    target reading a metric in `withdrawn` is not measured. `axes` is the
+    where the install target fails, and reads None on every other axis; for
+    a named round, whose change task starts from a fixture, only the build's
+    own targets are, and the change targets are read whatever the build did.
+    A target reading a metric in `withdrawn` is not measured. `axes` is the
     table of targets read.
     """
     broken = works(trial) != 1.0
+
+    # A named round's change task never ran on this trial's build, so a
+    # build broken, or not scored at all, says nothing of the change.
+    apart = trial.get("round") is not None or trial.get("change_only")
     scores = {}
     for axis, subs in axes:
         per_sub = {}
         for sub, targets in subs:
-            if broken and axis != BROKEN_AXIS:
+            if broken and axis != BROKEN_AXIS and not apart:
                 per_sub[sub] = None
                 continue
+            gated = broken and axis != BROKEN_AXIS
 
             # A withdrawn metric's number is no result, on the radar as in
             # the tables, so its target drops out rather than reads as met.
             met = [target_met(trial, source, condition, threshold)
                    for _, source, condition, threshold in targets
-                   if source not in withdrawn]
+                   if source not in withdrawn
+                   and not (gated and source not in CHANGE)]
             measured = [outcome for outcome in met if outcome is not None]
             per_sub[sub] = (sum(measured) / len(measured) if measured
                             else None)
@@ -7281,10 +7755,33 @@ def rescan_checks():
                                   workspace)[1]) == 1
     terms = [hit["term"] for scan in reaches(scratch)
              for hit in scan["hits"] or []]
+
+    # A change trial of a named round whose call unpacked a fixture from
+    # the fixtures' directory, which its record names as fenced off.
+    fixtures = os.path.join(tempfile.gettempdir(),
+                            "efficacy-report-rescan-fixtures")
+    entry["message"]["content"][0]["input"]["command"] = (
+        "tar xf %s && tar xf ../../../elsewhere/none-11.tar"
+        % os.path.join(fixtures, "none-2.tar"))
+    with io.open(os.path.join(projects, "planted.jsonl"), "w",
+                 encoding="utf-8") as handle:
+        handle.write(json.dumps(entry) + "\n")
+    planted[0]["protected"] = [fixtures]
+    planted[0]["protected_names"] = ["none-2.tar", "none-11.tar"]
+    with io.open(os.path.join(scratch, "run-planted.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": planted}, handle)
+    fenced = [hit["term"] for scan in reaches(scratch)
+              for hit in scan["hits"] or []]
     shutil.rmtree(scratch, ignore_errors=True)
     return [("the planted transcript carries one call", landed),
             ("its record's clean scan is read again and flagged",
-             terms == ["../inline-1"])]
+             terms == ["../inline-1"]),
+            ("a call into the fixtures' directory its record fences off is "
+             "flagged on the re-scan",
+             len(fenced) == 3 and fenced[0].endswith(
+                 "efficacy-report-rescan-fixtures")
+             and "none-11.tar" in fenced)]
 
 
 def planted_change_run(revision):
@@ -8721,6 +9218,8 @@ def self_test(seed):
     checks.extend((label, ok, ok) for label, ok in spec_checks())
     checks.extend((label, ok, ok) for label, ok in prompt_checks())
     checks.extend((label, ok, ok) for label, ok in python_checks())
+    checks.extend((label, ok, ok) for label, ok in round_identity_checks())
+    checks.extend((label, ok, ok) for label, ok in change_only_checks())
     for label, ok, got in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED, got %r"
                               % (got,)))
@@ -8786,11 +9285,15 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    trials = load(options.root)
+    trials, problem = round_trials(options.root)
+    if problem:
+        print("refused: %s" % problem)
+        return 2
     if not trials:
         print("no scores under %s; score.py writes them"
               % scoring_area(options.root))
         return 2
+    named = named_round(trials)
 
     out_dir = options.out_dir
     if out_dir is None:
@@ -8821,6 +9324,25 @@ def main(argv):
     # A hypothesis registered or changed after the round's first trial could
     # have been written to fit what that trial showed, so the round is refused
     # rather than read against it.
+    # A named round's trials are held to the spec and prompts its entry pins,
+    # each task to its own, as a pilot round's are to round 5's.
+    if named is not None:
+        problem = registered_inputs_problem(options.root, named)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
+
+    # A named round's registration is its entry's document, held to the
+    # same rule.
+    if named is not None:
+        try:
+            problem = registration_problem(
+                options.root, REGISTRATIONS[named]["document"], REPOSITORY)
+        except TrialError as error:
+            problem = str(error)
+        if problem:
+            print("refused: %s" % problem)
+            return 2
     if is_round5(trials):
         try:
             problem = registration_problem(
@@ -8855,7 +9377,7 @@ def main(argv):
     # A trial that read past its workspace measures what it read, not its
     # arm; the harness voids one its own scan catches, and this re-scan, under
     # the current rule, leaves out any it missed.
-    for name in exclude_reached(trials, reaches(options.root)):
+    for name in leave_out_reached(options.root, trials):
         print("left out, having reached past its workspace: %s" % name)
     if not trials:
         print("no trial is left to report once the reached ones are out")

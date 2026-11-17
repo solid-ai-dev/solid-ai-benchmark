@@ -31,15 +31,17 @@
   - **Arm generator:** `generate_arm.py`, which writes a generated arm's file.
   - **Control builder:** `control/control.py`, which builds the judge's
     control trees.
+  - **Reuse:** `reuse.py`, which brings an earlier round's trials into a
+    run root.
   - **Owner:** a working practice no script carries out.
 
 ### 01 Registration
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge. | Report |
+| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge; `main` read as the local branch, else as `origin/main`, and a clone holding neither refused with its reason. | Report |
 | FR-01-02 | The benchmark shall refuse a registration that differs from `main`'s copy or has changes not committed. | Report |
-| FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content. | Report |
+| FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content; a named round's trials each against its entry's spec and the prompt pinned for their task. | Report |
 | FR-01-04 | The benchmark shall refuse a trial with something to score that records no spec or no prompt. | Report |
 | FR-01-05 | The benchmark shall check the spec before every trial, and refuse unbuilt the trials after an edit made mid-run. | Harness |
 | FR-01-06 | The benchmark shall record each trial's start with its UTC offset, and refuse a start with none. | Harness, Report |
@@ -210,6 +212,16 @@
 | FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
 | FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
 | FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
+| FR-13-11 | From round 6 the benchmark shall run a round only as `--round` names it, under its registration: refusing a round not registered, an arm it does not register, a K past its K, and a spec, build prompt or change prompt other than the ones it pins by digest. | Harness |
+| FR-13-12 | The benchmark shall write a named round and its registration's digest in the run record, and the round, task, arm and block in every trial record, keeping them when a recovery rewrites the record; and refuse a run in a root whose records name another round or digest, or where a named round and records naming none would meet, a header naming no round over trials that name one counting as a named round's record. | Harness |
+| FR-13-13 | The benchmark shall read a round from its run records where they name one, refuse records of a named round missing its identity, in a trial or in the header, and infer the round from the arms only for records naming none. | Report |
+| FR-13-14 | The benchmark shall call a round of two tasks complete only with both at K for every arm, a change task counting whatever its arm's build trial did. | Harness, Report |
+| FR-13-15 | The benchmark shall start every arm's change task of block b of a named round from one fixture, the b-th qualifying build in ascending trial order, cycling when fewer qualify; record the manifest's sha256, each block's fixture and how many distinct fixtures the blocks take; refuse a change run whose manifest or block mapping differs from the root's earlier change runs; and refuse to run while the fixture manifest lists none, lists one without its baseline readings, or names a tarball whose sha256 differs, at the start and at each trial. | Harness |
+| FR-13-16 | The benchmark shall derive each change workspace from its fixture's code and tests alone, without its instructions, settings, databases, caches, environments or history, with the round's spec and only the arm's context, in one commit; and fence the fixtures' directory off from the trial, in its deny rules and every scan of its transcripts, the report's re-scan included, a path into it named absolutely, by a fixture archive's name or by a climb to its own name, and refuse a run root inside it, paths compared resolved and, on Windows, in either case; the scan catches a named access only, not a path the shell builds indirectly. Each kept link shall name something the workspace keeps, a fixture holding any other read as unusable, before the run and at a trial. | Harness, Report |
+| FR-13-17 | The benchmark shall read a named round's change task whether or not its build trial was scored or left out for a reach, as a trial of its own whose build rows read not measured; count its change targets on their ISO axes whether its build is unscored, working or broken, a broken build gating only the build's own targets; and keep a pilot round's change task with its build. | Report |
+| FR-13-18 | The benchmark shall reuse a named round's trials under a run record naming that round and its registration's digest, and never reuse trials into a root of another round, a named round's into a root of none, or another round's into a named round's; name the round and its digest in each reused trial's origin, and pair a trial reused within one named round, under one digest, with the trials run there. | Reuse, Report |
+| FR-13-19 | The benchmark shall refuse a named round's report unless the document its registration entry names exists and landed on `main` before the round's first trial, unchanged since, a trial reused within the round counting toward its start. | Report |
+| FR-13-20 | The benchmark shall verify an archive by the report's own reading of its round, through one entry point, a named round's change tasks and its reach rule included. | Archive, Report |
 | FR-13-21 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
 
 ### 14 One run at a time
