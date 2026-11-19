@@ -680,13 +680,14 @@ print(json.dumps(report))
 '''
 
 
-def structure(ctx, workspace, roots, seen):
-    """The structural design measures, as one probe inside the trial's venv."""
+def structure(ctx, workspace, roots, seen, required=REQUIRED_NAMES):
+    """The structural design measures, as one probe inside the trial's venv,
+    the public surface read against `required`."""
     if not roots:
         return ctx.absent("no source roots were discovered", seen=seen)
     script = os.path.join(workspace, ".score-structure.py")
     with io.open(script, "w", encoding="utf-8") as handle:
-        handle.write(STRUCTURE_SCRIPT % {"required": list(REQUIRED_NAMES)})
+        handle.write(STRUCTURE_SCRIPT % {"required": list(required)})
     outcome = ctx.run([ctx.python, script, json.dumps(roots)], cwd=workspace)
     if outcome["failed"]:
         return ctx.absent("the structure probe %s" % outcome["failed"],

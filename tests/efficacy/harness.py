@@ -475,6 +475,20 @@ def scoring_area(root):
     return os.path.abspath(root).rstrip("\\/") + "-scoring"
 
 
+# The tasks a scoring area holds readings of. A change task's readings sit
+# beside the build's, each folder the build's name with `-change` after it:
+# both are keyed by the trial, and one must never overwrite the other.
+TASKS = ("build", "change")
+
+
+def task_folder(kind, task="build"):
+    """The folder of the scoring area that holds `kind` for `task`."""
+    if task not in TASKS:
+        raise TrialError("%r is not a task; one is %s" % (task,
+                                                          " or ".join(TASKS)))
+    return kind if task == "build" else "%s-change" % kind
+
+
 def dry_run_area(root):
     """The directory beside a run root that a dry run prepares in."""
     return os.path.abspath(root).rstrip("\\/") + "-dry-run"
@@ -1868,6 +1882,13 @@ def manifest_path(entry):
     return os.path.join(HERE, entry["tasks"]["change"]["fixtures"]["manifest"])
 
 
+# The hidden-suite modules that read what a build exposes to other software:
+# its Python names, its routes and its two exports. A change task must leave
+# each one answering as it did on the fixture.
+INTERFACE_MODULES = ("test_api_contract.py", "test_http_routes.py",
+                     "test_export_json.py", "test_export_csv.py")
+
+
 def read_fixtures(entry, directory):
     """The fixtures a round's change task starts from, each checked against
     its tarball in `directory`, in the order the blocks take them."""
@@ -1899,6 +1920,16 @@ def read_fixtures(entry, directory):
                 or not fixture["baseline"]:
             raise TrialError("fixture %s carries no baseline readings, so it "
                              "has not qualified" % trial)
+
+        # The interfaces a change must keep are read against what the fixture
+        # passed, so each one's pass on the fixture is frozen beside it.
+        interfaces = fixture["baseline"].get("interfaces")
+        if not isinstance(interfaces, dict) or any(
+                not isinstance(interfaces.get(module), bool)
+                for module in INTERFACE_MODULES):
+            raise TrialError("fixture %s's baseline does not say which of %s "
+                             "it passed whole"
+                             % (trial, ", ".join(INTERFACE_MODULES)))
         tarball = os.path.join(directory, "%s.tar" % trial)
         if not os.path.isfile(tarball):
             raise TrialError("fixture %s has no tarball at %s"
@@ -2219,7 +2250,8 @@ def run_fixture_change_trial(arm, block, root, home, options, fixture):
               "block": block, "round": round_name, "task": "change",
               "base": base, "vendored": vendored,
               "fixture": {key: fixture[key]
-                          for key in ("trial", "sha256", "tarball")},
+                          for key in ("trial", "sha256", "tarball",
+                                      "baseline")},
 
               # The fixtures' directory, which the trial's deny rules and
               # every scan of its transcript fence off, and its archives'
@@ -4555,8 +4587,10 @@ def fixture_checks(scratch):
         except TrialError:
             return True
 
+    interfaces = {module: True for module in INTERFACE_MODULES}
     listed = [{"trial": name, "sha256": hashes[name],
-               "baseline": {"build_suite": 1.0}} for name in hashes]
+               "baseline": {"build_suite": 1.0, "interfaces": interfaces}}
+              for name in hashes]
     listing_as([])
     checks = [("an empty fixture manifest refuses a named round's change "
                "task", refused(entry, tarballs))]
@@ -4565,6 +4599,13 @@ def fixture_checks(scratch):
     listing_as([dict(listed[0], baseline={})] + listed[1:])
     checks.append(("a fixture listed without its baseline readings is "
                    "refused", refused(entry, tarballs)))
+    partial = dict(interfaces)
+    partial.pop(INTERFACE_MODULES[0])
+    listing_as([dict(listed[0], baseline={"build_suite": 1.0,
+                                          "interfaces": partial})]
+               + listed[1:])
+    checks.append(("a fixture whose baseline leaves an interface module "
+                   "unread is refused", refused(entry, tarballs)))
     listing_as(listed)
     fixtures = read_fixtures(entry, tarballs)
     order = [fixture_for(fixtures, block)["trial"] for block in range(1, 5)]

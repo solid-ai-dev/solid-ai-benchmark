@@ -245,6 +245,21 @@
 | FR-15-05 | The benchmark shall read portability on Python 3.14, the trial installed, booted and serving a signed-in page there, and leave it missing where no Python 3.14 is found. | Quality reader |
 | FR-15-06 | The benchmark shall read the quality probes in a fresh environment per trial on the spec's Python, and remove every environment once it is read; a trial whose source tree is not present has every probe missing. | Quality reader |
 
+### 16 The changed tree
+
+| ID | Requirement | Delivered by |
+| -- | ----------- | ------------ |
+| FR-16-01 | The benchmark shall score a change task's tree on every reading a build's is, with the build and change suites in place of the one suite, its churn and scope taken before the install, the boot or the battery write into the tree, the boot's database and what the app keeps beside it written outside the tree, its public surface read against the build's names and each the pinned change prompt calls on the package, and its security reading filed beside its score. | Scorer |
+| FR-16-02 | The benchmark shall read a change task's interfaces against its fixture's frozen baseline: met where every one of `test_api_contract.py`, `test_http_routes.py`, `test_export_json.py` and `test_export_csv.py` the fixture passed whole passes whole on the changed tree, not met where one does not, a module the fixture already failed inherited and counted neither way; not met for every module where the build suite ran out of time; not measured with no baseline, no build suite, or none the fixture passed; and refuse a fixture whose baseline does not say which of the four it passed. | Scorer, Harness |
+| FR-16-03 | The benchmark shall read the security and quality probes on a change task's tree from its own score into folders of its own, a tree that does not install losing them as a build's does. | Security reader, Quality reader |
+| FR-16-04 | The benchmark shall read a change task's data upgrade, a claim of exported values kept and exercised behaviour: products, customers, rules, a jurisdiction and invoices seeded through the forms of the application at the change's starting commit, then a copy of that database opened by the changed tree; failed where a list page answers other than a success or no longer names a seeded jurisdiction's code or rule's id as a whole identifier, whatever its markup; where an export answers other than a success, or an old invoice's JSON export no longer holds every old key and value, lists as long and in order, or its CSV export every old column's values, row by row, the total row's included, a key or column only the change has allowed; where the customer's export no longer reads the same; where an old invoice's body saved again no longer exports as the fixture's did, its new id aside; or where the change's own fields, posted on the upgraded copy and read through the application opened afresh on it, do not give the applied rules, discount, tax and total the change's semantics give below, at and above the threshold and the cap; lost where the changed tree does not install, open the file or sign in; missing where the fixture cannot seed or the change names no starting commit; each reading naming the fixture's hash, the starting commit and the seeded database's hash. A jurisdiction's name, a parameter no invoice exercises and an equivalent internal form are outside the claim. | Quality reader |
+| FR-16-05 | The benchmark shall judge a change task's tree blind, apart from the build's, with labels and a map of its own, against the specification and the pinned change prompt, carried in its bundle, the judge told that the change extends the specification, the build's prompt unchanged; and not judge one that did not install. | Judge |
+| FR-16-06 | From round 6 the benchmark shall read a change task's interfaces on Interoperability and its data upgrade on Adaptability, each once, whatever its build did, its security and quality readings and judgings going only with its change score; a pilot round reads neither. | Report |
+| FR-16-07 | The benchmark shall archive a change task's security and quality readings and judgings, verify an archive by each task's ISO reading and the registered readings too, and reuse a change task with its arm's build trials, in a change run of its own naming its round's fixtures, refused into a target whose change runs took another manifest or block mapping, with every reading and judging of its own. | Archive, Reuse |
+| FR-16-08 | From round 6 the benchmark shall draw the ISO radar and give each arm's verdict once a task: the build trials on the build, each change task's tree on the change, each against `none` on the same task, the change targets on the change task's radar alone, and a round with no build reading its finding table from the change task's own trials, cost and contrasts; name the task in the summary, its tables and the plain report; and show each task's mean billed cost per trial beside its radar, never scored. A pilot round draws one radar over its trials as they are. | Report |
+| FR-16-09 | For round C1 the benchmark shall read the check loop as `lazyref` against `lazyrefold`, paired by block on each task: kept only where both tasks are read, the point estimate of the mean billed cost per trial, read from the unrounded paired differences, drops by at least 10 % on each, within 1e-9, its interval printed beside it, and no ISO axis reads worse on either, and not decided while a task is unread; an axis worse only where its whole interval lies past the margin downward, nothing flagged reading "no degradation detected under the registered rule"; non-inferior only where every measured axis's lower bound lies strictly above minus its margin, one on or below it inconclusive; and read `lazysections` against `lazyref` and against `reference` the same way, with its cost, and no gate. | Report |
+| FR-16-10 | For round C1 the benchmark shall read an on-demand arm (`lazyref`, `lazyskills`, `lazysections`) as delivering on demand on a task only where its trials read fewer templates on average than `reference`'s, counted from the transcripts of that task's trials the report reads, a file read by a read or a reading command, a wildcard standing for each file it matches, a skill's file read, by its name or a wildcard, counted once with its loading, and it is non-inferior to `reference` on every measured axis; and as not shown otherwise. | Report |
+
 ## Quality requirements
 
 - **Numbering:** characteristics follow ISO/IEC 25010:2023 order, 01
@@ -338,8 +353,9 @@
 - **Pilot drafts:** a pilot round read by the ISO radar keeps the targets it
   had before round 6: the hidden suite at 98 % or more for correctness, and
   no quality probe. Round 6's are read there only when asked for.
-- **Later:** interoperability and the migration targets come with the
-  changed tree's scoring. The export formats take no target of their own:
+- **Change task:** two targets read the change task's tree against its
+  fixture, each in one place: its interfaces on Interoperability, its data
+  upgrade on Adaptability. The export formats take no target of their own:
   the hidden suite's export modules grade them.
 
 ### 01 Functional suitability
@@ -365,6 +381,7 @@
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-03-01 | Co-existence | Two instances side by side keep their data and files apart. | Quality probe `coexistence` |
+| QT-03-02 | Interoperability | The change keeps every interface its fixture passed: its Python names, routes and two exports. | Change score `interfaces` |
 
 ### 04 Interaction capability
 
@@ -436,3 +453,4 @@
 | -- | ------------------ | ------ | --------- |
 | QT-08-01 | Installability | `pip install .` succeeds in a clean environment. | Installs in a clean environment |
 | QT-08-02 | Adaptability | The build installs and serves a signed-in page on a second Python. | Quality probe `python_portability` |
+| QT-08-03 | Adaptability | The changed tree opens its fixture's database, nothing lost. | Change task's quality probe `data_upgrade` |
