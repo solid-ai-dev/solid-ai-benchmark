@@ -70,7 +70,7 @@ no more.
 | ----------- | ------ |
 | `inline` changes | The emitter's file is 1,778 lines at `9abed019`, against the 552 a model wrote for round 5e: a new arm, with no round-5e reading |
 | `skills` changes | Its root now carries the brief's paragraphs on personal data and on boundaries, which it lacked; a new arm too |
-| Round 6's arms | `none`, `reference`, `inline`, `skills`, `lazyref`, `lazyskills`, and those #169 adds |
+| Round 6's arms | `none`, `reference`, `inline`, `skills`, `lazyref`, `lazyskills`, and the two #169 adds: `lazysections`, the emitter's section files, and `lazyrefold`, `lazyref` before the check-loop change |
 | The report still reads arm files from the checkout | The pilot arms' files stay so a pilot report can count their lines, until #171 |
 
 ## History

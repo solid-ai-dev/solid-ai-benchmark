@@ -149,7 +149,7 @@ The layers:
 | Web tools disallowed | Fetching a page | `curl` or `git clone` in the shell |
 | Git credential helpers cleared | An authenticated clone of the hidden suite | |
 | Process-stop commands denied | Stopping the harness by name | Stopping by PID or port |
-| Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record |
+| Transcript scan | Any tool call naming a forbidden path or repository | A call the transcript does not record; a path the shell builds indirectly, through a variable, a wildcard or a climb past a name the scan knows |
 
 **Rules**
 
@@ -159,6 +159,7 @@ The layers:
 | 2 | The tools are fenced | File tools denied outside the workspace, web tools disallowed, no Git credentials, no stop by name | FR-05-03 to FR-05-06 |
 | 3 | The transcript is the backstop | A hit voids the trial and re-runs it once; the report scans again under the current rule | FR-05-07, FR-05-08 |
 | 4 | Nothing outlives the trial | Every process started from its directories is stopped before it is frozen | FR-05-09 |
+| 5 | A change task's fixtures are fenced | Their directory is in the deny rules, and the scan flags a path naming it or one of its archives; a tripwire for named access, since no static scan of a shell command is complete | FR-13-16 |
 
 The decision is ADR-020.
 
@@ -256,7 +257,7 @@ The other measures, run on every trial:
 | Measure | What it reads |
 | ------- | ------------- |
 | Install | `pip install .` in a clean virtualenv, `import tariff`, and the app serves `/` |
-| Accessibility | axe-core WCAG 2.1 AA violations |
+| Accessibility | axe-core rules of WCAG 2.1 A and AA violated, each by its id; axe's best-practice rules are kept apart and not counted (FR-06-07) |
 | HTML validity | Errors, less those on HTMX's `hx-*` attributes, which the spec requires and HTML lacks |
 | XSS and CSRF | One probe each |
 | Invoice builder | Response size and request count |
@@ -265,6 +266,12 @@ The other measures, run on every trial:
 | Size | App code's files and lines, apart from tests, docs and configuration |
 | Unasked artifacts | ADR, journal, CHANGELOG, PLAYBOOK, committed bytecode or databases |
 | Consistency | Each metric's spread across an arm's trials |
+
+Accessibility, HTML validity, XSS, CSRF and the invoice builder read the
+pages signed in as the seeded administrator. A page answered with the
+redirect to `/sign-in` is never measured: a form row the app keeps from
+running reads failed, a measured row missing, each with its reason
+(FR-06-06). Rounds 5 to 5e read them unsigned, on the redirect (#175).
 
 The adherence checklist:
 
@@ -353,6 +360,53 @@ green, whether the acceptance modules pass through the API, and, from round
 
 The decision is ADR-009, including why round 1's change-task pass rate was
 withdrawn.
+
+**The changed tree, scored in full.** From round 6 every arm's change task
+of a block starts from one fixture, a qualifying `none` build of round 5e,
+so the changed tree is read on every ISO axis the build is. It gets the
+same scoring, security and quality readings and judge, each filed apart
+from the build's under a `-change` folder of its own (FR-16-01, FR-16-03,
+FR-16-05). The judge reads a changed tree against the specification and
+the pinned change prompt, told that the change extends the specification,
+so the API the change adds is not counted as surface beyond it. A changed tree that does not install loses its probes and goes
+unjudged, as a build does; a reading the reader could not take is missing.
+
+Two readings compare the changed tree with its fixture, each counted on one
+axis only:
+
+| Reading | What it reads | Fails when | ISO place |
+| ------- | ------------- | ---------- | --------- |
+| Interfaces | The hidden suite's API, route and two export modules on the changed tree, against the fixture's frozen baseline | A module the fixture passed whole no longer does | Compatibility, Interoperability |
+| Data upgrade | Products, customers, rules, a jurisdiction and invoices saved through the fixture's own forms, then the changed tree on a copy of that database | An export no longer reads as it did, an old invoice saved again prices otherwise, a seeded code or rule id is gone from its list page, or the change's own fields do not price as the change says | Flexibility, Adaptability |
+
+- **Inherited is not broken.** An interface module the fixture already
+  failed is the fixture's, not the change's, and counts neither way
+  (FR-16-02).
+- **Exported values, exercised behaviour.** Values are read from the
+  exports the specification fixes, never from the pages' markup: each old
+  invoice's JSON, every old key and value, lists as long and in order, and
+  its CSV, every old column by name, row by row; the customer's export; and
+  each old invoice's body saved again, its export the fixture's but for
+  its id. A key or column only the changed tree has is the change's own,
+  and is no loss. The list pages count only for presence: a seeded code or
+  rule id named whole, whatever the markup (FR-16-04).
+- **The change's own fields, by their effect.** A capped jurisdiction and
+  a threshold rule are posted on the upgraded copy, and invoices saved
+  through the application opened afresh on it must give the applied rules,
+  discount, tax and total the change's semantics give, below, at and above
+  the threshold and the cap. The seed's invoice percentage, which would
+  share the threshold's slot, is deleted first, on the copy alone.
+- **Outside the claim.** A jurisdiction's name, a parameter no invoice
+  exercises and an equivalent internal form can change unread: the reading
+  claims exported values kept and exercised behaviour, not every field.
+- **Lost and missing.** A changed tree that will not open the file, or
+  sign in on it, has lost the data and fails. A fixture that cannot seed is
+  no arm's, so the reading is missing. Each reading names the fixture's
+  hash, the starting commit and the seeded database's hash.
+- **One place each.** The data upgrade is the migration target on
+  Adaptability: the change adapts to data an earlier version saved. It is
+  not read on Interoperability too, so no build is credited twice
+  (FR-16-06).
 
 ### 8.6.5 Pattern use
 
@@ -615,6 +669,60 @@ interval of the difference against `none` lies past the axis's margin
 (8.1.2): a filled ▲ up, a hollow ▽ down, a dot within. The cost sits above
 each radar, shown and not scored, and the appendix holds one table of
 sub-scores per axis. The decision is ADR-023.
+
+Round 6's targets read four sources the pilot's did not (FR-12-21 to
+FR-12-23, FR-16-06):
+
+- **Hidden-suite modules.** Functional correctness has one target per build
+  module, met where the module passes whole: no check failed, errored or
+  skipped. A module missing from a build's report is not measured where
+  the suite's revision did not hold it, and not met where it did: it failed
+  to collect. A suite that ran out of time fails every module: the build
+  held it there. The sub-characteristic is still one share among three on
+  its axis, however many modules it holds.
+- **Quality probes.** Each pass-or-fail probe is one target: fault
+  tolerance, availability, capacity, resource use, co-existence and
+  portability. A lost probe fails; a missing one is not measured.
+- **Latency.** Its target reads a cutoff calibrated from the reference
+  build and a planted slowdown, frozen before round 6 registers. Until then
+  it is not measured.
+- **The change task's tree.** Its interfaces are one target on
+  Interoperability and its data upgrade one on Adaptability (8.6.4). Both
+  are read whatever the trial's build did, since the change starts from a
+  fixture, not from that build (FR-16-06).
+
+A pilot round read by the ISO radar keeps the targets it had before round 6,
+and reads round 6's only when `--round6-targets` asks for them.
+
+**One radar a task** (FR-16-08). A named round draws the ISO radar and gives
+each arm's verdict twice, once a task, each against `none` on the same task:
+
+| Task | Reads | Cost beside it |
+| ---- | ----- | -------------- |
+| Build | Each build trial's tree; no change target | The build's mean billed cost per trial |
+| Change | Each change task's tree, scored in full, with the change targets | The change task's mean billed cost per trial |
+
+The summary, its tables, the plain report and the appendix name the task
+each reads. Neither task's readings stand in for the other's, so a build
+that broke says nothing of the change it never started. A pilot round
+draws one radar over its trials as they are.
+
+**Round C1's registered readings** (FR-16-09, FR-16-10). Each pairs two
+arms by block on each task, on the ISO axes and on the mean billed cost per
+trial:
+
+| Question | Pair | Answer |
+| -------- | ---- | ------ |
+| Is the check loop kept? | `lazyref` against `lazyrefold` | Kept where the point estimate of the cost drops by 10 % or more on each task, its interval shown beside it, and no axis reads worse on either |
+| Is an axis worse? | Each pair | The whole interval past the margin downward; none flagged reads "no degradation detected under the registered rule" |
+| Non-inferior? | Each pair | Every measured axis's lower bound above minus its margin, on each task; an interval crossing the margin is inconclusive |
+| Do the section files hold? | `lazysections` against `lazyref` and `reference` | The worse and non-inferior readings, with the cost; no gate |
+| Does an arm deliver on demand? | `lazyref`, `lazyskills`, `lazysections` against `reference` | Fewer templates read per trial than `reference`'s and non-inferior on every measured axis; otherwise not shown |
+
+Keeping the check loop is reported apart from any non-inferiority claim:
+a gate passed says nothing got clearly worse, not that nothing got worse.
+Templates read are counted from each trial's transcripts, every template
+file, section file or skill read or loaded, once.
 
 **Each approach in plain words** (FR-12-07):
 

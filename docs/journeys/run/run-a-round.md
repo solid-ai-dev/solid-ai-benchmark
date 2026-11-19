@@ -34,6 +34,15 @@ round running overnight. A trial that was blocked is handled in
 runs it after the build trials with `--task change`, and scores it with
 `score.py --task change`.
 
+From round 6 a run names its round, as `--round C1`, and the harness holds it
+to that round's registration: its arms, its K, its spec and both prompts. Its
+change task starts from the fixtures in `change-fixtures.json`, not from the
+arm's own build, so it runs with `--fixtures <the directory of their
+tarballs>` and needs no build trial first. The run prints what each task
+still owes; the round is complete with both tasks at K for every arm.
+Its registration, `docs/rounds/round-c1.md` for C1, lands on `main` before
+the first trial, or the report refuses the round.
+
 ## Commands
 
 ```bash
@@ -41,6 +50,8 @@ py tests/efficacy/harness.py --self-test --templates <the templates clone>
 py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 15 --model claude-sonnet-5 --dry-run
 py tests/efficacy/harness.py --root <run root> --arms none,inline,hybrid,reference,skills --k 15 --model claude-sonnet-5
 py tests/efficacy/score.py --root <run root>
+py tests/efficacy/harness.py --root <run root> --round C1 --k 15 --model claude-sonnet-5
+py tests/efficacy/harness.py --root <run root> --round C1 --task change --fixtures <fixture tarballs> --k 15 --model claude-sonnet-5
 ```
 
 ## Findings

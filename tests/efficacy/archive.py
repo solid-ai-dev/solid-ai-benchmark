@@ -25,17 +25,24 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import lib  # noqa: E402
-from harness import (TrialError, assert_outside_repository,  # noqa: E402
-                     claim_path, claim_refusal_check, project_folder,
-                     read_claim, remove_tree, running_as, scoring_area,
-                     write_run)
+from harness import (REGISTRATIONS, TrialError,  # noqa: E402
+                     assert_outside_repository, claim_path,
+                     claim_refusal_check, project_folder, read_claim,
+                     registration_digest, remove_tree, running_as,
+                     scoring_area, write_run)
 
 MANIFEST = "ARCHIVE.json"
 STAMP = "archived.json"
 
 # The scoring area's per-trial readings the report aggregates, each a JSON
-# file named for its trial.
-READINGS = ("scores", "scores-change", "security-scores")
+# file named for its trial, a change task's beside the build's.
+READINGS = ("scores", "scores-change", "security-scores",
+            "security-scores-change", "quality-scores",
+            "quality-scores-change")
+
+# The judgings' folders, the build's and the change task's, each with its
+# own labels and map.
+JUDGINGS = ("judge", "judge-change")
 
 # What a frozen workspace holds that no reading needs and any scoring
 # rebuilds: tool caches, compiled bytecode, and every virtual environment,
@@ -116,8 +123,9 @@ def readings_digest(root):
     files = {os.path.basename(path): path
              for path in glob.glob(os.path.join(root, "run-*.json"))}
     patterns = [os.path.join(kind, "*.json") for kind in READINGS]
-    patterns += [os.path.join("judge", "T*.json"),
-                 os.path.join("judge", "map.json")]
+    for judging in JUDGINGS:
+        patterns += [os.path.join(judging, "T*.json"),
+                     os.path.join(judging, "map.json")]
     for pattern in patterns:
         for path in glob.glob(os.path.join(area, pattern)):
             files[os.path.relpath(path, area).replace(os.sep, "/")] = path
@@ -212,10 +220,11 @@ def archive(root, into):
 
     # A judging's bundle is rebuilt from its tree, so only the judgings, the
     # unblinding map and a failed judging's output tail are kept.
-    for path in sorted(glob.glob(os.path.join(area, "judge", "*"))):
-        if os.path.isfile(path):
-            copy_file(path, os.path.join(into_area, "judge",
-                                         os.path.basename(path)))
+    for judging in JUDGINGS:
+        for path in sorted(glob.glob(os.path.join(area, judging, "*"))):
+            if os.path.isfile(path):
+                copy_file(path, os.path.join(into_area, judging,
+                                             os.path.basename(path)))
     lock = os.path.join(area, "tool-lock.txt")
     if os.path.isfile(lock):
         copy_file(lock, os.path.join(into_area, "tool-lock.txt"))
@@ -292,13 +301,28 @@ def figures(root, seed):
     """What the report computes from a root, with paths left out."""
     import report
 
-    trials = report.load(root)
-    report.exclude_reached(trials, report.reaches(root))
+    # Read as the report reads it, by one entry point, so a reading the
+    # report counts can never change unseen by the verify.
+    trials, problem = report.round_trials(root)
+    if problem:
+        raise TrialError(problem)
+    report.leave_out_reached(root, trials)
     table = report.collect(trials)
     results = report.round_contrasts(trials, table, seed)
     withdrawn = report.withdrawals(trials)
     report.withdraw(withdrawn, table, results)
+
+    # A named round's every task is read on its own radar, and its
+    # registered readings from those, so a change task's reading that
+    # changes, its data upgrade among them, shows as its figures do.
+    tasks = report.task_readings(trials, seed, withdrawn)
+    per_task = {task: {"iso": reading[0], "results": reading[1],
+                       "cost_usd": task_table["cost_usd"]}
+                for task, _, _, task_table, reading in tasks}
+    registered = (report.registered_figures(
+        tasks, seed, report.task_uses(root, tasks)) if tasks else None)
     return {"table": table, "results": results, "withdrawn": withdrawn,
+            "iso_tasks": per_task, "registered": registered,
             "owed_blocks": report.owed_blocks(trials),
             "reach": report.reaches(root),
             "lost": [{key: value for key, value in loss.items()
@@ -330,7 +354,7 @@ def stamp(root, into):
 
 # The tools that read and write a scoring area while they run, each under a
 # claim of its own.
-AREA_TOOLS = ("score.py", "security.py", "judge.py")
+AREA_TOOLS = ("score.py", "security.py", "quality.py", "judge.py")
 
 
 def live_run_problem(root):
@@ -356,7 +380,10 @@ def drop_trees(root):
     for part in ("scoring", "scoring-change"):
         for kind in ("tree", "venv"):
             folders += glob.glob(os.path.join(area, part, "*", kind))
-    folders += glob.glob(os.path.join(area, "security", "*", "venv"))
+    for reader in ("security", "security-change"):
+        folders += glob.glob(os.path.join(area, reader, "*", "venv"))
+    for reader in ("quality", "quality-change"):
+        folders += glob.glob(os.path.join(area, reader, "*", "venv*"))
     for folder in folders:
         remove_tree(folder)
     return len(folders)
@@ -444,6 +471,11 @@ def plant_root(scratch):
                "answer": {"rubric": {}}})
     dump_json(os.path.join(area, "judge", "map.json"),
               {"seed": 1, "blind": {"none-1": "T1"}})
+    dump_json(os.path.join(area, "judge-change", "T1.json"),
+              {"trial": "none-1", "task": "change", "blind_id": "T1",
+               "outcome": "judged", "answer": {"rubric": {}}})
+    dump_json(os.path.join(area, "judge-change", "map.json"),
+              {"seed": 1, "blind": {"none-1": "T1"}})
     os.makedirs(os.path.join(area, "judge", "T1"))
     with io.open(os.path.join(area, "judge", "T1", "bundle.txt"), "w",
                  encoding="utf-8") as handle:
@@ -487,9 +519,19 @@ def self_test():
          and not any("credentials" in key for key in files)),
         ("readings, judgings, map and lock come; bundles do not",
          {"scoring/scores/none-1.json", "scoring/security-scores/hybrid-1.json",
+          "scoring/quality-scores/hybrid-1.json",
           "scoring/scores-change/none-1.json", "scoring/judge/T1.json",
           "scoring/judge/map.json", "scoring/tool-lock.txt"} <= set(files)
          and not any("bundle" in key for key in files)),
+        ("a change task's security and quality readings and judgings are "
+         "archived beside its score",
+         {"scoring/security-scores-change/none-1.json",
+          "scoring/quality-scores-change/hybrid-1.json",
+          "scoring/judge-change/T1.json",
+          "scoring/judge-change/map.json"} <= set(files)
+         and set(readings_digest(root)) >= {
+             "quality-scores-change/none-1.json",
+             "judge-change/T1.json"}),
         ("a voided directory is kept as a marker",
          manifest["voided"] == ["hybrid-1-2026-10-01T11-00-00"]
          and os.path.isfile(os.path.join(into, "void", manifest["voided"][0],
@@ -528,6 +570,53 @@ def self_test():
     checks.append(("a reading changed in the archive fails the verify",
                    landed and verify(root, into, seed) != []))
 
+    # A C1 root whose one change task has no build score: the report reads
+    # it, so the verify has to, and a change to it in the archive shows.
+    named = os.path.join(scratch, "c1")
+    tarball = os.path.join(named, "change-none-1.tar")
+    os.makedirs(named)
+    plant_tarball(tarball, "change-none-1")
+    write_run(os.path.join(named, "run-c1.json"),
+              datetime.datetime(2026, 11, 15, 12, 0, 0).astimezone(),
+              [{"arm": "none", "trial": 1, "outcome": "completed",
+                "frozen": {"head": "h", "tarball": tarball}}], "change",
+              identity={"round": "C1", "registration":
+                        registration_digest(REGISTRATIONS["C1"])})
+    # A changed tree that installed and booted, so every axis of its task's
+    # radar reads its readings.
+    dump_json(os.path.join(scoring_area(named), "scores-change",
+                           "none-1.json"),
+              {"name": "none-1", "change_suite": {"value": 0.9},
+               "install": {"value": True, "missing": None},
+               "boot": {"value": {"factory": True, "index_status": 200},
+                        "missing": None}})
+    dump_json(os.path.join(scoring_area(named), "quality-scores-change",
+                           "none-1.json"),
+              {"name": "none-1", "probes": {"data_upgrade": {
+                  "passed": True}}})
+    named_into = os.path.join(scratch, "runs", "c1")
+    archive(named, named_into)
+    clean = verify(named, named_into, seed) == []
+    archived = os.path.join(scoring_area(named_into), "scores-change",
+                            "none-1.json")
+    dump_json(archived, dict(load_json(archived),
+                             change_suite={"value": 0.4}))
+    checks.append(("a C1 change task's score changed in the archive fails "
+                   "the verify",
+                   clean and "table" in verify(named, named_into, seed)))
+
+    # A change task's quality reading flipped in the archive moves only its
+    # task's radar, never the combined table, and the verify still refuses.
+    dump_json(archived, dict(load_json(archived),
+                             change_suite={"value": 0.9}))
+    upgraded = os.path.join(scoring_area(named_into), "quality-scores-change",
+                            "none-1.json")
+    dump_json(upgraded, {"name": "none-1", "probes": {"data_upgrade": {
+        "passed": False}}})
+    checks.append(("a C1 change task's quality reading flipped in the "
+                   "archive fails the verify",
+                   verify(named, named_into, seed) == ["iso_tasks"]))
+
     # A round-5d root is verified by round 5d's rules, so reliability's
     # interval is Newcombe's there as it is in the report.
     later = os.path.join(scratch, "round-5d")
@@ -546,12 +635,13 @@ def self_test():
     checks.append(("a stamped round has none", stamp_problem(root) is None))
 
     # What scoring leaves: a trial's tree and environment, a change task's,
-    # and a security reading's environment.
+    # and a security and a quality reading's environment.
     area = scoring_area(root)
     leftovers = [os.path.join(area, "scoring", "none-1", "tree"),
                  os.path.join(area, "scoring", "none-1", "venv"),
                  os.path.join(area, "scoring-change", "none-1", "tree"),
-                 os.path.join(area, "security", "hybrid-1", "venv")]
+                 os.path.join(area, "security", "hybrid-1", "venv"),
+                 os.path.join(area, "quality", "hybrid-1", "venv")]
     for folder in leftovers:
         os.makedirs(folder, exist_ok=True)
         with io.open(os.path.join(folder, "left.txt"), "w") as handle:
@@ -566,6 +656,11 @@ def self_test():
     dump_json(score, dict(load_json(score), planted=True))
     checks.append(("a reading changed after the stamp is a problem",
                    "scores/none-1.json" in (stamp_problem(root) or "")))
+    quality = os.path.join(scoring_area(root), "quality-scores", "none-1.json")
+    if os.path.isfile(quality):
+        dump_json(quality, dict(load_json(quality), planted=True))
+    checks.append(("a quality reading changed after the stamp is a problem",
+                   "quality-scores/none-1.json" in (stamp_problem(root) or "")))
     out = os.path.join(scratch, "draft")
     checks.append(("the report refuses docs/reports/ without a current stamp",
                    report.main(["--root", root]) == 2))
@@ -573,7 +668,9 @@ def self_test():
                    report.main(["--root", root, "--out-dir", out]) == 0
                    and bool(os.listdir(out))))
 
-    for tool in AREA_TOOLS:
+    # Named, not read from the list the archive keeps, so a tool missing
+    # from that list shows as an archive made beside its live run.
+    for tool in ("score.py", "security.py", "quality.py", "judge.py"):
         checks.append(claim_refusal_check(
             tool, main, root, "--into",
             os.path.join(scratch, "runs", "live-" + tool)))

@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import lib  # noqa: E402
 from harness import (LiveRunError, canonical, claim_area,  # noqa: E402
                      claim_refusal_check, release_area, remove_tree,
-                     scoring_area)
+                     scoring_area, task_folder)
 from score import (absent, create_venv, lock_lines, measured, pip,  # noqa: E402
                    python_in, run, script_in)
 
@@ -1037,8 +1037,10 @@ def audit_dependencies(venv, where, auditor):
     return audit_metric(outcome["stdout"] or outcome["stderr"], audited_at)
 
 
-def read_trial(area, name, scores_file, auditor, auditor_reason):
-    """Every security check on one scored trial, read from its score file."""
+def read_trial(area, name, scores_file, auditor, auditor_reason,
+               task="build"):
+    """Every security check on one scored trial of `task`, read from its
+    score file."""
     with io.open(scores_file, encoding="utf-8") as handle:
         scores = json.load(handle)
     roots = (scores.get("discovery") or {}).get("roots") or []
@@ -1048,7 +1050,7 @@ def read_trial(area, name, scores_file, auditor, auditor_reason):
         timespec="seconds"), "auditor": PIP_AUDIT, "roots": roots}
     result.update(static_checks(roots))
 
-    where = os.path.join(area, "security", name)
+    where = os.path.join(area, task_folder("security", task), name)
     os.makedirs(where, exist_ok=True)
     venv = create_venv(os.path.join(where, "venv"))
     try:
@@ -1551,11 +1553,43 @@ def leftover_self_checks(scratch):
     scores_file = os.path.join(area, "none-1.json")
     with io.open(scores_file, "w", encoding="utf-8") as handle:
         json.dump({"workspace": tree, "discovery": {"roots": []}}, handle)
+    def lost(reading):
+        return sorted(name for name, probe in reading["probes"].items()
+                      if probe.get("lost"))
+
     result = read_trial(area, "none-1", scores_file, None, "not planted")
+    changed = read_trial(area, "none-1", scores_file, None, "not planted",
+                         "change")
     return [("a reading's environment is gone once it is read",
              "probes" in result
              and not os.path.exists(os.path.join(area, "security", "none-1",
-                                                 "venv")))]
+                                                 "venv"))),
+            ("a changed tree that does not install loses its probes, as a "
+             "build's does",
+             lost(changed) and lost(changed) == lost(result)
+             and os.path.isdir(os.path.join(area, "security-change",
+                                            "none-1"))
+             and not os.path.exists(os.path.join(area, "security-change",
+                                                 "none-1", "venv")))]
+
+
+def task_self_checks(scratch):
+    """A change task is read from its own scores into its own folder, never
+    from or into the build's."""
+    area = os.path.join(scratch, "tasks")
+    for kind, name in (("scores", "none-1"), ("scores-change", "inline-2")):
+        os.makedirs(os.path.join(area, kind))
+        with io.open(os.path.join(area, kind, "%s.json" % name), "w",
+                     encoding="utf-8") as handle:
+            handle.write("{}")
+    return [("a change task is read from its own scores into "
+             "security-scores-change",
+             sorted(scored_trials(area, "change")) == ["inline-2"]
+             and sorted(scored_trials(area, "build")) == ["none-1"]
+             and readings_folder(area, "change")
+             == os.path.join(area, "security-scores-change")
+             and readings_folder(area, "build")
+             == os.path.join(area, "security-scores"))]
 
 
 def self_test():
@@ -1566,7 +1600,7 @@ def self_test():
     os.makedirs(scratch)
     checks = (static_self_checks(scratch) + runtime_self_checks(scratch)
               + audit_self_checks() + claim_self_checks(scratch)
-              + leftover_self_checks(scratch))
+              + leftover_self_checks(scratch) + task_self_checks(scratch))
     for label, ok in checks:
         print("  %-52s %s" % (label, "ok" if ok else "FAILED"))
     remove_tree(scratch)
@@ -1591,6 +1625,10 @@ def parse_args(argv):
     parser.add_argument("--reread", action="store_true",
                         help="read a trial already read; by default such a "
                              "trial is skipped")
+    parser.add_argument("--task", choices=("build", "change"),
+                        default="build",
+                        help="read the build trials' trees, or the trees the "
+                             "change tasks left")
     parser.add_argument("--self-test", action="store_true",
                         help="prove every check against planted trees; read "
                              "no trial")
@@ -1605,20 +1643,14 @@ def main(argv):
         print("--root is required unless --self-test is given")
         return 2
 
-    # A score is filed under its trial's name, read as the arms spell it.
     area = scoring_area(options.root)
-    scores = os.path.join(area, "scores")
-    scored = {canonical(os.path.splitext(entry)[0]):
-              os.path.join(scores, entry)
-              for entry in (sorted(os.listdir(scores))
-                            if os.path.isdir(scores) else [])
-              if entry.endswith(".json")}
+    scored = scored_trials(area, options.task)
     wanted = (sorted(canonical(name) for name in options.trial)
               if options.trial else sorted(scored))
     missing = [name for name in wanted if name not in scored]
     if not scored or missing:
-        print("no build score for %s under %s; score.py writes them"
-              % (", ".join(missing) or "any trial", area))
+        print("no %s score for %s under %s; score.py writes them"
+              % (options.task, ", ".join(missing) or "any trial", area))
         return 2
 
     # A run clears each trial's environment before rebuilding it, so a second
@@ -1639,7 +1671,7 @@ def read_trials(options, area, scored, wanted):
 
     # A trial already read keeps its reading, as a reused trial from an
     # earlier round does; the checks were declared after that round.
-    target = os.path.join(area, "security-scores")
+    target = readings_folder(area, options.task)
     done = []
     if not options.reread:
         for name in wanted:
@@ -1654,21 +1686,36 @@ def read_trials(options, area, scored, wanted):
                           % len(done))
         return 0
 
-    file_readings(area, scored, wanted)
+    file_readings(area, scored, wanted, options.task)
     lib.print_verdict(True, "%d trial(s) read, %d already read"
                       % (len(wanted), len(done)))
     return 0
 
 
-def file_readings(area, scored, names):
-    """Read each named trial from its score file and file the reading under
-    `security-scores/`, overwriting any earlier one."""
-    target = os.path.join(area, "security-scores")
+def scored_trials(area, task):
+    """Every score of `task` in the scoring area, by the trial's name as the
+    arms spell it."""
+    scores = os.path.join(area, task_folder("scores", task))
+    return {canonical(os.path.splitext(entry)[0]): os.path.join(scores, entry)
+            for entry in (sorted(os.listdir(scores))
+                          if os.path.isdir(scores) else [])
+            if entry.endswith(".json")}
+
+
+def readings_folder(area, task):
+    """Where the security readings of `task` are filed."""
+    return os.path.join(area, task_folder("security-scores", task))
+
+
+def file_readings(area, scored, names, task="build"):
+    """Read each named trial of `task` from its score file and file the
+    reading beside the task's scores, overwriting any earlier one."""
+    target = readings_folder(area, task)
     auditor, reason = install_auditor(os.path.join(area, "security", "tools"))
     os.makedirs(target, exist_ok=True)
     for name in names:
         print("%s  reading for security" % name)
-        result = read_trial(area, name, scored[name], auditor, reason)
+        result = read_trial(area, name, scored[name], auditor, reason, task)
         with io.open(os.path.join(target, "%s.json" % name), "w",
                      encoding="utf-8") as handle:
             json.dump(result, handle, indent=2, sort_keys=True)

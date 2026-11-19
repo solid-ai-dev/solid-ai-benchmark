@@ -1,0 +1,15 @@
+{
+  "round": "C1",
+  "source": {
+    "round": "5e",
+    "arm": "none",
+    "tarballs": "the frozen none-<n>.tar of round 5e's run root, also in its archive"
+  },
+  "qualification": null,
+  "fixture_fields": {
+    "trial": "the source build's trial name, as none-3",
+    "sha256": "the sha256 of that build's frozen tarball",
+    "baseline": "the source build's frozen readings the qualification took, an object; its interfaces maps each of test_api_contract.py, test_http_routes.py, test_export_json.py and test_export_csv.py to whether the build passed that module whole"
+  },
+  "fixtures": []
+}

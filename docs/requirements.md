@@ -22,21 +22,26 @@
   - **Harness:** `harness.py`, which runs the trials.
   - **Scorer:** `score.py`, which scores a frozen build.
   - **Security reader:** `security.py`, which runs the probes.
+  - **Quality reader:** `quality.py`, which runs the reliability, performance
+    and portability probes.
   - **Judge:** `judge.py`, which bundles a build and has a model score it.
   - **Report:** `report.py`, which reads a round and writes its report.
   - **Archive:** `archive.py`, which carries a round to the private archive.
+  - **Reuse:** `reuse.py`, which brings an earlier round's trials into a run.
   - **Arm generator:** `generate_arm.py`, which writes a generated arm's file.
   - **Control builder:** `control/control.py`, which builds the judge's
     control trees.
+  - **Reuse:** `reuse.py`, which brings an earlier round's trials into a
+    run root.
   - **Owner:** a working practice no script carries out.
 
 ### 01 Registration
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge. | Report |
+| FR-01-01 | The benchmark shall refuse, from round 5, a round whose registration landed on `main` after its first trial started, a merge counting at the merge; `main` read as the local branch, else as `origin/main`, and a clone holding neither refused with its reason. | Report |
 | FR-01-02 | The benchmark shall refuse a registration that differs from `main`'s copy or has changes not committed. | Report |
-| FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content. | Report |
+| FR-01-03 | The benchmark shall refuse a trial built from a spec or prompt other than the ones its round registers, compared by content; a named round's trials each against its entry's spec and the prompt pinned for their task. | Report |
 | FR-01-04 | The benchmark shall refuse a trial with something to score that records no spec or no prompt. | Report |
 | FR-01-05 | The benchmark shall check the spec before every trial, and refuse unbuilt the trials after an edit made mid-run. | Harness |
 | FR-01-06 | The benchmark shall record each trial's start with its UTC offset, and refuse a start with none. | Harness, Report |
@@ -104,6 +109,8 @@
 | FR-06-03 | The benchmark shall count as lost, against the rate, a probe the trial keeps from running. | Security reader |
 | FR-06-04 | The benchmark shall leave the rate missing for a probe it could not run itself. | Security reader |
 | FR-06-05 | The benchmark shall show an unmeasured value as not measured. | Report |
+| FR-06-06 | The benchmark shall read the app's pages signed in as the seeded administrator, and never measure a page answered with the sign-in's redirect: a form row the app keeps from running reads failed, a measured row missing. | Scorer |
+| FR-06-07 | The benchmark shall count as accessibility violations only the rules of WCAG 2.1 levels A and AA, and keep each violated rule's id. | Scorer |
 
 ### 07 Tools and interpreter
 
@@ -189,6 +196,9 @@
 | FR-12-18 | The benchmark shall read a pilot round by the ISO radar only as a draft that says it is post hoc, never under `docs/reports/`, and keep its aggregate beside the registered one; a run read by the ISO radar shall take no cross-check. | Report |
 | FR-12-19 | The benchmark shall time, per trial and per task of an arm whose map is the templates' chain, each template's first read, by the session or apart by a subagent, against the first write by a file tool to a file inside the workspace on its topics, as the topic map fixed before the round names them by path, and class it just in time, late, never, unused, spare or unmapped, with the share of trials that wrote by shell before their last write placed on a topic. | Report |
 | FR-12-20 | The benchmark shall list, per trial and per task of an arm with skills, each skill loaded and its turn, a subagent's apart, and set `skills` beside `inline` on the hidden tests and the judge's security and data-protection rows, with no verdict. | Report |
+| FR-12-21 | From round 6 the benchmark shall load each trial's quality reading beside its security reading and read each quality probe as an ISO target: a lost probe fails, a missing one is not measured, and the latency target is not measured until its cutoff is registered. | Report |
+| FR-12-22 | From round 6 the benchmark shall read functional correctness as one target per hidden-suite build module, met only where every check in it ran and passed; a module the trial's report lacks is not measured where the suite's revision did not hold it, and not met where it did; a suite that ran out of time fails every module. | Report |
+| FR-12-23 | The benchmark shall read a pilot round by the ISO radar with the targets it had before round 6, and by round 6's only where asked, refusing that request where no pilot draft would read it. | Report |
 
 ### 13 Records and archive
 
@@ -204,13 +214,53 @@
 | FR-13-08 | The benchmark shall refuse a built arm file that names a tool. | Arm generator |
 | FR-13-09 | The benchmark shall write a round's report, by default, to its own `docs/reports/`, with no templates source named. | Report |
 | FR-13-10 | The benchmark shall build every arm a round runs by script, with no model call, and fail its self-test where a committed arm differs from what the script builds at the arm's recorded ref. | Arm generator |
+| FR-13-11 | From round 6 the benchmark shall run a round only as `--round` names it, under its registration: refusing a round not registered, an arm it does not register, a K past its K, and a spec, build prompt or change prompt other than the ones it pins by digest. | Harness |
+| FR-13-12 | The benchmark shall write a named round and its registration's digest in the run record, and the round, task, arm and block in every trial record, keeping them when a recovery rewrites the record; and refuse a run in a root whose records name another round or digest, or where a named round and records naming none would meet, a header naming no round over trials that name one counting as a named round's record. | Harness |
+| FR-13-13 | The benchmark shall read a round from its run records where they name one, refuse records of a named round missing its identity, in a trial or in the header, and infer the round from the arms only for records naming none. | Report |
+| FR-13-14 | The benchmark shall call a round of two tasks complete only with both at K for every arm, a change task counting whatever its arm's build trial did. | Harness, Report |
+| FR-13-15 | The benchmark shall start every arm's change task of block b of a named round from one fixture, the b-th qualifying build in ascending trial order, cycling when fewer qualify; record the manifest's sha256, each block's fixture and how many distinct fixtures the blocks take; refuse a change run whose manifest or block mapping differs from the root's earlier change runs; and refuse to run while the fixture manifest lists none, lists one without its baseline readings, or names a tarball whose sha256 differs, at the start and at each trial. | Harness |
+| FR-13-16 | The benchmark shall derive each change workspace from its fixture's code and tests alone, without its instructions, settings, databases, caches, environments or history, with the round's spec and only the arm's context, in one commit; and fence the fixtures' directory off from the trial, in its deny rules and every scan of its transcripts, the report's re-scan included, a path into it named absolutely, by a fixture archive's name or by a climb to its own name, and refuse a run root inside it, paths compared resolved and, on Windows, in either case; the scan catches a named access only, not a path the shell builds indirectly. Each kept link shall name something the workspace keeps, a fixture holding any other read as unusable, before the run and at a trial. | Harness, Report |
+| FR-13-17 | The benchmark shall read a named round's change task whether or not its build trial was scored or left out for a reach, as a trial of its own whose build rows read not measured; count its change targets on their ISO axes whether its build is unscored, working or broken, a broken build gating only the build's own targets; and keep a pilot round's change task with its build. | Report |
+| FR-13-18 | The benchmark shall reuse a named round's trials under a run record naming that round and its registration's digest, and never reuse trials into a root of another round, a named round's into a root of none, or another round's into a named round's; name the round and its digest in each reused trial's origin, and pair a trial reused within one named round, under one digest, with the trials run there. | Reuse, Report |
+| FR-13-19 | The benchmark shall refuse a named round's report unless the document its registration entry names exists and landed on `main` before the round's first trial, unchanged since, a trial reused within the round counting toward its start. | Report |
+| FR-13-20 | The benchmark shall verify an archive by the report's own reading of its round, through one entry point, a named round's change tasks and its reach rule included. | Archive, Report |
+| FR-13-21 | The benchmark shall bring a reused trial's score, security and quality readings and judgings into the later round, each naming the trial it came from. | Reuse |
+| FR-13-22 | The benchmark shall build the `lazysections` arm with the templates' emitter in its sections mode, for the chain and declined list the other emitted arms take, place its section files where its map names them, out of the workspace's index, and fail its self-test where the section files' rule blocks differ from the inline root's, or the map names a section file other than once; and count a trial's Read or shell read of a section file as a use of its map, printed in a named round's report. | Arm generator, Harness, Report |
+| FR-13-23 | The benchmark shall build the `lazyrefold` arm as `lazyref` at the parent of the templates commit that cuts the check loop to one check command, and fail its self-test where the two committed arms' workspace files, at the refs their records name, differ by other than that commit's lines, all within the section it changes. | Arm generator |
+| FR-13-24 | The benchmark shall refuse an on-demand arm (`lazyref`, `lazyskills`, `lazysections`, `lazyrefold`) whose files tell the agent to read everything at the start. | Arm generator |
 
 ### 14 One run at a time
 
 | ID | Requirement | Delivered by |
 | -- | ----------- | ------------ |
-| FR-14-01 | The benchmark shall refuse a second scoring, judging or security run that finds a live claim on its root. | Scorer, Judge, Security reader |
+| FR-14-01 | The benchmark shall refuse a second scoring, judging, security or quality run that finds a live claim on its root. | Scorer, Judge, Security reader, Quality reader |
 | FR-14-02 | The benchmark shall take over a claim naming a process that has ended, and say so. | Harness |
+
+### 15 Quality probes
+
+| ID | Requirement | Delivered by |
+| -- | ----------- | ------------ |
+| FR-15-01 | The benchmark shall fail each of the fuzz, concurrent-write, 500-line, N+1 and co-existence probes on an app planted with the fault it guards against, and no other probe there, and pass every probe on an app built to pass them; the 500-line probe passes only where the invoice previews 2xx, saves and renders 2xx, its JSON export answers 2xx and lists all 500 lines in order, each a well-formed record, with a finite, positive total, and its first 100 lines, saved alone, export a total a fifth of it within a cent; pages are read for answering, never for the amounts they show; the co-existence probe reads a database opened by a `file:` URI as the file it names, fails where either instance's product list does not answer 2xx, and fails a build that, at any time in the run, opens to write a file outside the workspace and the reader's own database root, a database opened read-only by a `mode=ro` URI being no write, each such write filed as it happens so a run killed later keeps it; each malformed request is sent to a fresh instance of its own, signed in afresh, and one whose form page does not answer 200 fails as unreached; and the concurrent writes run last, on a fresh instance of their own, a writer the app hangs failing them and stopping the run there, every reading before it kept. | Quality reader |
+| FR-15-02 | The benchmark shall read every quality probe signed in as the seeded administrator, through the sign-in form's hidden fields however they are quoted, each post carrying the hidden fields of the form whose action, or one of whose submit controls' `formaction`, it is sent to, or else the page's first of each name, every redirect resolved against its request as a browser resolves it, the sign-in holding only where the dashboard then answers 200, and never measure a request the sign-in turns away with its redirect, a 401, or a 403 to a request that carried its token. | Quality reader |
+| FR-15-03 | The benchmark shall count as lost, reading failed, a quality probe the trial keeps from running, by not installing, not booting, not signing in or not finishing in time, and as missing one it could not run itself. | Quality reader |
+| FR-15-04 | The benchmark shall record the latency as two repeats of the 95th percentile over 30 requests to the main routes, with no pass threshold until one is calibrated. | Quality reader |
+| FR-15-05 | The benchmark shall read portability on Python 3.14, the trial installed, booted and serving a signed-in page there, and leave it missing where no Python 3.14 is found. | Quality reader |
+| FR-15-06 | The benchmark shall read the quality probes in a fresh environment per trial on the spec's Python, and remove every environment once it is read; a trial whose source tree is not present has every probe missing. | Quality reader |
+
+### 16 The changed tree
+
+| ID | Requirement | Delivered by |
+| -- | ----------- | ------------ |
+| FR-16-01 | The benchmark shall score a change task's tree on every reading a build's is, with the build and change suites in place of the one suite, its churn and scope taken before the install, the boot or the battery write into the tree, the boot's database and what the app keeps beside it written outside the tree, its public surface read against the build's names and each the pinned change prompt calls on the package, and its security reading filed beside its score. | Scorer |
+| FR-16-02 | The benchmark shall read a change task's interfaces against its fixture's frozen baseline: met where every one of `test_api_contract.py`, `test_http_routes.py`, `test_export_json.py` and `test_export_csv.py` the fixture passed whole passes whole on the changed tree, not met where one does not, a module the fixture already failed inherited and counted neither way; not met for every module where the build suite ran out of time; not measured with no baseline, no build suite, or none the fixture passed; and refuse a fixture whose baseline does not say which of the four it passed. | Scorer, Harness |
+| FR-16-03 | The benchmark shall read the security and quality probes on a change task's tree from its own score into folders of its own, a tree that does not install losing them as a build's does. | Security reader, Quality reader |
+| FR-16-04 | The benchmark shall read a change task's data upgrade, a claim of exported values kept and exercised behaviour: products, customers, rules, a jurisdiction and invoices seeded through the forms of the application at the change's starting commit, then a copy of that database opened by the changed tree; failed where a list page answers other than a success or no longer names a seeded jurisdiction's code or rule's id as a whole identifier, whatever its markup; where an export answers other than a success, or an old invoice's JSON export no longer holds every old key and value, lists as long and in order, or its CSV export every old column's values, row by row, the total row's included, a key or column only the change has allowed; where the customer's export no longer reads the same; where an old invoice's body saved again no longer exports as the fixture's did, its new id aside; or where the change's own fields, posted on the upgraded copy and read through the application opened afresh on it, do not give the applied rules, discount, tax and total the change's semantics give below, at and above the threshold and the cap; lost where the changed tree does not install, open the file or sign in; missing where the fixture cannot seed or the change names no starting commit; each reading naming the fixture's hash, the starting commit and the seeded database's hash. A jurisdiction's name, a parameter no invoice exercises and an equivalent internal form are outside the claim. | Quality reader |
+| FR-16-05 | The benchmark shall judge a change task's tree blind, apart from the build's, with labels and a map of its own, against the specification and the pinned change prompt, carried in its bundle, the judge told that the change extends the specification, the build's prompt unchanged; and not judge one that did not install. | Judge |
+| FR-16-06 | From round 6 the benchmark shall read a change task's interfaces on Interoperability and its data upgrade on Adaptability, each once, whatever its build did, its security and quality readings and judgings going only with its change score; a pilot round reads neither. | Report |
+| FR-16-07 | The benchmark shall archive a change task's security and quality readings and judgings, verify an archive by each task's ISO reading and the registered readings too, and reuse a change task with its arm's build trials, in a change run of its own naming its round's fixtures, refused into a target whose change runs took another manifest or block mapping, with every reading and judging of its own. | Archive, Reuse |
+| FR-16-08 | From round 6 the benchmark shall draw the ISO radar and give each arm's verdict once a task: the build trials on the build, each change task's tree on the change, each against `none` on the same task, the change targets on the change task's radar alone, and a round with no build reading its finding table from the change task's own trials, cost and contrasts; name the task in the summary, its tables and the plain report; and show each task's mean billed cost per trial beside its radar, never scored. A pilot round draws one radar over its trials as they are. | Report |
+| FR-16-09 | For round C1 the benchmark shall read the check loop as `lazyref` against `lazyrefold`, paired by block on each task: kept only where both tasks are read, the point estimate of the mean billed cost per trial, read from the unrounded paired differences, drops by at least 10 % on each, within 1e-9, its interval printed beside it, and no ISO axis reads worse on either, and not decided while a task is unread; an axis worse only where its whole interval lies past the margin downward, nothing flagged reading "no degradation detected under the registered rule"; non-inferior only where every measured axis's lower bound lies strictly above minus its margin, one on or below it inconclusive; and read `lazysections` against `lazyref` and against `reference` the same way, with its cost, and no gate. | Report |
+| FR-16-10 | For round C1 the benchmark shall read an on-demand arm (`lazyref`, `lazyskills`, `lazysections`) as delivering on demand on a task only where its trials read fewer templates on average than `reference`'s, counted from the transcripts of that task's trials the report reads, a file read by a read or a reading command, a wildcard standing for each file it matches, a skill's file read, by its name or a wildcard, counted once with its loading, and it is non-inferior to `reference` on every measured axis; and as not shown otherwise. | Report |
 
 ## Quality requirements
 
@@ -279,7 +329,7 @@
 
 | Artefact | Contents | Used by |
 | -------- | -------- | ------- |
-| Hidden suite | 534 build checks across 18 modules and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
+| Hidden suite | At revision `a8e7935`, 544 build checks across 19 modules, 5 of them browser flows that skip where no browser is installed, and 74 change checks, in the private `braboj/tariff-hidden-suite`. | QG-01-02 |
 | Reference implementation | A build written from the spec alone, and the change task made on it from the change prompt alone. Private, beside the hidden suite. | QG-01-02 |
 | Mutation control | Fifteen spec violations, each planted alone in the reference implementation. | QG-01-02 |
 | Control fixture | The judge's control trees, built by `control/control.py` from two pinned applications; see [validation](validation.md). | QG-01-03, QG-01-04 |
@@ -298,15 +348,24 @@
   is the mean of the judge's three readings on its 1 to 5 scale.
 - **Fixed:** before round 6's first trial, for this app; a change is a new
   registration.
-- **Read from:** the scorer's row, the probe, or the judge's row the target
-  reads; a build the reading did not reach is not measured, never a fail.
+- **Read from:** the scorer's row, the probe, the hidden-suite module, or the
+  judge's row the target reads; a build the reading did not reach is not
+  measured, never a fail. A probe the build itself kept from running is lost,
+  and fails.
+- **Pilot drafts:** a pilot round read by the ISO radar keeps the targets it
+  had before round 6: the hidden suite at 98 % or more for correctness, and
+  no quality probe. Round 6's are read there only when asked for.
+- **Change task:** two targets read the change task's tree against its
+  fixture, each in one place: its interfaces on Interoperability, its data
+  upgrade on Adaptability. The export formats take no target of their own:
+  the hidden suite's export modules grade them.
 
 ### 01 Functional suitability
 
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-01-01 | Functional completeness | Every name the specification requires is exported. | Specified names missing |
-| QT-01-02 | Functional correctness | The hidden suite passes at 98 % or more. | Hidden-suite pass rate |
+| QT-01-02 | Functional correctness | Each of the hidden suite's 19 build modules passes whole, one target per module: every check ran and passed, none failed, errored or skipped. A module missing from a build's report is not measured where the suite's revision did not hold it, and not met where it did; a suite that ran out of time fails every module. | Hidden suite, per module |
 | QT-01-03 | Functional appropriateness | Nothing nobody asked for is delivered. | Artifacts nobody asked for |
 
 ### 02 Performance efficiency
@@ -315,6 +374,16 @@
 | -- | ------------------ | ------ | --------- |
 | QT-02-01 | Resource utilisation | The invoice builder answers in 100 KB or less. | Invoice builder response size |
 | QT-02-02 | Resource utilisation | The invoice builder makes at most 3 subrequests. | Invoice builder subrequests |
+| QT-02-03 | Time behaviour | The 95th-percentile latency, the worse of two repeats, is within the cutoff registered before round 6; not measured until one is. | Quality probe `latency_p95_ms` |
+| QT-02-04 | Resource utilisation | A page's SQL statements do not grow with an invoice's lines. | Quality probe `n_plus_one` |
+| QT-02-05 | Capacity | An invoice of 500 lines is kept, shown and exported whole. | Quality probe `capacity_500_lines` |
+
+### 03 Compatibility
+
+| ID | Sub-characteristic | Target | Read from |
+| -- | ------------------ | ------ | --------- |
+| QT-03-01 | Co-existence | Two instances side by side keep their data and files apart. | Quality probe `coexistence` |
+| QT-03-02 | Interoperability | The change keeps every interface its fixture passed: its Python names, routes and two exports. | Change score `interfaces` |
 
 ### 04 Interaction capability
 
@@ -330,6 +399,8 @@
 | QT-05-01 | Faultlessness | The build installs and boots. | Installs and boots |
 | QT-05-02 | Faultlessness | At most 10 type errors per KLOC under `mypy --strict`. | Type errors per KLOC |
 | QT-05-03 | Fault tolerance | A malformed request leaks no stack trace. | Probe `error_leakage` |
+| QT-05-04 | Availability | Concurrent writes all land, none refused for a lock. | Quality probe `concurrent_writes` |
+| QT-05-05 | Fault tolerance | A malformed request never answers a server error. | Quality probe `fuzz_robustness` |
 
 ### 06 Security
 
@@ -383,3 +454,5 @@
 | ID | Sub-characteristic | Target | Read from |
 | -- | ------------------ | ------ | --------- |
 | QT-08-01 | Installability | `pip install .` succeeds in a clean environment. | Installs in a clean environment |
+| QT-08-02 | Adaptability | The build installs and serves a signed-in page on a second Python. | Quality probe `python_portability` |
+| QT-08-03 | Adaptability | The changed tree opens its fixture's database, nothing lost. | Change task's quality probe `data_upgrade` |

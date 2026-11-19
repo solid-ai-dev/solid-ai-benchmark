@@ -15,14 +15,15 @@ dependency with its keyword.
 
 | Block | Responsibility | Reads | Writes |
 | ----- | -------------- | ----- | ------ |
-| `generate_arm.py` | Builds one arm's file by script, with no model call: fixed text, the templates' emitter, its skills apart or inlined, or a map of the chain's topics. Scans the output for leaks and named tools; its self-test rebuilds every committed arm and fails on any difference | `brief.txt`, the templates source | `arms/<arm>/CLAUDE.md`, `generation.json` |
-| `harness.py` | Prepares each workspace, runs the agent in isolation, catches reach, freezes the result, keeps the run record current | The specs, the arm files, the change prompt | The run root |
+| `generate_arm.py` | Builds one arm's file by script, with no model call: fixed text, the templates' emitter, its skills apart, inlined or cut into section files, or a map of the chain's topics. Scans the output for leaks, named tools and, in an on-demand arm, a read of everything at the start; its self-test rebuilds every committed arm and fails on any difference, on section files that part from the inline root's rules, and on a `lazyrefold` that differs from `lazyref` by more than the check-loop commit | `brief.txt`, the templates source | `arms/<arm>/CLAUDE.md`, its skills or section files, `generation.json` |
+| `harness.py` | Prepares each workspace, runs the agent in isolation, catches reach, freezes the result, keeps the run record current. Holds a run naming a round to that round's registration, and starts its change tasks from one fixture per block | The specs, the arm files, the change prompt, the fixture manifest and its tarballs | The run root |
 | `reuse.py` | Copies an earlier round's trials and readings into a new root, with their tool lock | An earlier root | The run root, the scoring area |
 | `progress.py` | Watches a run: one bar per arm, its voided tries, its cost and the trial running; then its scoring: one bar per arm, the security readings and the trial being scored; then its judging: one bar per arm of judgings out of those owed, the failures still owed and the blind label in hand. Redrawn every 30 s. Read-only | The run records, the scoring area | The console |
 | `score.py` | Installs each frozen trial cleanly, runs the hidden suite, the static tools and the adherence checklist, counts scope and cost | The run root, the hidden suite, `scoring-requirements.txt`, `toolconfig/` | `scores/`, `scores-change/` |
 | `probes.py` | The structural and web-quality probes, run inside the trial's own interpreter | A trial's tree | Its findings, to `score.py` |
-| `security.py` | Seeds each app, signs in its administrator, runs the 11 security and 3 data-protection probes | The scored trees | `security-scores/` |
-| `judge.py` | Builds a blind bundle per trial, runs the judge CLI against the rubric, checks every quoted line | The scored trees | `judge/` |
+| `security.py` | Seeds each app, signs in its administrator, runs the 11 security and 3 data-protection probes | The scored trees | `security-scores/`, `security-scores-change/` |
+| `quality.py` | Signs in each app's administrator and runs the quality probes in process: malformed requests, concurrent writes, latency, a 500-line invoice, SQL per invoice line, two instances side by side; then installs the build on Python 3.14 and serves a signed-in page; on a change task's tree also the data upgrade, the fixture's seeded database opened by the changed tree | The scored trees | `quality-scores/`, `quality-scores-change/` |
+| `judge.py` | Builds a blind bundle per trial, runs the judge CLI against the rubric, checks every quoted line | The scored trees | `judge/`, `judge-change/` |
 | `control/control.py` | Builds the rubric control: trees damaged or improved on one row each, from two pinned bases | `base.zip`, `base-2.zip`, `overlay/` | A control root for `judge.py` |
 | `report.py` | Pairs trials, computes intervals and verdicts, applies withdrawals, prints the report | The run root, the scoring area, `withdrawn.json` | `docs/reports/YYYY-MM-DD-efficacy.md` in this repository |
 | `archive.py` | Copies a round's raw data to the private archive, restores it, recomputes the report's figures from both | The run root, the scoring area | The archive clone, `archived.json` |
@@ -35,7 +36,8 @@ dependency with its keyword.
 | `SPEC-thin.md` | The same contract without the practices, for `--spec thin` | harness |
 | `brief.txt` | What an adopter would type: domain, stack, personal data, boundaries | `generate_arm.py` |
 | `change-prompt.txt` | The change task's prompt, naming everything its grader drives | harness |
-| `arms/<arm>/CLAUDE.md` | Each arm's context file. `arms/<arm>/skills/` holds a skills arm's skills | harness |
+| `change-fixtures.json` | The builds a named round's change task starts from, one per block, each with its tarball's sha256 and the baseline readings that qualified it | harness |
+| `arms/<arm>/CLAUDE.md` | Each arm's context file. `arms/<arm>/skills/` holds a skills arm's skills, placed at `.claude/skills/`; `arms/lazysections/sections/` holds the section files, placed at `.agents/sections/`, where the map names them | harness |
 | `arms/<arm>/generation.json` | How each generated file was made | `report.py` |
 | `scoring-requirements.txt` | The scoring tools, resolved once into the tool lock | `score.py` |
 | `toolconfig/` | `ruff.toml` and `mypy.ini`, the one configuration every arm is measured under | `score.py` |
@@ -72,7 +74,9 @@ are still read.
 | `tool-lock.txt` | The tool versions every trial is measured with |
 | `scores/`, `scores-change/` | One score per build trial and per change task |
 | `security/`, `security-scores/` | Each trial's probe files, and its readings; the probe environment goes once it is read |
+| `quality/`, `quality-scores/` | Each trial's quality probe files, and its readings; both environments go once they are read |
 | `judge/` | Each blind bundle, its judgings and the unblinding map |
+| `scoring-change/`, `security-change/`, `security-scores-change/`, `quality-change/`, `quality-scores-change/`, `judge-change/` | The same for each change task's tree, apart from the build's; `quality-change/` also holds the fixture's seeded database and its copy for the data upgrade |
 | `archived.json` | The stamp a verified archive writes, with the hash of every file the report reads |
 | `<tool>.running` | A claim that one run of that tool is working here |
 

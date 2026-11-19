@@ -12,9 +12,15 @@ differ only in how they deliver it, and no model writes any of them:
   manifest gives each template of the chain to that template, read as a file
   or loaded as a skill the first time the work touches one of them, and for
   `lazyskills` one skill per template, holding it verbatim
+- `lazysections` is what `resolve_chain.py --emit --sections` builds: a root
+  file that maps each topic to a section file, read the first time the work
+  touches it, and the section files, every adopted rule in one of them
+- `lazyrefold` is `lazyref` built at the parent of the templates commit that
+  cuts the check loop to one check command, so the two differ by it alone
 
-It writes `arms/<arm>/CLAUDE.md` (and, for an arm with skills, the skills
-beside it), and refuses to keep a result the specification leaked into.
+It writes `arms/<arm>/CLAUDE.md` (and, for an arm with skills or section
+files, those beside it), and refuses to keep a result the specification
+leaked into.
 
 The same ref gives the same bytes, so the self-test rebuilds every committed
 arm and fails on any difference. It still refuses to overwrite an existing
@@ -23,6 +29,7 @@ file without `--replace`, since a new ref is a new arm.
 
 import argparse
 import datetime
+import difflib
 import io
 import json
 import os
@@ -30,11 +37,12 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import textwrap
 
 from harness import (ROUND5_DECLINED, ROUND5_REF,  # noqa: E402
-                     ROUND5_ROOTS,
+                     ROUND5_ROOTS, SECTIONS_INTO, arm_vendor,
                      TEMPLATES_ENV, VENDORED, TrialError, source_record,
                      templates_root, assert_outside_repository, read_input)
 
@@ -46,16 +54,33 @@ BRIEF = os.path.join(HERE, "brief.txt")
 
 # The arms this module makes, each with the directory under `arms/` its file
 # and record live in, and how it is made: fixed text, the templates' emitter
-# with its skills apart or inlined, or a map of the chain's topics read as
-# files or loaded as skills. An arm a model or a person writes would change
-# with every writing, so none is made here.
+# with its skills apart, inlined or cut into section files, or a map of the
+# chain's topics read as files or loaded as skills. An arm a model or a
+# person writes would change with every writing, so none is made here.
 GENERATED = {
     "reference": {"dir": "reference", "kind": "fixed"},
     "inline": {"dir": "inline", "kind": "emit", "inline_skills": True},
     "skills": {"dir": "skills", "kind": "emit", "inline_skills": False},
     "lazyref": {"dir": "lazyref", "kind": "map", "load": "read"},
     "lazyskills": {"dir": "lazyskills", "kind": "map", "load": "skill"},
+    "lazysections": {"dir": "lazysections", "kind": "emit",
+                     "inline_skills": False, "sections": True},
+    "lazyrefold": {"dir": "lazyrefold", "kind": "map", "load": "read"},
 }
+
+# The arms that hand the agent its rules on demand rather than up front. No
+# such arm may tell the agent to read everything at the start, or it loads
+# the whole chain and measures nothing of loading on demand.
+ON_DEMAND = ("lazyref", "lazyskills", "lazysections", "lazyrefold")
+
+# The templates commit that cuts the check loop to one check command run
+# before each commit, the file it changes and the section it changes there.
+# `lazyrefold` is `lazyref` built at its parent, so the pair measures it.
+CHECK_LOOP = {"commit": "a8079352", "file": "templates/core/quality.md",
+              "section": "## Static checks"}
+
+# Where the templates' emitter writes its skills, inside its output.
+EMITTED_SKILLS = ".agents/skills"
 
 # Every arm with a generation record under `arms/`, by its directory: the
 # arms built here, and the pilot's written arms, whose records stay so a
@@ -69,9 +94,25 @@ def output_path(arm):
     return os.path.join(HERE, "arms", GENERATED[arm]["dir"], "CLAUDE.md")
 
 
-def skills_path(arm):
-    """Where an arm's generated skills are committed, one folder a kind."""
-    return os.path.join(HERE, "arms", GENERATED[arm]["dir"], "skills")
+def parts_path(arm):
+    """Where an arm's generated skills, one folder a kind, or its section
+    files, one folder a template, are committed."""
+    return os.path.join(HERE, "arms", GENERATED[arm]["dir"],
+                        "sections" if GENERATED[arm].get("sections")
+                        else "skills")
+
+
+def read_tree(base, newline=None):
+    """Every file under a folder, {path below it, with `/`: text}; empty
+    where the folder does not exist."""
+    files = {}
+    for folder, _, names in os.walk(base):
+        for name in names:
+            path = os.path.join(folder, name)
+            relative = os.path.relpath(path, base).replace(os.sep, "/")
+            with io.open(path, encoding="utf-8", newline=newline) as handle:
+                files[relative] = handle.read()
+    return dict(sorted(files.items()))
 
 
 def record_path(arm):
@@ -352,19 +393,21 @@ def fill_facts(text, brief):
     return text
 
 
-def emit_arm(tree, roots, brief, inline_skills):
+def emit_arm(tree, roots, brief, entry):
     """An arm the templates' emitter builds: the root file with its facts
-    filled, and {kind: SKILL.md text}, empty where the skills are inlined
-    into the root."""
+    filled, and its skills or section files, {path below their folder:
+    text}, empty where the skills are inlined into the root."""
     out = tempfile.mkdtemp(prefix="efficacy-emit-")
     declined = os.path.join(out, "declined.txt")
     with io.open(declined, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("".join(entry + "\n" for entry in ROUND5_DECLINED))
+        handle.write("".join(line + "\n" for line in ROUND5_DECLINED))
+    flags = (["--inline-skills"] if entry["inline_skills"] else []) \
+        + (["--sections"] if entry.get("sections") else [])
     try:
         proc = subprocess.run(
             [sys.executable, "tools/resolve_chain.py", "--emit",
              os.path.join(out, "emitted"), "--declined", declined]
-            + (["--inline-skills"] if inline_skills else []) + roots,
+            + flags + roots,
             cwd=tree, capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
             raise TrialError("the emitter failed: %s"
@@ -372,21 +415,18 @@ def emit_arm(tree, roots, brief, inline_skills):
         with io.open(os.path.join(out, "emitted", "AGENTS.md"),
                      encoding="utf-8") as h:
             root = fill_facts(h.read(), brief)
-        skills = {}
-        base = os.path.join(out, "emitted", ".agents", "skills")
-        for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-            with io.open(os.path.join(base, kind, "SKILL.md"),
-                         encoding="utf-8") as h:
-                skills[kind] = h.read()
-        return root, skills
+        folder = SECTIONS_INTO if entry.get("sections") else EMITTED_SKILLS
+        parts = read_tree(os.path.join(out, "emitted", *folder.split("/")))
+        return root, parts
     finally:
         shutil.rmtree(out, ignore_errors=True)
 
 
 def build_arm(arm, ref, brief):
-    """One arm's files at a templates ref: (document, {kind: SKILL.md text},
-    what the record says of how they were built). The same arm, ref and
-    brief always give the same files."""
+    """One arm's files at a templates ref: (document, its skills or section
+    files as {path below their folder: text}, what the record says of how
+    they were built). The same arm, ref and brief always give the same
+    files."""
     entry = GENERATED[arm]
     tree = worktree_at(ref)
     try:
@@ -395,43 +435,234 @@ def build_arm(arm, ref, brief):
             ["git", "-C", tree, "rev-parse", "HEAD"], capture_output=True,
             text=True, encoding="utf-8").stdout.strip(),
             "resolved_files": files}
-        skills = {}
+        parts = {}
         if entry["kind"] == "fixed":
             document = reference_text(files, brief)
         elif entry["kind"] == "emit":
-            document, skills = emit_arm(tree, ROUND5_ROOTS, brief,
-                                        entry["inline_skills"])
+            document, parts = emit_arm(tree, ROUND5_ROOTS, brief, entry)
             details["declined"] = ROUND5_DECLINED
             details["inline_skills"] = entry["inline_skills"]
+            if entry.get("sections"):
+                details["sections"] = True
         else:
             rows = moments(tree, files)
             document = map_text(rows, entry["load"], brief)
             if entry["load"] == "skill":
-                skills = template_skills(tree, rows)
+                parts = {"%s/SKILL.md" % kind: text for kind, text
+                         in sorted(template_skills(tree, rows).items())}
             details["load"] = entry["load"]
             details["moments"] = [{"skill": kind, "moment": description,
                                    "file": name}
                                   for kind, description, name in rows]
     finally:
         remove_worktree(tree)
-    return document.rstrip() + "\n", skills, details
+    return document.rstrip() + "\n", parts, details
 
 
 def committed_arm(arm):
-    """An arm's committed files: (document, {kind: SKILL.md text}), or None
-    where the arm has no committed file."""
+    """An arm's committed files: (document, its skills or section files as
+    {path below their folder: text}), or None where the arm has no
+    committed file."""
     path = output_path(arm)
     if not os.path.isfile(path):
         return None
     with io.open(path, encoding="utf-8", newline="") as handle:
         document = handle.read()
-    skills = {}
-    base = skills_path(arm)
-    for kind in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-        with io.open(os.path.join(base, kind, "SKILL.md"), encoding="utf-8",
-                     newline="") as handle:
-            skills[kind] = handle.read()
-    return document, skills
+    return document, read_tree(parts_path(arm), newline="")
+
+
+def vendored_files(ref):
+    """The templates a vendoring arm's workspace carries at a ref, as
+    {workspace path: text}."""
+    proc = subprocess.run(["git", "-C", templates_root(), "archive",
+                           "--format=tar", ref, VENDORED["path"]],
+                          capture_output=True)
+    if proc.returncode != 0:
+        raise TrialError("could not export %s at %s: %s"
+                         % (VENDORED["path"], ref,
+                            proc.stderr.decode("utf-8", "replace").strip()))
+    files = {}
+    with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as archive:
+        for member in archive.getmembers():
+            if member.isfile():
+                data = archive.extractfile(member).read()
+                files["%s/%s" % (VENDORED["into"], member.name)] = \
+                    data.decode("utf-8", "replace")
+    return files
+
+
+def templates_git(*args):
+    """What a git command prints in the templates clone; raises on a
+    non-zero status."""
+    proc = subprocess.run(["git", "-C", templates_root()] + list(args),
+                          capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        raise TrialError("git %s failed in the templates clone: %s"
+                         % (" ".join(args), proc.stderr.strip()))
+    return proc.stdout
+
+
+def changed_lines(old, new):
+    """The files two sets of files differ in, {path: (removed lines, added
+    lines)}, a file missing from one set read as empty."""
+    changed = {}
+    for path in sorted(set(old) | set(new)):
+        before = old.get(path, "").splitlines()
+        after = new.get(path, "").splitlines()
+        if before == after:
+            continue
+        removed, added = [], []
+        matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag != "equal":
+                removed += before[i1:i2]
+                added += after[j1:j2]
+        changed[path] = (removed, added)
+    return changed
+
+
+HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def section_span(text, heading):
+    """The 1-based lines a level-two section runs over, its heading to the
+    line before the next level-two heading outside a fence; None where the
+    text has no such heading."""
+    lines, start, fence = text.splitlines(), None, False
+    for number, line in enumerate(lines, 1):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+        elif not fence and line.startswith("## "):
+            if start is not None:
+                return start, number - 1
+            if line.rstrip() == heading:
+                start = number
+    return (start, len(lines)) if start is not None else None
+
+
+def commit_change(change):
+    """A templates commit's change to one file: (removed lines, added
+    lines), from the templates' own diff of that commit, and whether every
+    changed line lies in the named section, before and after."""
+    commit, name = change["commit"], change["file"]
+    before = templates_git("show", "%s^:%s" % (commit, name))
+    after = templates_git("show", "%s:%s" % (commit, name))
+    spans = (section_span(before, change["section"]),
+             section_span(after, change["section"]))
+    removed, added, inside, hunks = [], [], None not in spans, False
+    for line in templates_git("diff", "-U0", "--no-color", "--no-ext-diff",
+                              "%s^" % commit, commit, "--",
+                              name).splitlines():
+        hunk = HUNK.match(line)
+        if hunk:
+            hunks = True
+            for (start, count), span in zip(
+                    ((hunk.group(1), hunk.group(2)),
+                     (hunk.group(3), hunk.group(4))), spans):
+                start, count = int(start), int(count or 1)
+                if count and span and not (span[0] <= start
+                                           and start + count - 1 <= span[1]):
+                    inside = False
+        elif hunks and line.startswith("-"):
+            removed.append(line[1:])
+        elif hunks and line.startswith("+"):
+            added.append(line[1:])
+    return removed, added, inside and bool(removed or added)
+
+
+def pair_findings(old, new, path, change):
+    """What makes two arms' files differ by more or less than one file's
+    change: a file that differs besides `path`, or a change to it other
+    than the lines given."""
+    changed = changed_lines(old, new)
+    findings = ["%s differs too" % other for other in changed
+                if other != path]
+    if changed.get(path, ([], [])) != change:
+        findings.append("%s does not differ by exactly the commit's lines"
+                        % path)
+    return findings
+
+
+def heading_blocks(text):
+    """A Markdown text cut at each heading outside a fence: each block's
+    heading path and its non-blank lines that are not headings."""
+    blocks, stack, fence = [((), [])], [], None
+    for line in text.splitlines():
+        run = re.match(r"^\s*(`{3,}|~{3,})", line)
+        heading = None if (fence or run) else re.match(r"^(#{1,6})\s", line)
+        if run:
+            mark = run.group(1)
+            if fence is None:
+                fence = mark
+            elif mark[0] == fence[0] and len(mark) >= len(fence):
+                fence = None
+        if heading:
+            level = len(heading.group(1))
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, line))
+            blocks.append((tuple(h for _, h in stack), []))
+        elif line.strip():
+            blocks[-1][1].append(line)
+    return [(path, tuple(body)) for path, body in blocks if body]
+
+
+# The heading the inline root puts its procedures under. The root's own
+# blocks carry no rule: the lines opening its rules and its procedures, and
+# each procedure's description of its kind, the first block under it.
+PROCEDURES = "## Procedures"
+
+
+def union_findings(inline_root, sections):
+    """Where the section files and the inline root's rules part ways, block
+    by block: a rule block no section file holds, and a block a section
+    file holds that no rule block is."""
+    rules = inline_root.split("\n## Rules\n", 1)[-1]
+    owed = {body for path, body in heading_blocks(rules)
+            if path and path != (PROCEDURES,)
+            and not (len(path) == 2 and path[0] == PROCEDURES)}
+    held = {body for text in sections.values()
+            for _, body in heading_blocks(text)}
+    return (["no section file holds: %s" % body[0]
+             for body in sorted(owed - held)]
+            + ["no adopted rule is: %s" % body[0]
+               for body in sorted(held - owed)])
+
+
+SECTION_PATH = re.compile(r"`(" + re.escape(SECTIONS_INTO) + r"/[^`]+)`")
+
+
+def map_findings(root, sections):
+    """What a sections map gets wrong: a section file it names other than
+    once, or a path it names that is no section file."""
+    named = SECTION_PATH.findall(root)
+    paths = ["%s/%s" % (SECTIONS_INTO, name) for name in sections]
+    return (["the map names %s %d times" % (path, named.count(path))
+             for path in paths if named.count(path) != 1]
+            + ["the map names %s, which is no section file" % path
+               for path in sorted(set(named) - set(paths))])
+
+
+# What telling the agent to read everything at the start looks like: a
+# sentence that reads or loads every template, section, skill or file, with
+# a moment before the work, and no negation. "Do not read them before the
+# work starts" and "the first time the work touches a topic, read it" pass.
+READ_ALL = re.compile(r"\b(read|load)\b.*\b(every|each|all)\b.*"
+                      r"\b(templates?|sections?|skills?|files?|rules?)\b",
+                      re.IGNORECASE)
+UP_FRONT = re.compile(r"\b(before (starting|you start|any|the work|work)|"
+                      r"at (the )?(start|outset)|startup|up ?front|"
+                      r"at session start)\b", re.IGNORECASE)
+NEGATED = re.compile(r"\b(do not|don't|never|not)\b", re.IGNORECASE)
+
+
+def startup_reads(text):
+    """Each sentence of a text telling the agent to read everything at the
+    start; empty where it tells no such thing."""
+    sentences = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+    return [sentence for sentence in sentences
+            if READ_ALL.search(sentence) and UP_FRONT.search(sentence)
+            and not NEGATED.search(sentence)]
 
 
 def parse_args(argv):
@@ -656,6 +887,125 @@ def self_test():
     print("every committed arm is what the script builds at its recorded "
           "ref, byte for byte, the same twice")
     print("every committed arm's root opens with the brief, verbatim")
+    return on_demand_checks(records, brief)
+
+
+def on_demand_checks(records, brief):
+    """What the on-demand arms owe beyond a rebuild; 0 where it all holds,
+    1 at the first check that fails.
+
+    Requires every on-demand arm committed, and no root of one telling the
+    agent to read everything at the start, where a planted root saying so
+    is caught. Requires `lazyref` and `lazyrefold` to differ by the
+    check-loop commit's lines alone, and the section files to hold the
+    inline root's rule blocks and no other, each named once by its map; a
+    planted fault in each is caught.
+    """
+    missing = [arm for arm in ON_DEMAND if arm not in records]
+    if missing:
+        print("FAIL: on-demand arms not committed: %s" % ", ".join(missing))
+        return 1
+
+    # Every file of an on-demand arm is scanned, its skills and section
+    # files too. The up-front arm is the natural control: `reference` tells
+    # the agent to read every template before the work starts, so the scan
+    # must fire on it, and on a sentence saying so planted in a root.
+    arms = {arm: committed_arm(arm) for arm in ON_DEMAND}
+    told = {arm: [sentence for text in [document] + list(parts.values())
+                  for sentence in startup_reads(text)]
+            for arm, (document, parts) in arms.items()}
+    told = {arm: found for arm, found in told.items() if found}
+    planted = arms["lazysections"][0] + ("\nRead every section file below "
+                                         "at startup, before any work.\n")
+    if told or not startup_reads(planted) \
+            or not startup_reads(committed_arm("reference")[0]):
+        print("FAIL: an on-demand root tells the agent to read everything "
+              "at the start, or the scan misses one that does: %r" % told)
+        return 1
+    print("no on-demand arm tells the agent to read everything at startup")
+    print("a root telling the agent to read everything at the start is "
+          "caught")
+
+    # `lazyrefold` is `lazyref` at the check-loop commit's parent: its
+    # record names that parent, and the two arms' workspaces, root and
+    # vendored templates, differ by that commit's lines alone, each in the
+    # one section it changes.
+    commit = CHECK_LOOP["commit"]
+    parent = templates_git("rev-parse", "%s^" % commit).strip()
+    if templates_git("rev-parse", records["lazyrefold"]["ref"]).strip() \
+            != parent:
+        print("FAIL: lazyrefold is not built at the check-loop commit's "
+              "parent, %s" % parent[:8])
+        return 1
+
+    # The pair compared is the one a trial gets: each arm's committed root
+    # and the templates vendored at the ref the harness reads from its
+    # record, not a build made here, which no trial runs.
+    def installed(arm, ref=None):
+        """An arm's workspace files: its committed root and the templates
+        vendored at `ref`, by default the one its record names."""
+        return dict(vendored_files(ref or arm_vendor(arm)["ref"]),
+                    **{"CLAUDE.md": committed_arm(arm)[0]})
+    old, new = installed("lazyrefold"), installed("lazyref")
+    removed, added, inside = commit_change(CHECK_LOOP)
+    path = "%s/%s" % (VENDORED["into"], CHECK_LOOP["file"])
+    findings = pair_findings(old, new, path, (removed, added))
+    if findings or not inside:
+        print("FAIL: lazyref and lazyrefold differ by more or less than the "
+              "check-loop commit's lines in %s: %r"
+              % (CHECK_LOOP["section"], findings))
+        return 1
+    print("lazyref and lazyrefold differ by the check-loop commit's lines "
+          "alone, all in its section")
+    extra = dict(new, **{"CLAUDE.md": new["CLAUDE.md"] + "- Check twice\n"})
+    short = dict(new, **{path: new[path].replace(added[-1] + "\n", "", 1)})
+    if not pair_findings(old, extra, path, (removed, added)) \
+            or not pair_findings(old, short, path, (removed, added)) \
+            or commit_change(dict(CHECK_LOOP, section="## Naming"))[2]:
+        print("FAIL: a line changed besides the commit's, one of its lines "
+              "missing, or a line outside its section is not reported")
+        return 1
+    print("a line changed besides the commit's, one of its lines missing, or "
+          "one outside its section is reported")
+
+    # A `lazyref` committed at another ref than the check-loop commit, as
+    # one left at an earlier round's, makes a pair no trial should read.
+    stale = installed("lazyref", "%s^" % parent)
+    if not pair_findings(old, stale, path, (removed, added)):
+        print("FAIL: a lazyref committed at another ref than the check-loop "
+              "commit is not reported")
+        return 1
+    print("a lazyref committed at another ref than the check-loop commit is "
+          "reported")
+
+    # The section files and the inline root are two packagings of one rule
+    # set at one ref, so each rule block of the one is a block of the other.
+    document, sections = committed_arm("lazysections")
+    inline = build_arm("inline", records["lazysections"]["ref"], brief)[0]
+    findings = union_findings(inline, sections) \
+        + map_findings(document, sections)
+    if findings:
+        print("FAIL: the section files and the adopted rules part ways, or "
+              "the map misnames a file: %r" % findings[:5])
+        return 1
+    print("the section files hold every rule block the inline root does, "
+          "and no other")
+    print("the sections map names every section file once, under %s/"
+          % SECTIONS_INTO)
+    name = sorted(sections)[0]
+    lines = sections[name].splitlines(True)
+    last = max(i for i, line in enumerate(lines)
+               if line.strip() and not line.startswith("#"))
+    dropped = dict(sections,
+                   **{name: "".join(lines[:last] + lines[last + 1:])})
+    unmapped = dict(sections, **{"extra/unmapped.md": "# Extra\n\n- A rule\n"})
+    if not union_findings(inline, dropped) \
+            or not map_findings(document, unmapped):
+        print("FAIL: a rule dropped from a section file, or a file the map "
+              "does not name, is not reported")
+        return 1
+    print("a rule dropped from a section file, or a file the map does not "
+          "name, is reported")
     return 0
 
 
@@ -689,13 +1039,13 @@ def main(argv):
     record = {"arm": arm, "kind": entry["kind"], "ref": options.ref,
               "source": source_record(options.ref), "roots": ROUND5_ROOTS,
               "started_at": started_at.isoformat(timespec="seconds")}
-    document, skills, details = build_arm(arm, options.ref, read_brief())
+    document, parts, details = build_arm(arm, options.ref, read_brief())
     record.update(details)
     print("chain at %s (%s): %d unique files"
           % (options.ref, record["commit"][:8],
              len(record["resolved_files"])))
 
-    texts = [document] + list(skills.values())
+    texts = [document] + list(parts.values())
     leak = scan("\n".join(texts), "built files", NON_INVENTABLE)
     record["output_leak"] = leak
     if leak is not None:
@@ -712,34 +1062,47 @@ def main(argv):
               % ", ".join(tools))
         return write_record(options.root, record, started_at) or 1
 
+    told = [sentence for text in texts for sentence in startup_reads(text)]
+    if told and arm in ON_DEMAND:
+        record["outcome"] = "refused: reads everything at the start"
+        print("refused: an on-demand arm's files tell the agent to read "
+              "everything at the start: %r" % told)
+        return write_record(options.root, record, started_at) or 1
+
     # A dry run of any arm stops here: it writes nothing under `arms/`,
     # so it never replaces a committed file or its record.
+    unit = "section files" if entry.get("sections") else "skills"
     if options.dry_run:
         record["outcome"] = "dry-run"
         print("dry run: %s would be %d words%s; nothing written under arms/"
               % (output, len(document.split()),
-                 ", with %d skills" % len(skills) if skills else ""))
+                 ", with %d %s" % (len(parts), unit) if parts else ""))
         return write_record(options.root, record, started_at)
 
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with io.open(output, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(document)
-    shutil.rmtree(skills_path(arm), ignore_errors=True)
-    for kind, text in skills.items():
-        path = os.path.join(skills_path(arm), kind, "SKILL.md")
+    shutil.rmtree(parts_path(arm), ignore_errors=True)
+    for name, text in parts.items():
+        path = os.path.join(parts_path(arm), *name.split("/"))
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-    if skills:
-        record["skills"] = {kind: len(text.split())
-                            for kind, text in skills.items()}
+
+    # A skill is named by its folder, a section file by its path.
+    if parts and entry.get("sections"):
+        record["sections"] = {name: len(text.split())
+                              for name, text in parts.items()}
+    elif parts:
+        record["skills"] = {name.split("/")[0]: len(text.split())
+                            for name, text in parts.items()}
     record["outcome"] = "generated"
     record["output"] = output
     record["output_lines"] = document.rstrip("\n").count("\n") + 1
     record["output_words"] = len(document.split())
     print("wrote %s: %d lines, %d words%s"
           % (output, record["output_lines"], record["output_words"],
-             ", %d skills" % len(skills) if skills else ""))
+             ", %d %s" % (len(parts), unit) if parts else ""))
     keep_record(record, record_path(arm))
     print("Record kept beside it: %s" % record_path(arm))
     return write_record(options.root, record, started_at)
