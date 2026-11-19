@@ -786,6 +786,36 @@ metric.
 
 The decision is ADR-021.
 
+### 8.7.6 When the map is read
+
+A map arm points the agent at a template when the work first touches its
+topics. The report reads from each trial's transcript when that happened
+(FR-12-14), and from round 5e on how each template's first read stands to
+the first write on its topics (FR-12-19). Secondary: no verdict rests on it.
+
+```text
+read, then a write on its topics    just in time
+a write on its topics, then read    late
+a write on its topics, no read      never
+no write, no read                   unused
+read, no write                      spare
+no globs                            unmapped
+```
+
+**Rules**
+
+| # | Rule | In practice | Requirement |
+| - | ---- | ----------- | ----------- |
+| 1 | The topics are fixed first | `tests/efficacy/template-topics.json` gives each template of the chain path globs, fixed before the round's first trial; a script, not a reader, finds the first file on a template's topics | FR-12-19 |
+| 2 | No natural path, no class | A template with no globs, a general quality one say, is unmapped | FR-12-19 |
+| 3 | A subagent counts, apart | Its reads and loads count at the turn that delegated to it, and are reported beside the session's | FR-12-19, FR-12-20 |
+| 4 | Each task on its own | The build and the change task are timed apart, each from its own transcript | FR-12-19 |
+| 5 | File tools only | Only a file tool's write is placed on a topic; a file written only by a shell command is not, and the share of trials that wrote by shell before their last placed write is printed as the measure's limit | FR-12-19 |
+| 6 | Inside the workspace | A path is normalised first; one outside the workspace, past it by `..`, or in the vendored templates is on no topic | FR-12-19 |
+| 7 | Skills loaded, by turn | Every arm with skills lists each skill loaded; `skills` sits beside `inline` on the hidden tests and the judge's security and data-protection rows | FR-12-20 |
+
+The tables per arm go in the appendix, the rows per trial in the record.
+
 ## 8.8 Records
 
 Every stage writes what it did beside what it made, so any figure can be

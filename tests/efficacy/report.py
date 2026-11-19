@@ -2035,6 +2035,10 @@ def write_report(root, trials, table, results, seed, out_dir,
         lines.extend(round5e_section(root, trials, table, results, seed,
                                      margins_of(trials), uses, iso))
         lines.append("")
+    timing = timing_uses(root, trials, tasks, uses)
+    detail = read_timing_detail(timing)
+    if detail:
+        lines.extend(["## When the map was read, per trial", ""] + detail)
 
     # A named round reads its on-demand arms' use of their maps too, with
     # no pilot hypothesis beside it, once a task, each over that task's own
@@ -2127,7 +2131,7 @@ def write_report(root, trials, table, results, seed, out_dir,
     documents = {
         record: lines,
         appendix: appendix_lines(trials, table, results, k, seed, generation,
-                                 report, record, iso, drawn),
+                                 report, record, iso, drawn, timing),
         report: plain_report_lines(root, trials, table, results, radar,
                                    appendix, k, iso, uses, drawn,
                                    registered)}
@@ -2788,11 +2792,12 @@ def rerun_lines(lost):
 
 
 def appendix_lines(trials, table, results, k, seed, generation, report,
-                   record, iso=None, tasks=()):
+                   record, iso=None, tasks=(), timing=None):
     """The technical appendix: what produced the results, the radar's axes
-    row by row, and the verdict vector. `iso` is the ISO reading where the
-    round draws that radar, whose axes come as tables of sub-scores; a
-    named round's `tasks` each get their own tables, named for the task."""
+    row by row, when the map was read where `timing` holds each task's map
+    use, and the verdict vector. `iso` is the ISO reading where the round
+    draws that radar, whose axes come as tables of sub-scores; a named
+    round's `tasks` each get their own tables, named for the task."""
     names = ordered(trials)
     arms = [arm for arm in ARMS if arm in {arm_of(name) for name in names}]
     active = active_contrasts(trials)
@@ -2835,6 +2840,7 @@ def appendix_lines(trials, table, results, k, seed, generation, report,
             lines.extend(contrast_table(table, results, keys, active=against,
                                         blocks=k, legend=False))
             lines.append("")
+    lines.extend(read_timing_lines(timing, table, results, k))
     lines.extend(["## The verdict vector", ""])
     lines.extend(vector_lines(results, active))
     return lines
@@ -3315,6 +3321,10 @@ SKILL_OPERAND = re.compile(re.escape(SKILLS_INTO + "/")
                            + r"([\w.*?\[\]-]+/[\w.*?\[\]-]+)")
 SKILL_FILE = "SKILL.md"
 
+# A section file a read names, by its path in the workspace.
+SECTION_PATH = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
+                          + r"[\w./-]+\.md)")
+
 # A redirection that writes no file: to the null device, or of one stream
 # into another. Taken out of a command before it is read for a write.
 NULL_REDIRECT = re.compile(
@@ -3718,31 +3728,15 @@ def delegation_anchor(file, written_at):
     return None
 
 
-def map_use(files, arm, templates=None, delegated=()):
-    """How one trial used what its file points at, from its transcripts:
-    each template read from the vendored copy or loaded as a skill, as
-    (turn, template) in order, the turn of the trial's first write to a
-    file of its own, or None, and how many of the uses a subagent made. A
-    section file counts as a template, by its path in the workspace.
+def map_calls(files, delegated=()):
+    """Every tool call of a trial's session and of the subagents it
+    started, as (turn, tool, input, by a subagent), in turn order.
 
     A subagent's transcript, in `delegated`, is read after the session's,
     its calls charged to the turn of the session's line it points back to,
     the moment it was started; one pointing nowhere the session wrote is
     charged to the session's first delegation.
     """
-    entry = ARMS.get(arm) or {}
-    known = set(mapped_templates(arm) if templates is None else templates)
-    marker = VENDORED["into"] + "/"
-    named = re.compile(re.escape(marker) + r"(templates/[\w./-]+\.md)")
-    reads = entry.get("vendor") or entry.get("sections")
-    if entry.get("sections"):
-        named = re.compile(r"(" + re.escape(SECTIONS_INTO + "/")
-                           + r"[\w./-]+\.md)")
-
-    def mapped(templates):
-        """Those of the templates that are on the arm's map."""
-        return [template for template in templates
-                if not known or template in known]
     written_at = {}
     parsed = tool_calls_by_turn(files, written_at)
     own = [(turn, name, given, False) for turn, name, given, _ in parsed]
@@ -3763,48 +3757,74 @@ def map_use(files, arm, templates=None, delegated=()):
         calls.extend((at if at is not None else turn, name, given, True)
                      for turn, name, given, _ in tool_calls_by_turn([file]))
     calls.sort(key=lambda call: call[0])
+    return calls
+
+
+def call_effects(name, given, entry, known):
+    """What one tool call does with an arm's map, as (uses, writing index,
+    written files): each template it reads or skill it loads, with the index
+    of its simple command, 0 for a tool other than a shell; the index of
+    its first simple command that writes a file of the trial's own, or
+    None; and the file a file tool writes, with index 0."""
+    command = CONTINUATION.sub(" ", str(given.get("command") or "")
+                               ).replace("\\", "/")
+    found = []
+    writes_at = None
+    written = []
+
+    # A shell command may read a template and write a file in one go, so it
+    # is read for both, each read and write with its simple command's index.
+    if name in SHELLS:
+        writes_at = first_writing_command(command)
+    sections = entry.get("sections")
+    if name in SHELLS and (entry.get("vendor") or sections):
+        found = [(index, template) for index, template in shell_reads(
+            command, sorted(known),
+            SECTION_OPERAND if sections else TEMPLATE_OPERAND)
+            if template in known or not known]
+    elif name == "Read" and (entry.get("vendor") or sections):
+        path = str(given.get("file_path") or "").replace("\\", "/")
+        named = SECTION_PATH if sections else TEMPLATE_PATH
+        found = [(0, template) for template in named.findall(path)
+                 if not known or template in known]
+    elif name == "Skill" and entry.get("skills"):
+        skill = str(given.get("skill") or "").strip()
+        found = [(0, skill)] if skill in known else []
+
+    # A skill's file read through a read or a shell command is that skill
+    # used, counted once with any loading of it.
+    elif name in SHELLS + ("Read",) and entry.get("skills"):
+        found = skill_reads(name, given, command, known)
+    if name in WRITES:
+        writes_at = 0
+        path = given.get("file_path") or given.get("notebook_path")
+        written = [(0, str(path))] if path else []
+    return found, writes_at, written
+
+
+def map_use(files, arm, templates=None, delegated=()):
+    """How one trial used what its file points at, from its transcripts and
+    its subagents' in `delegated`: each template read from the vendored copy
+    or loaded as a skill, as (turn, template) in order, the turn of the
+    trial's first write to a file of its own, or None, and how many of the
+    uses a subagent made."""
+    entry = ARMS.get(arm) or {}
+    known = set(mapped_templates(arm) if templates is None else templates)
     uses = []
     before = set()
     first_write = None
     by_subagent = 0
-    for turn, name, given, from_subagent in calls:
-        command = CONTINUATION.sub(" ", str(given.get("command") or "")
-                                   ).replace("\\", "/")
-        found = []
-        writes_at = None
+    for turn, name, given, from_subagent in map_calls(files, delegated):
+        found, writes_at, _ = call_effects(name, given, entry, known)
 
-        # A shell command may read a template and write a file in one go,
-        # so it is read for both, and a read in a simple command before the
-        # writing one came before the write.
-        if name in SHELLS:
-            writes_at = first_writing_command(command)
-        if name in SHELLS and reads:
-            for index, template in shell_reads(
-                    command, sorted(known),
-                    SECTION_OPERAND if entry.get("sections")
-                    else TEMPLATE_OPERAND):
-                if template in known or not known:
-                    found.append(template)
-                    if first_write is None and (writes_at is None
-                                                or index < writes_at):
-                        before.add(template)
-        elif name == "Read" and reads:
-            path = str(given.get("file_path") or "").replace("\\", "/")
-            found = mapped(named.findall(path))
-        elif name == "Skill" and entry.get("skills"):
-            skill = str(given.get("skill") or "").strip()
-            found = [skill] if skill in known else []
-
-        # A skill's file read through a read or a shell command is that
-        # skill used, counted once with any loading of it.
-        elif name in SHELLS + ("Read",) and entry.get("skills"):
-            found = skill_reads(name, given, command, known, writes_at,
-                                first_write, before)
-        if name not in SHELLS and first_write is None:
-            before.update(found)
-        if first_write is None and (name in WRITES or writes_at is not None):
+        # A read in a simple command before a shell call's writing one came
+        # before the write.
+        if first_write is None:
+            before.update(template for index, template in found
+                          if writes_at is None or index < writes_at)
+        if first_write is None and writes_at is not None:
             first_write = turn
-        uses.extend((turn, template) for template in found)
+        uses.extend((turn, template) for _, template in found)
         if from_subagent:
             by_subagent += len(found)
     return {"uses": uses, "first_write": first_write,
@@ -3812,27 +3832,203 @@ def map_use(files, arm, templates=None, delegated=()):
             else None, "by_subagent": by_subagent}
 
 
-def skill_reads(name, given, command, known, writes_at, first_write,
-                before):
-    """The skills a read or a shell command reads the file of, by name, each
-    a shell command read before its first write added to `before`."""
+# Which files are on each template's topics: path globs per template of the
+# round's chain, fixed in this repository before the round's first trial, so
+# a script and not a reader of the transcript decides where a topic was
+# first written. A template with no globs has no files of its own.
+TOPICS = os.path.join(HERE, "template-topics.json")
+
+
+def template_topics():
+    """The topic map: each template of the chain as {id, path, globs}, in
+    the chain's order."""
+    with io.open(TOPICS, encoding="utf-8") as handle:
+        return json.load(handle)["templates"]
+
+
+def topic_pattern(glob_text):
+    """A topic glob as a pattern over a path relative to the workspace,
+    case aside: `**/` stands for any directories, none included, `**` for
+    anything, and `*` and `?` for no slash."""
+    parts = []
+    at = 0
+    while at < len(glob_text):
+        if glob_text.startswith("**/", at):
+            parts.append("(?:[^/]+/)*")
+            at += 3
+        elif glob_text.startswith("**", at):
+            parts.append(".*")
+            at += 2
+        elif glob_text[at] == "*":
+            parts.append("[^/]*")
+            at += 1
+        elif glob_text[at] == "?":
+            parts.append("[^/]")
+            at += 1
+        else:
+            parts.append(re.escape(glob_text[at]))
+            at += 1
+    return re.compile("".join(parts) + r"\Z", re.IGNORECASE)
+
+
+# A Git Bash path to a drive, /c/..., which is C:/... to the tools.
+BASH_DRIVE = re.compile(r"^/([A-Za-z])/")
+
+
+def topic_path(path, workspace=None):
+    """A written file's path as the topic globs read it: relative to the
+    workspace, with forward slashes; None for a file outside the workspace
+    or inside the vendored templates, which is on no topic of the trial's."""
+
+    # A path is normalised before it is placed, so one that climbs out of the
+    # workspace with `..`, absolute or relative, is outside it.
+    path = posixpath.normpath(BASH_DRIVE.sub(
+        r"\1:/", unquoted(path).replace("\\", "/")))
+    if workspace:
+        root = posixpath.normpath(BASH_DRIVE.sub(
+            r"\1:/", workspace.replace("\\", "/")))
+        if path.lower().startswith(root.lower() + "/"):
+            path = path[len(root) + 1:]
+        elif ABSOLUTE.match(path):
+            return None
+    if path == ".." or path.startswith("../"):
+        return None
+
+    # The topic globs match case aside, as the file system the trials ran on
+    # does, so the vendored copy is found case aside too.
+    into = VENDORED["into"].lower() + "/"
+    if path.lower().startswith(into) or "/" + into in path.lower():
+        return None
+    return path
+
+
+# How a template's first read stands to the first write on its topics: read
+# before it, after it, never with its topic written, never with it unwritten,
+# read with it unwritten, or a template with no files of its own.
+READ_CLASSES = ("just in time", "late", "never", "unused", "spare",
+                "unmapped")
+
+
+def read_class(globs, read, written):
+    """A template's class from its globs and the places, as sortable keys
+    or None, of its first read and of the first write on its topics."""
+    if not globs:
+        return "unmapped"
+    if read is None:
+        return "never" if written is not None else "unused"
+    if written is None:
+        return "spare"
+
+    # A read in the same simple command as the write, `cat t > f` say, did
+    # not come before it, as the first write's rule has it.
+    return "just in time" if read < written else "late"
+
+
+def read_timing(files, arm, templates=None, delegated=(), workspace=None,
+                topics=None):
+    """When one trial read each template of the chain against when it first
+    wrote a file on that template's topics, from its transcripts and its
+    subagents' in `delegated`.
+
+    Returns "templates", by id: the turn of the first read, of the first by
+    the session and of the first by a subagent, the turn of the first write
+    on its topics, each None where none happened, and its class; empty for
+    an arm whose map is not the chain. "loads": every use of the map as
+    (turn, template or skill, by a subagent). "first_write": the turn of
+    the first write to a file of the trial's own. "shell_writes": the shell
+    calls that wrote before the last write placed on a topic, or at all
+    where none was placed. "before_write": the templates first read before
+    that first write, by id, or None where the trial never wrote.
+    """
+    topics = template_topics() if topics is None else topics
+    entry = ARMS.get(arm) or {}
+    known = set(mapped_templates(arm) if templates is None else templates)
+
+    # A vendored template is named by its path, a skill by the template's
+    # id, and a section file by its path under the folder of the template's
+    # id.
+    ids = {}
+    for topic in topics:
+        ids[topic["path"]] = ids[topic["id"]] = topic["id"]
+
+    def template_of(use):
+        """The id of the template a use of the map reads, or None."""
+        if use.startswith(SECTIONS_INTO + "/"):
+            use = use[len(SECTIONS_INTO) + 1:].split("/")[0]
+        return ids.get(use)
+    chain = any(template_of(use) for use in known)
+    patterns = {topic["id"]: [topic_pattern(text) for text in topic["globs"]]
+                for topic in topics}
+    reads, own, by_subagent, written = {}, {}, {}, {}
+    loads = []
+    first_write = None
+    shells = []
+    placed = None
+    for position, (turn, name, given, from_subagent) in enumerate(
+            map_calls(files, delegated)):
+        found, writes_at, paths = call_effects(name, given, entry, known)
+        if first_write is None and writes_at is not None:
+            first_write = turn
+            written_first = (position, writes_at)
+
+        # Only a file tool names the file it writes for certain; what a
+        # shell command writes cannot be read from its text short of a shell
+        # of its own, so its writes are placed on no topic. They are counted
+        # instead, as the measure's limit: a template whose topic only a
+        # shell wrote reads unused or spare.
+        if name in SHELLS and writes_at is not None:
+            shells.append(position)
+        for index, use in found:
+            loads.append((turn, use, from_subagent))
+            template = template_of(use)
+            if template is None:
+                continue
+            reads.setdefault(template, (turn, (position, index)))
+            (by_subagent if from_subagent else own).setdefault(template, turn)
+        for index, path in paths:
+            relative = topic_path(path, workspace)
+            if relative is None:
+                continue
+            for template, globs in patterns.items():
+                if any(pattern.match(relative) for pattern in globs):
+                    written.setdefault(template, (turn, (position, index)))
+                    placed = position
+    timed = {}
+    for topic in topics if chain else ():
+        template = topic["id"]
+        read, wrote = reads.get(template), written.get(template)
+        timed[template] = {
+            "read": read[0] if read else None, "own": own.get(template),
+            "delegated": by_subagent.get(template),
+            "written": wrote[0] if wrote else None,
+            "class": read_class(topic["globs"], read and read[1],
+                                wrote and wrote[1])}
+
+    # Counted by template, so two section files of one template read before
+    # the first write are one template read before it, as in the other
+    # columns.
+    before = (None if first_write is None else sorted(
+        template for template, (_, key) in reads.items()
+        if key < written_first))
+    return {"templates": timed, "loads": loads, "first_write": first_write,
+            "before_write": before,
+            "shell_writes": sum(1 for at in shells
+                                if placed is None or at < placed)}
+
+
+def skill_reads(name, given, command, known):
+    """The skills a read or a shell command reads the file of, as (index of
+    its simple command, skill), 0 for a read."""
     # A read names a skill's file, or matches it through a wildcard, which
     # the shell's reading resolves against the skills' own files; any other
     # file in a skill's folder is no reading of the skill.
     files = sorted("%s/%s" % (skill, SKILL_FILE) for skill in known)
     if name == "Read":
         path = str(given.get("file_path") or "").replace("\\", "/")
-        return [read.split("/")[0] for read in SKILL_OPERAND.findall(path)
-                if read in files]
-    found = []
-    for index, read in shell_reads(command, files, SKILL_OPERAND):
-        skill = read.split("/")[0]
-        if read in files:
-            found.append(skill)
-            if first_write is None and (writes_at is None
-                                        or index < writes_at):
-                before.add(skill)
-    return found
+        return [(0, read.split("/")[0])
+                for read in SKILL_OPERAND.findall(path) if read in files]
+    return [(index, read.split("/")[0]) for index, read
+            in shell_reads(command, files, SKILL_OPERAND) if read in files]
 
 
 def report_uses(root, trials, task="build"):
@@ -3844,9 +4040,25 @@ def report_uses(root, trials, task="build"):
     return map_uses(root, trials, task)
 
 
+def timing_uses(root, trials, tasks=(), uses=None):
+    """Each task's map use, by task, as its read timing is read: a named
+    round's over each task's own trials; any other round's build as `uses`
+    holds it, and its change tasks over the trials that keep their change
+    reading, so one the re-scan left out counts in none."""
+    if tasks:
+        return task_uses(root, tasks)
+    if uses is None:
+        return {}
+    kept = {name: trial for name, trial in trials.items()
+            if trial.get("change") is not None}
+    return {"build": uses,
+            "change": map_uses(root, kept, "change") if kept else {}}
+
+
 def map_uses(root, trials, task="build"):
     """Every trial's map use on `task`, by name, for the arms whose file
-    points at the templates and whose transcripts the root still holds."""
+    points at the templates and whose transcripts the root still holds;
+    each carries its read timing under "timing"."""
     home = os.path.join(root, "home")
     uses = {}
     for record in run_records(root):
@@ -3866,9 +4078,11 @@ def map_uses(root, trials, task="build"):
         workspace = record.get("workspace") or ""
         files = transcript_files(home, workspace, started(record))
         if files:
-            uses[name] = map_use(files, arm, templates,
-                                 subagent_files(home, workspace,
-                                                started(record)))
+            delegated = subagent_files(home, workspace, started(record))
+            use = map_use(files, arm, templates, delegated)
+            use["timing"] = read_timing(files, arm, templates, delegated,
+                                        workspace)
+            uses[name] = use
     return uses
 
 
@@ -3970,9 +4184,6 @@ def map_use_lines(trials, uses, heading="### Use of the map", h7=True):
              "| Before the first write, mean | First at turn, median "
              "| Read all before writing |",
              "| --- | --- | --- | --- | --- | --- | --- |"]
-
-    def shown(value, places=1):
-        return "—" if value is None else ("%%.%df" % places) % value
     for row in rows:
         lines.append("| %s | %d | %d | %s | %s | %s | %d of %d |" % (
             row["arm"], row["trials"], row["total"], shown(row["read"]),
@@ -4016,6 +4227,244 @@ def h7_note(rows):
             "that read and wrote%s."
             % (row["read_and_wrote"], ", while %d of %d trials read none"
                % (row["unused"], row["trials"]) if row["unused"] else ""))
+
+
+# The tasks a trial's reads are timed in, each read on its own.
+TIMED_TASKS = ("build", "change")
+
+
+def timed_names(by_task, arm, task, key=None):
+    """An arm's trials whose map use on `task` carries its read timing, by
+    block; with `key`, only those whose timing's `key` is not empty."""
+    uses = by_task.get(task) or {}
+    names = [name for name in uses
+             if arm_of(name) == arm and "timing" in uses[name]
+             and (key is None or uses[name]["timing"].get(key))]
+    return sorted(names, key=index_of)
+
+
+def read_timing_rows(by_task):
+    """Per arm whose map is the chain and per task: trials, templates in the
+    chain, the mean read per trial, the mean read before the trial's first
+    write, the mean read by a subagent, each class's share of the trials'
+    templates, and the share of trials that wrote by shell before their
+    last write placed on a topic."""
+    rows = []
+    for arm in ARMS:
+        for task in TIMED_TASKS:
+            names = timed_names(by_task, arm, task, "templates")
+            if not names:
+                continue
+            uses = by_task[task]
+            timings = [uses[name]["timing"]["templates"] for name in names]
+            cells = [entry for timing in timings for entry in timing.values()]
+
+            # A trial that never wrote has no "before".
+            before = [len(uses[name]["timing"]["before_write"])
+                      for name in names
+                      if uses[name]["timing"].get("before_write") is not None]
+            rows.append({
+                "arm": arm, "task": task, "trials": len(names),
+                "total": len(timings[0]),
+                "read": mean_of([sum(1 for entry in timing.values()
+                                     if entry["read"] is not None)
+                                 for timing in timings]),
+                "before": mean_of(before),
+                "delegated": mean_of([sum(1 for entry in timing.values()
+                                          if entry["delegated"] is not None)
+                                      for timing in timings]),
+                "shares": {kind: sum(1 for entry in cells
+                                     if entry["class"] == kind) / len(cells)
+                           for kind in READ_CLASSES},
+                "shell": sum(1 for name in names
+                             if uses[name]["timing"].get("shell_writes"))
+                / len(names)})
+    return rows
+
+
+def skill_load_rows(by_task):
+    """Per arm that carries skills and per task: trials, the mean skills
+    loaded per trial, each counted once, the trials that loaded any, and the
+    mean loads a subagent made."""
+    rows = []
+    for arm in ARMS:
+        if not ARMS[arm].get("skills"):
+            continue
+        for task in TIMED_TASKS:
+            names = timed_names(by_task, arm, task)
+            if not names:
+                continue
+            loads = [by_task[task][name]["timing"]["loads"]
+                     for name in names]
+            rows.append({
+                "arm": arm, "task": task, "trials": len(names),
+                "loaded": mean_of([len({use for _, use, _ in load})
+                                   for load in loads]),
+                "any": sum(1 for load in loads if load),
+                "delegated": mean_of([sum(1 for _, _, by in load if by)
+                                      for load in loads])})
+    return rows
+
+
+# The rows `skills` is set beside `inline` on: the hidden tests and the
+# judge's security and data-protection scores.
+SKILLS_BESIDE = ("task_success", "judge_security", "judge_data_protection")
+
+
+def skills_beside_inline(table, results, k):
+    """`skills` against `inline` on the hidden tests and the judge's security
+    and data-protection rows, intervals only; empty where the run lacks
+    either arm or a row."""
+    label = "skills-inline"
+    if not table or not results or not all(
+            key in table and isinstance(results.get(key, {}).get(label), dict)
+            for key in SKILLS_BESIDE):
+        return []
+    values = table["task_success"]["values"]
+    if not (values.get("skills") and values.get("inline")):
+        return []
+    return (["### `skills` beside `inline`", "",
+             "Whether loading task skills costs the work anything the "
+             "emitted root file alone delivers: the hidden tests and the "
+             "judge's security and data-protection rows, read beside the "
+             "skills loaded above. The intervals only; the verdicts are "
+             "the radar's.", ""]
+            + contrast_table(table, results, SKILLS_BESIDE, verdicts=False,
+                             active=[("skills", "inline")], blocks=k,
+                             legend=False))
+
+
+def read_timing_lines(by_task, table=None, results=None, k=None):
+    """The secondary tables of when the map was read: per arm and task, the
+    templates read and how each first read stands to the first write on its
+    topics; per arm with skills, the skills loaded; and `skills` beside
+    `inline`. Empty where no trial's timing was read."""
+    rows = read_timing_rows(by_task or {})
+    loads = skill_load_rows(by_task or {})
+    if not rows and not loads:
+        return []
+    lines = ["## When the map was read", "",
+             "Secondary: no verdict rests on these. Each template's first "
+             "read, by the session or a subagent it started, is set against "
+             "the first write to a file on its topics, as the topic map "
+             "fixed before the round names them by path. **Just in time**: "
+             "read before that write. **Late**: read only after it. "
+             "**Never**: its topic was written and it was never read. "
+             "**Unused**: never read and its topic never written. "
+             "**Spare**: read, though its topic was never written. "
+             "**Unmapped**: the template has no files of its own. Only a "
+             "file tool's write is placed on a topic: a file written only by "
+             "a shell command is not attributed to a topic, so its template "
+             "reads unused or spare. The last column is that limit's reach: "
+             "the share of trials that wrote by shell before their last "
+             "write placed on a topic.", ""]
+    if rows:
+        lines.extend([
+            "| Arm | Task | Trials | Templates | Read per trial, mean "
+            "| Before the first write, mean | By a subagent, mean | %s "
+            "| Wrote by shell first |"
+            % " | ".join(sentence_case(kind) for kind in READ_CLASSES),
+            "|---|---|---|---|---|---|---|%s|---|"
+            % "|".join("---" for _ in READ_CLASSES)])
+        for row in rows:
+            lines.append("| %s | %s | %d | %d | %s | %s | %s | %s | %.0f %% |"
+                         % (row["arm"], row["task"], row["trials"],
+                            row["total"], shown(row["read"]),
+                            shown(row["before"]), shown(row["delegated"]),
+                            " | ".join("%.0f %%" % (100 * row["shares"][kind])
+                                       for kind in READ_CLASSES),
+                            100 * row["shell"]))
+        lines.append("")
+    if loads:
+        lines.extend(["### Skills loaded", "",
+                      "Per arm that carries skills, each skill counted once "
+                      "per trial; a subagent's loads are counted apart.", "",
+                      "| Arm | Task | Trials | Skills loaded per trial, mean "
+                      "| Trials that loaded any | Loads by a subagent, mean |",
+                      "|---|---|---|---|---|---|"])
+        for row in loads:
+            lines.append("| %s | %s | %d | %s | %d of %d | %s |" % (
+                row["arm"], row["task"], row["trials"], shown(row["loaded"]),
+                row["any"], row["trials"], shown(row["delegated"])))
+        lines.append("")
+    beside = skills_beside_inline(table, results, k)
+    if beside:
+        lines.extend(beside + [""])
+    return lines
+
+
+def shown(value, places=1):
+    """A mean as a table shows it, a dash for none."""
+    return "—" if value is None else ("%%.%df" % places) % value
+
+
+def first_reads(entry):
+    """A template's first read turn as a cell shows it, starred where a
+    subagent read it before the session did."""
+    if entry["read"] is None:
+        return ""
+    starred = entry["delegated"] is not None and (
+        entry["own"] is None or entry["delegated"] < entry["own"])
+    return "%d%s" % (entry["read"], "*" if starred else "")
+
+
+def read_timing_detail(by_task):
+    """Every trial's read timing, one row per trial and task: each template
+    under its class with the turn it was first read and the turn its topic
+    was first written; and, per trial of an arm with skills, each skill
+    loaded with its turn."""
+    by_task = by_task or {}
+    names = [(name, task) for arm in ARMS for task in TIMED_TASKS
+             for name in timed_names(by_task, arm, task, "templates")]
+    skilled = [(name, task) for arm in ARMS if ARMS[arm].get("skills")
+               for task in TIMED_TASKS
+               for name in timed_names(by_task, arm, task)]
+    if not names and not skilled:
+        return []
+    lines = []
+    if names:
+        lines.extend([
+            "### Each template, by class", "",
+            "Each template as read turn → turn its topic was first "
+            "written; * where a subagent read it first. Shell writes: the "
+            "shell calls that wrote before the last write placed on a "
+            "topic, none of them placed.", "",
+            "| Trial | Task | First write at turn | %s | Shell writes |"
+            % " | ".join(sentence_case(kind) for kind in READ_CLASSES),
+            "|---|---|---|%s|---|" % "|".join("---" for _ in READ_CLASSES)])
+        for name, task in names:
+            timing = by_task[task][name]["timing"]
+            cells = []
+            for kind in READ_CLASSES:
+                entries = []
+                for template, entry in timing["templates"].items():
+                    if entry["class"] != kind:
+                        continue
+                    text = template
+                    if entry["read"] is not None:
+                        text += " " + first_reads(entry)
+                    if entry["written"] is not None:
+                        text += " → %d" % entry["written"]
+                    entries.append(text)
+                cells.append(", ".join(entries) or "—")
+            lines.append("| %s | %s | %s | %s | %d |" % (
+                name, task, "—" if timing["first_write"] is None
+                else timing["first_write"], " | ".join(cells),
+                timing.get("shell_writes", 0)))
+        lines.append("")
+    if skilled:
+        lines.extend(["### Each skill loaded", "",
+                      "Each skill with the turn it was loaded at; * where a "
+                      "subagent loaded it.", "",
+                      "| Trial | Task | Skills, by turn |", "|---|---|---|"])
+        for name, task in skilled:
+            loads = ", ".join("%d: %s%s" % (turn, use, "*" if by else "")
+                              for turn, use, by
+                              in by_task[task][name]["timing"]["loads"]
+                              ) or "none"
+            lines.append("| %s | %s | %s |" % (name, task, loads))
+        lines.append("")
+    return lines
 
 
 # Round 5d's screen for round 6: the candidates, read against the bare arm,
@@ -7794,14 +8243,29 @@ def aggregate(seed, trials, table, results, withdrawn, check, iso,
                    "cost_usd": table_of["cost_usd"]}
             for task, _, _, table_of, reading in tasks}
     if uses is not None:
-        payload["map_use"] = {
-            name: {"first_write": use["first_write"],
-                   "before_write": use.get("before_write"),
-                   "by_subagent": use.get("by_subagent", 0),
-                   "uses": [{"turn": turn, "template": template}
-                            for turn, template in use["uses"]]}
-            for name, use in sorted(uses.items())}
+        payload["map_use"] = {name: use_record(use)
+                              for name, use in sorted(uses.items())}
     return payload
+
+
+def use_record(use):
+    """One trial's map use as the aggregate keeps it, its read timing too
+    where it was read."""
+    record = {"first_write": use["first_write"],
+              "before_write": use.get("before_write"),
+              "by_subagent": use.get("by_subagent", 0),
+              "uses": [{"turn": turn, "template": template}
+                       for turn, template in use["uses"]]}
+    if "timing" in use:
+        timing = use["timing"]
+        record["timing"] = {
+            "first_write": timing["first_write"],
+            "shell_writes": timing.get("shell_writes", 0),
+            "before_write": timing.get("before_write"),
+            "templates": timing["templates"],
+            "loads": [{"turn": turn, "use": name, "by_subagent": by}
+                      for turn, name, by in timing["loads"]]}
+    return record
 
 
 def iso_reading(trials, seed, withdrawn=(), axes=None):
@@ -9479,6 +9943,323 @@ def executive_checks(seed):
     return checks
 
 
+def read_timing_checks():
+    """The read timing's rules: the topic map is the chain's, each template's
+    first read is classed against the first write on its topics, a
+    subagent's reads and every skill load are kept apart, each task is
+    timed on its own, and the appendix, the record and the aggregate carry
+    it."""
+    import harness
+    checks = []
+    topics = template_topics()
+    got = ([topic["id"] for topic in topics],
+           [topic["path"] for topic in topics],
+           all(isinstance(topic["globs"], list) and all(
+               isinstance(text, str) for text in topic["globs"])
+               for topic in topics))
+    checks.append(("the topic map names every template of the round's chain, "
+                   "by the id its skill carries and the path its copy is "
+                   "vendored at, each with its globs",
+                   sorted(got[0]) == mapped_templates("lazyskills")
+                   and got[1] == mapped_templates("lazyref") and got[2],
+                   got))
+
+    def matches(text, path):
+        return topic_pattern(text).match(path) is not None
+    got = (matches("**/auth*.py", "auth.py"),
+           matches("**/auth*.py", "src/web/Auth_views.py"),
+           matches("**/auth*.py", "src/authx/views.py"),
+           matches("**/static/**", "a/static/x/y.css"),
+           matches("**/static/**", "static.css"),
+           matches("src/*.py", "src/a/b.py"),
+           matches("src/?.py", "src/a.py"))
+    checks.append(("a topic glob's ** stands for any directories, none "
+                   "included, and * and ? for no slash",
+                   got == (True, True, False, True, False, False, True), got))
+
+    scratch = os.path.join(tempfile.gettempdir(),
+                           "efficacy-report-read-timing-self-test")
+    shutil.rmtree(scratch, ignore_errors=True)
+    os.makedirs(scratch)
+
+    def call(name, **given):
+        return {"type": "tool_use", "id": "t", "name": name, "input": given}
+
+    def planted(name, *messages):
+        """A transcript of one assistant message per call, in order."""
+        file = os.path.join(scratch, name)
+        with io.open(file, "w", encoding="utf-8", newline="\n") as handle:
+            for index, block in enumerate(messages, 1):
+                handle.write(json.dumps({
+                    "type": "assistant",
+                    "message": {"id": "%s-%d" % (name, index),
+                                "content": [block]}}) + "\n")
+        return file
+    into = VENDORED["into"]
+    workspace = "C:/pen/w"
+    few = [{"id": "backend-auth", "path": "templates/backend/auth.md",
+            "globs": ["**/auth*.py"]},
+           {"id": "frontend-ux", "path": "templates/frontend/ux.md",
+            "globs": ["**/templates/**/*.html"]},
+           {"id": "backend-database", "path": "templates/backend/database.md",
+            "globs": ["**/db.py"]},
+           {"id": "base-data-governance",
+            "path": "templates/data/data-governance.md",
+            "globs": ["**/*gdpr*"]},
+           {"id": "base-quality", "path": "templates/core/quality.md",
+            "globs": []},
+           {"id": "base-git", "path": "templates/core/git.md",
+            "globs": ["**/.gitignore"]}]
+    chain = [topic["path"] for topic in few]
+
+    # Auth read at 1 and written at 2; the page written at 3 and its
+    # template read at 4; governance's topic written by a shell alone at 5,
+    # and otherwise only outside the workspace, past it by `..` or into the
+    # vendored copy; the store written at 6, the last write placed on a
+    # topic, and never read; quality and git read by a subagent delegated at
+    # 11; a shell write at 12, after the last placed one.
+    session = planted(
+        "session.jsonl",
+        call("Read", file_path="C:\\pen\\w\\%s\\templates\\backend\\auth.md"
+             % into.replace("/", "\\")),
+        call("Write", file_path="C:\\pen\\w\\src\\auth.py"),
+        call("Write", file_path="C:/pen/w/src/templates/base.html"),
+        call("Read", file_path="/pen/w/%s/templates/frontend/ux.md" % into),
+        call("Bash", command="cat > src/gdpr.py <<'EOF'\nx = 1\nEOF"),
+        call("Write", file_path="C:/pen/w/src/db.py"),
+        call("Write", file_path="C:/elsewhere/gdpr.py"),
+        call("Write", file_path="C:/pen/w/%s/templates/gdpr.md" % into),
+        call("Write", file_path="C:/pen/w/../outside/gdpr.py"),
+        call("Write", file_path="../outside/gdpr.py"),
+        call("Agent", prompt="read quality and git"),
+        call("Bash", command="echo y > notes.txt"))
+    child = planted(
+        "child.jsonl",
+        call("Read", file_path="/pen/w/%s/templates/core/quality.md" % into),
+        call("Bash", command="cat %s/templates/core/git.md" % into))
+    build = read_timing([session], "lazyref", chain, [child], workspace, few)
+    classes = {template: entry["class"]
+               for template, entry in build["templates"].items()}
+    turns = {template: (entry["read"], entry["written"])
+             for template, entry in build["templates"].items()}
+    checks.append(("a template read before the first write on its topics is "
+                   "just in time, and one read only after it is late",
+                   classes["backend-auth"] == "just in time"
+                   and turns["backend-auth"] == (1, 2)
+                   and classes["frontend-ux"] == "late"
+                   and turns["frontend-ux"] == (4, 3)
+                   and read_class(["x"], (1, (5, 0)), (1, (5, 1)))
+                   == "just in time"
+                   and read_class(["x"], (1, (5, 1)), (1, (5, 1))) == "late",
+                   (classes, turns)))
+    checks.append(("a template whose topic was written and never read is "
+                   "never, one never read with its topic unwritten is unused, "
+                   "one read with its topic unwritten is spare, and one with "
+                   "no globs is unmapped",
+                   classes["backend-database"] == "never"
+                   and classes["base-data-governance"] == "unused"
+                   and classes["base-git"] == "spare"
+                   and classes["base-quality"] == "unmapped"
+                   and turns["base-quality"] == (11, None),
+                   classes))
+    checks.append(("a file tool's write is placed on its topic, one written "
+                   "only by a shell command is not, and the shell calls that "
+                   "wrote before the last write placed on a topic are counted",
+                   turns["backend-database"] == (None, 6)
+                   and turns["base-data-governance"] == (None, None)
+                   and build["shell_writes"] == 1,
+                   (turns, build["shell_writes"])))
+    got = [topic_path(path, "C:\\pen\\w") for path in (
+        "../outside/auth.py", "C:/pen/w/../outside/auth.py",
+        "C:/elsewhere/auth.py", "C:/pen/w/%s/templates/auth.md" % into,
+        "C:/pen/w/%s/templates/backend/auth.md" % into.upper(),
+        "C:/pen/w/src/./web/../auth.py", "/c/pen/w/src/x.py")]
+    checks.append(("a file outside the workspace, past it by .., absolute or "
+                   "relative, or in the vendored templates, case aside, is on "
+                   "no topic",
+                   got == [None, None, None, None, None, "src/auth.py",
+                           "src/x.py"],
+                   got))
+
+    # A skill arm: quality loaded by the session at 1, auth by a subagent
+    # delegated at 2, before the write on auth's topics at 3. A task-skill
+    # arm loads a skill that is no template of the chain.
+    skilled = planted("skilled.jsonl",
+                      call("Skill", skill="base-quality"),
+                      call("Agent", prompt="load auth"),
+                      call("Write", file_path="C:/pen/w/app/auth_views.py"))
+    loader = planted("loader.jsonl", call("Skill", skill="backend-auth"))
+    ids = [topic["id"] for topic in few]
+    skills_timing = read_timing([skilled], "lazyskills", ids, [loader],
+                                workspace, few)
+    tasked = planted("tasked.jsonl", call("Write", file_path="x.py"),
+                     call("Skill", skill="change-api"))
+    task_timing = read_timing([tasked], "skills", ["change-api"], (),
+                              workspace, few)
+
+    # A section file under auth's folder read at 1, before the write on
+    # auth's topics at 2; a skill's file read in place of loading it.
+    section = "%s/backend-auth/sessions.md" % SECTIONS_INTO
+    sectioned = planted("sectioned.jsonl",
+                        call("Read", file_path="C:/pen/w/%s" % section),
+                        call("Write", file_path="C:/pen/w/src/auth.py"))
+    by_section = read_timing([sectioned], "lazysections", [section], (),
+                             workspace, few)["templates"]["backend-auth"]
+    by_file = read_timing([planted("filed.jsonl", call(
+        "Read", file_path="C:/pen/w/%s/backend-auth/%s"
+        % (SKILLS_INTO, SKILL_FILE)))], "lazyskills", ids, (), workspace,
+        few)["templates"]["backend-auth"]
+    checks.append(("a section file read counts as its template's read, and "
+                   "so does a skill's file read in place of loading it",
+                   (by_section["read"], by_section["class"])
+                   == (1, "just in time") and by_file["read"] == 1,
+                   (by_section, by_file)))
+
+    # Two sections of auth read before the first write are one template.
+    other = "%s/backend-auth/tokens.md" % SECTIONS_INTO
+    twice = planted("twice.jsonl",
+                    call("Read", file_path="C:/pen/w/%s" % section),
+                    call("Read", file_path="C:/pen/w/%s" % other),
+                    call("Write", file_path="C:/pen/w/src/auth.py"))
+    pair = [section, other]
+    one = read_timing_rows({"build": {"lazysections-1": dict(
+        map_use([twice], "lazysections", pair),
+        timing=read_timing([twice], "lazysections", pair, (), workspace,
+                           few))}})[0]
+    checks.append(("two section files of one template read before the "
+                   "first write count as one template, read and before it",
+                   (one["read"], one["before"]) == (1.0, 1.0),
+                   (one["read"], one["before"])))
+    auth = skills_timing["templates"]["backend-auth"]
+    quality = build["templates"]["base-quality"]
+    checks.append(("a subagent's read or load counts at the turn that "
+                   "delegated, kept apart from the session's",
+                   (auth["read"], auth["own"], auth["delegated"],
+                    auth["class"]) == (2, None, 2, "just in time")
+                   and (quality["own"], quality["delegated"]) == (None, 11)
+                   and build["templates"]["backend-auth"]["own"] == 1,
+                   (auth, quality)))
+    checks.append(("every skill loaded is listed with its turn and whether a "
+                   "subagent loaded it, for each arm with skills, and an arm "
+                   "whose map is not the chain times no template",
+                   skills_timing["loads"] == [(1, "base-quality", False),
+                                              (2, "backend-auth", True)]
+                   and task_timing == {"templates": {}, "first_write": 1,
+                                       "loads": [(2, "change-api", False)],
+                                       "before_write": [],
+                                       "shell_writes": 0},
+                   (skills_timing["loads"], task_timing)))
+
+    # A root holding one `lazyref` trial's build and its change task, each
+    # in its own workspace: the build writes the store before reading its
+    # template, the change reads it first.
+    root = os.path.join(scratch, "root")
+    home = os.path.join(root, "home")
+    database = "%s/templates/backend/database.md" % into
+    records = []
+    for task, steps in (
+            ("build", [call("Write", file_path="src/db.py"),
+                       call("Read", file_path="/w/%s" % database)]),
+            ("change", [call("Read", file_path="/w/%s" % database),
+                        call("Edit", file_path="src/db.py")])):
+        place = os.path.join(root, "lazyref-1-%s" % task)
+        folder = os.path.join(home, ".claude", "projects",
+                              harness.project_folder(place))
+        os.makedirs(folder)
+        shutil.move(planted("%s.jsonl" % task, *steps),
+                    os.path.join(folder, "session.jsonl"))
+        records.append({"arm": "lazyref", "trial": 1, "task": task,
+                        "outcome": "completed", "workspace": place,
+                        "started_at": "2000-01-01T00:00:00+00:00"})
+    with io.open(os.path.join(root, "run-1.json"), "w",
+                 encoding="utf-8") as handle:
+        json.dump({"trials": records}, handle)
+    kept_change = {"lazyref-1": {"change": {}}}
+    tasks = timing_uses(root, kept_change, (), map_uses(root, kept_change))
+    left_out = {"lazyref-1": {"change": None}}
+    unchanged = {task: sorted(found) for task, found in timing_uses(
+        root, left_out, (), map_uses(root, left_out)).items()}
+    per_task = {task: {name: use["timing"]["templates"]["backend-database"][
+        "class"] for name, use in found.items()}
+        for task, found in tasks.items()}
+    rows = [(row["arm"], row["task"]) for row in read_timing_rows(tasks)]
+    checks.append(("a change task's reads are timed apart from its build's, "
+                   "from its own transcript",
+                   per_task == {"build": {"lazyref-1": "late"},
+                                "change": {"lazyref-1": "just in time"}}
+                   and rows == [("lazyref", "build"), ("lazyref", "change")],
+                   (per_task, rows)))
+    checks.append(("a change task the re-scan left out is not timed, and its "
+                   "clean build still is",
+                   unchanged == {"build": ["lazyref-1"], "change": []},
+                   unchanged))
+    uses = {"lazyref-1": dict(map_use([session], "lazyref", chain, [child]),
+                              timing=build),
+            "lazyskills-1": dict(map_use([skilled], "lazyskills", ids,
+                                         [loader]), timing=skills_timing),
+            "skills-1": dict(map_use([tasked], "skills", ["change-api"]),
+                             timing=task_timing)}
+    shutil.rmtree(scratch, ignore_errors=True)
+    secondary = "\n".join(read_timing_lines({"build": uses}))
+    checks.append(("the appendix gives per arm and task the templates read, "
+                   "those before the first write, those a subagent read and "
+                   "each class's share, and per skill arm the skills loaded",
+                   "| lazyref | build | 1 | 6 | 4.0 | 1.0 | 2.0 | 17 % | 17 % "
+                   "| 17 % | 17 % | 17 % | 17 % | 100 % |" in secondary
+                   and "| 17 % | 0 % |" in secondary
+                   and "a file written only by a shell command is not "
+                   "attributed to a topic" in secondary
+                   and "| lazyskills | build | 1 | 6 | 2.0 | 2.0 | 1.0 |"
+                   in secondary
+                   and "| lazyskills | build | 1 | 2.0 | 1 of 1 | 1.0 |"
+                   in secondary
+                   and "| skills | build | 1 | 1.0 | 1 of 1 | 0.0 |"
+                   in secondary
+                   and "| skills | build | 1 | 6 |" not in secondary,
+                   secondary))
+    detail = "\n".join(read_timing_detail({"build": uses}))
+    checks.append(("the record lists each trial's templates by class with "
+                   "their read and write turns, and each skill loaded with "
+                   "its turn",
+                   "| lazyref-1 | build | 2 | backend-auth 1 → 2 "
+                   "| frontend-ux 4 → 3 | backend-database → 6 "
+                   "| base-data-governance | base-git 11* | base-quality 11* "
+                   "| 1 |" in detail
+                   and "| lazyskills-1 | build | 1: base-quality, "
+                   "2: backend-auth* |" in detail
+                   and "| skills-1 | build | 2: change-api |" in detail,
+                   detail))
+
+    def beside(inline):
+        table = {key: {"label": key, "direction": "up", "values": {
+            "skills": {1: 0.5}, "inline": {1: 0.6} if inline else {}}}
+            for key in SKILLS_BESIDE}
+        results = {key: {"skills-inline": {
+            "mean": -0.1, "verdict": "worse",
+            "interval": {"low": -0.2, "high": -0.05, "method": "BCa"}}}
+            for key in SKILLS_BESIDE}
+        return "\n".join(skills_beside_inline(table, results, 1))
+    shown_beside = beside(True)
+    checks.append(("skills is set beside inline on the hidden tests and the "
+                   "judge's security and data-protection rows, with no "
+                   "verdict mark, and not where inline did not run",
+                   "| skills−inline |" in shown_beside
+                   and all("| %s |" % key in shown_beside
+                           for key in SKILLS_BESIDE)
+                   and "▼" not in shown_beside and not beside(False),
+                   shown_beside))
+    kept = aggregate(1, {}, {}, {}, {}, None, None, uses)["map_use"]
+    checks.append(("the aggregate keeps each trial's read timing",
+                   kept["lazyref-1"]["timing"]["templates"]["frontend-ux"]
+                   == {"read": 4, "own": 4, "delegated": None, "written": 3,
+                       "class": "late"}
+                   and {"turn": 2, "use": "backend-auth", "by_subagent": True}
+                   in kept["lazyskills-1"]["timing"]["loads"]
+                   and kept["lazyref-1"]["timing"]["shell_writes"] == 1,
+                   kept["lazyskills-1"].get("timing")))
+    return checks
+
+
 def iso_checks(seed):
     """The ISO radar's rules: a sub-score as the share of targets met, an
     empty sub-characteristic not measured, an axis as the mean of its
@@ -10503,6 +11284,7 @@ def self_test(seed):
     checks.extend(round5_checks())
     checks.extend(round5d_checks(seed))
     checks.extend(round5e_checks())
+    checks.extend(read_timing_checks())
     checks.extend(iso_checks(seed))
     checks.extend(band_checks(seed))
     checks.extend(failed_build_checks())
