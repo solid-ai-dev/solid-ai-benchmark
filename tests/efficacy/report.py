@@ -3937,7 +3937,8 @@ def read_timing(files, arm, templates=None, delegated=(), workspace=None,
     (turn, template or skill, by a subagent). "first_write": the turn of
     the first write to a file of the trial's own. "shell_writes": the shell
     calls that wrote before the last write placed on a topic, or at all
-    where none was placed.
+    where none was placed. "before_write": the templates first read before
+    that first write, by id, or None where the trial never wrote.
     """
     topics = template_topics() if topics is None else topics
     entry = ARMS.get(arm) or {}
@@ -3968,6 +3969,7 @@ def read_timing(files, arm, templates=None, delegated=(), workspace=None,
         found, writes_at, paths = call_effects(name, given, entry, known)
         if first_write is None and writes_at is not None:
             first_write = turn
+            written_first = (position, writes_at)
 
         # Only a file tool names the file it writes for certain; what a
         # shell command writes cannot be read from its text short of a shell
@@ -4001,7 +4003,15 @@ def read_timing(files, arm, templates=None, delegated=(), workspace=None,
             "written": wrote[0] if wrote else None,
             "class": read_class(topic["globs"], read and read[1],
                                 wrote and wrote[1])}
+
+    # Counted by template, so two section files of one template read before
+    # the first write are one template read before it, as in the other
+    # columns.
+    before = (None if first_write is None else sorted(
+        template for template, (_, key) in reads.items()
+        if key < written_first))
     return {"templates": timed, "loads": loads, "first_write": first_write,
+            "before_write": before,
             "shell_writes": sum(1 for at in shells
                                 if placed is None or at < placed)}
 
@@ -4250,9 +4260,9 @@ def read_timing_rows(by_task):
             cells = [entry for timing in timings for entry in timing.values()]
 
             # A trial that never wrote has no "before".
-            before = [len(uses[name].get("before_write") or ())
+            before = [len(uses[name]["timing"]["before_write"])
                       for name in names
-                      if uses[name].get("first_write") is not None]
+                      if uses[name]["timing"].get("before_write") is not None]
             rows.append({
                 "arm": arm, "task": task, "trials": len(names),
                 "total": len(timings[0]),
@@ -8251,6 +8261,7 @@ def use_record(use):
         record["timing"] = {
             "first_write": timing["first_write"],
             "shell_writes": timing.get("shell_writes", 0),
+            "before_write": timing.get("before_write"),
             "templates": timing["templates"],
             "loads": [{"turn": turn, "use": name, "by_subagent": by}
                       for turn, name, by in timing["loads"]]}
@@ -10103,6 +10114,22 @@ def read_timing_checks():
                    (by_section["read"], by_section["class"])
                    == (1, "just in time") and by_file["read"] == 1,
                    (by_section, by_file)))
+
+    # Two sections of auth read before the first write are one template.
+    other = "%s/backend-auth/tokens.md" % SECTIONS_INTO
+    twice = planted("twice.jsonl",
+                    call("Read", file_path="C:/pen/w/%s" % section),
+                    call("Read", file_path="C:/pen/w/%s" % other),
+                    call("Write", file_path="C:/pen/w/src/auth.py"))
+    pair = [section, other]
+    one = read_timing_rows({"build": {"lazysections-1": dict(
+        map_use([twice], "lazysections", pair),
+        timing=read_timing([twice], "lazysections", pair, (), workspace,
+                           few))}})[0]
+    checks.append(("two section files of one template read before the "
+                   "first write count as one template, read and before it",
+                   (one["read"], one["before"]) == (1.0, 1.0),
+                   (one["read"], one["before"])))
     auth = skills_timing["templates"]["backend-auth"]
     quality = build["templates"]["base-quality"]
     checks.append(("a subagent's read or load counts at the turn that "
@@ -10119,6 +10146,7 @@ def read_timing_checks():
                                               (2, "backend-auth", True)]
                    and task_timing == {"templates": {}, "first_write": 1,
                                        "loads": [(2, "change-api", False)],
+                                       "before_write": [],
                                        "shell_writes": 0},
                    (skills_timing["loads"], task_timing)))
 
